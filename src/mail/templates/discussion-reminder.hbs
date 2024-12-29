@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discussion Reminder</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 10px 0;
+            padding: 0;
+            background-color: #f4f4f4;
+        }
+        .container {
+            max-width: 600px;
+            margin: 20px auto;
+            background-color: #fff;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        .wrapper {
+            max-width: 600px;
+            padding: 20px;
+        }
+        h1, p {
+            margin: 0 0 20px 0;
+        }
+        .banner {
+            height: 50px;
+            background: #ffffff;
+            color: #8254F8;
+            text-align: right;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 40px;
+            gap: 5px;
+            padding: 20px;
+            font-weight: bold;
+        }
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #8254F8;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <section class="banner">
+            <img src='https://discoursefy-public-bucket.s3.ap-south-1.amazonaws.com/Logo.jpg' /> <span> Discoursefy.</span>
+        </section>
+        <div class="wrapper">
+        <h1>Reminder: Upcoming Discussion in 5 Minutes</h1>
+        <p>
+            Dear {{ userName }},
+        </p>
+        <p>
+            This is a friendly reminder that the upcoming discussion, "{{ discussionTitle }}," is scheduled to begin in just 5 minutes.
+        </p>
+        <p>
+            📅 <strong>Discussion will start with in {{ remainingTime }} minutes </strong>
+        </p>
+        <p>
+            <a href="{{ discussionUrl }}" class="btn">🔗 Join Discussion</a>
+        </p>
+        <p>
+            Join us for an engaging session where we'll discuss {{ discussionDescription }} and exchange ideas.
+        </p>
+        <p>
+            Looking forward to your participation!
+        </p>
+        <p>
+            Best regards,<br>
+            Discoursefy
+        </p>
+    </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,167 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserLoginType {
+  CUSTOM @map("1")
+  GOOGLE @map("2")
+}
+
+enum RepositoryProvider {
+  GITHUB    @map("1")
+  BITBUCKET @map("2")
+}
+
+enum AccountCredentialsType {
+  GITHUB_TOKEN    @map("1")
+  BITBUCKET_TOKEN @map("2")
+}
+
+model User {
+  id        String        @id @default(uuid())
+  firstName String
+  lastName  String
+  email     String        @unique
+  password  String
+  verified  Boolean       @default(false)
+  loginType UserLoginType @default(CUSTOM)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  account Account?
+  // accountId String? // Foreign key for the Account relation
+}
+
+model Account {
+  id                 String               @id @default(uuid())
+  status             String               @default("active")
+  subscribedPlanType Int                  @default(1)
+  tokens             Int                  @default(0)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  userId             String               @unique
+  user               User                 @relation(fields: [userId], references: [id])
+  verified           Boolean              @default(false)
+  repositories       AccountRepository[] // Many-to-many relationship
+  accountCredentials AccountCredentials[]
+}
+
+model AccountCredentials {
+  id    String                 @id @default(uuid())
+  type  AccountCredentialsType @default(GITHUB_TOKEN)
+  value String
+
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id])
+}
+
+model VerificationCode {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accountId String
+  // account   Account @relation(fields: [accountId], references: [id])
+}
+
+// repositories
+
+model Repository {
+  id           String              @id @default(uuid())
+  repositoryId String              @unique // github repository reference
+  provider     RepositoryProvider  @default(GITHUB)
+  name         String
+  owner        String              @default("mudassir693")
+  baseBranch   String              @default("main")
+  private      Boolean             @default(false)
+  description  String              @default("")
+  language     String              @default("")
+  accounts     AccountRepository[] // Many-to-many relationship
+  // pullRequests PullRequest[]
+  comments     Comment[]
+  reports      ExecutiveReport[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AccountRepository {
+  accountId    String
+  repositoryId String
+
+  account     Account          @relation(fields: [accountId], references: [id])
+  repository  Repository       @relation(fields: [repositoryId], references: [id])
+  evaluations RepoEvaluation[]
+
+  @@id([accountId, repositoryId]) // Composite primary key
+}
+
+model RepoEvaluation {
+  id                  String   @id @default(uuid())
+  accountId           String
+  repositoryId        String
+  accountRepositoryId String
+  score               Int
+  response            Json     @default("{}")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  accountRepository AccountRepository @relation(fields: [accountId, repositoryId], references: [accountId, repositoryId])
+}
+
+model PullRequest {
+  id            String @id @default(uuid())
+  repositoryId  String
+  prUrl         String
+  prNumber      Int
+  prTitle       String
+  prDescription String @default("")
+  head          String
+  base          String
+  summary       String @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // repository Repository @relation(fields: [repositoryId], references: [repositoryId])
+  comments Comment[]
+}
+
+model Comment {
+  id            String @id @default(uuid())
+  repositoryId  String
+  prId          String
+  content       String
+  line          Int
+  file          String
+  issue         String
+  issueCategory String @default("CodeSmells")
+
+  repository Repository  @relation(fields: [repositoryId], references: [repositoryId])
+  pr         PullRequest @relation(fields: [prId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ExecutiveReport {
+  id           String @id @default(uuid())
+  repositoryId String
+  prNumber     Int
+  summary      Json   @default("{}")
+
+  repository Repository @relation(fields: [repositoryId], references: [id])
+}

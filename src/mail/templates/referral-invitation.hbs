@@ -1,0 +1,94 @@
+<html lang='en'>
+  <head>
+    <meta charset='UTF-8' />
+    <meta name='viewport' content='width=device-width, initial-scale=1.0' />
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; padding: 0;
+      background-color: #f4f4f4; } .container { max-width: 600px; margin: 20px
+      auto; background-color: #fff; border-radius: 5px; box-shadow: 0 2px 5px
+      rgba(0, 0, 0, 0.1); overflow: hidden; border-top: 5px solid #8254f8; }
+      .wrapper { padding: 20px; } .banner { height: 50px; background: #ffffff;
+      color: #8254f8; text-align: center; display: flex; justify-content:
+      center; align-items: center; font-size: 40px; gap: 10px; padding: 20px;
+      font-weight: bold; } h2 { color: #333; margin-bottom: 10px; } p { color:
+      #555; line-height: 1.6; } strong { color: #8254f8; } .button { display:
+      inline-block; padding: 12px 25px; font-size: 18px; color: #fff;
+      background-color: #8254f8; text-align: center; text-decoration: none;
+      border-radius: 5px; margin-top: 20px; transition: background-color 0.3s; }
+      .button:hover { background-color: #6a3fcf; } .footer { margin-top: 20px;
+      text-align: left; font-size: 12px; color: #666; } .highlight {
+      background-color: #e7e7ff; padding: 10px; border-radius: 5px; } .list {
+      margin: 15px 0; padding-left: 20px; } .list li { margin-bottom: 5px; }
+    </style>
+  </head>
+  <body>
+    <div class='container'>
+      <section class='banner'>
+        <img
+          src='https://discoursefy-public-bucket.s3.ap-south-1.amazonaws.com/logo+h.png'
+          alt='Discoursefy Logo'
+          style='height: 50px'
+        />
+      </section>
+      <div class='wrapper'>
+        <h2>
+          Your Friend
+          {{referrerName}}
+          Invites You to Unlock Career Opportunities with Discoursefy!
+        </h2>
+        <p>Hi {{userName}},</p>
+        <p>
+          On behalf of your friend
+          {{referrerName}}, we’d like to invite you to
+          <strong>Discoursefy</strong>—the perfect platform to help you stand
+          out to recruiters and unlock new career opportunities.
+        </p>
+
+        <div class='highlight'>
+          <strong>Why Discoursefy?</strong>
+          <ul class='list'>
+            <li>Enhance your skills and showcase them to top recruiters.</li>
+            <li>Get noticed with an in-depth view of your expertise.</li>
+          </ul>
+        </div>
+
+        <p>
+          <strong>Recruiter-Focused Performance Profiles</strong><br />
+          Our platform tracks your progress in real-time, giving recruiters a
+          comprehensive view of your strengths, adaptability, and leadership
+          skills.
+        </p>
+
+        <p>
+          <strong>Stand Out with Real-World Problem Solving</strong><br />
+          From Data Structures & Algorithms to C++ and beyond, you'll sharpen
+          your skills with hands-on challenges that prove your worth.
+        </p>
+
+        <p>
+          <strong>Soft Skills That Matter</strong><br />
+          Highlight essential soft skills like communication, passion, and
+          adaptability, so you're more than just a resume.
+        </p>
+
+        <p>
+          <strong>Join Discoursefy Today!</strong><br />
+          Start building your profile, get noticed by recruiters, and take
+          control of your career growth. Your journey to new opportunities
+          starts here.
+        </p>
+
+        <div>
+          <a href='https://app.discoursefy.com' class='button'>Join Now</a>
+        </div>
+
+        <p>
+          Looking forward to seeing you achieve your career goals on
+          Discoursefy!
+        </p>
+        <p>Best regards,<br />The Discoursefy Team</p>
+        <p class='footer'>Learn. Evaluate. Get Noticed.<br />Discoursefy</p>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+        font-family: Arial, sans-serif;
+        margin: 10px 0;
+        padding: 0;
+        background-color: #f4f4f4;
+    }
+    .container {
+        max-width: 600px;
+        margin: 20px auto;
+        background-color: #fff;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+    }
+    .wrapper {
+        max-width: 600px;
+        padding: 20px;
+    }
+    .status {
+      font-weight: bold;
+    }
+    .status-label {
+      font-weight: bold;
+    }
+    .meeting-info {
+      font-family: Arial, sans-serif;
+      border-collapse: collapse;
+      width: 100%;
+    }
+    .meeting-info td, .meeting-info th {
+      border: 1px solid #ddd;
+      padding: 8px;
+    }
+    .meeting-info tr:nth-child(even) {
+      background-color: #f2f2f2;
+    }
+    .meeting-info tr:hover {
+      background-color: #ddd;
+    }
+    .meeting-info th {
+      padding-top: 12px;
+      padding-bottom: 12px;
+      text-align: left;
+      background-color: #8254F8;
+      color: white;
+      min-width: 40%;
+    }
+    td {
+      max-width: 60%;
+      font-weight: 600;
+    }
+    .participant-organizer {
+      color: #8254F8;
+    }
+    .participant-creator {
+      color: blue;
+    }
+    .footer {
+      margin-top: 20px;
+      text-align: left;
+      font-size: 12px;
+      color: #666;
+    }
+    .button {
+      display: inline-block;
+      padding: 10px 20px;
+      font-size: 16px;
+      color: #fff;
+      background-color: #8254F8;
+      text-align: left;
+      text-decoration: none;
+      border-radius: 5px;
+      margin-top: 20px;
+    }
+    .banner {
+        height: 50px;
+        background: #ffffff;
+        color: #8254F8;
+        text-align: right;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-size: 40px;
+        gap: 10px;
+        padding: 20px;
+        font-weight: bold;
+    }
+    .item {
+      border: 1px solid #8254F8;
+      border-radius: 5px;
+      color: #8254F8;
+      font-weight: 600;
+      padding: 10px;
+      margin-bottom: 10px;
+      width: fit-content;
+      text-transform: capitalize
+    }
+  </style>
+</head>
+<body>
+    <div class='container'>
+        <section class="banner">
+            <img src='https://discoursefy-public-bucket.s3.ap-south-1.amazonaws.com/Logo.jpg' /> <span> Discoursefy.</span>
+        </section>
+        <div class='wrapper'>
+          <h2>New Comment Added to Meeting</h2>
+          <p>{{name}} has added a new comment to the meeting.</p>
+          <p><span class="comment-label">Comment:</span> <span class="comment">{{comment}}</span></p>
+          <p>If you have any questions or need further information, please do not hesitate to reach out.</p>
+          <div>
+              <a href="{{discussionUrl}}" class="button">Go to Discussion Page</a>
+          </div>
+          <p>
+              Best regards,<br>
+              Discoursefy.
+          </p>
+      </div>
+</html>

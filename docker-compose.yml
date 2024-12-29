@@ -1,0 +1,24 @@
+version: '3.3'
+services:
+  deno:
+    image: 'mdillon/postgis:10-alpine'
+    container_name: deno.db
+    ports:
+      - '5432:5432'
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=Click123
+      - POSTGRES_DB=deno
+
+  # snappy-server:
+  #   build:
+  #     context: .
+  #   container_name: snappy-auth-server
+  #   ports:
+  #     - '3000:3000'
+  #   restart: always
+  #   depends_on:
+  #     - snappy-db
+  #   command: ["npm", "run","start:dev"]
+  #   env_file:
+  #     - ./.env
