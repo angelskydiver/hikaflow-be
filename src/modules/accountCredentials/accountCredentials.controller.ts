@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, Request } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AccountCredentialService } from './accountCredentials.service';
 import { RegisterAccountCredentialRequestDto } from './dto/accountCredentials.request.dto';
@@ -12,7 +12,13 @@ export class AccountCredentialController {
 
   @ApiBearerAuth()
   @Post('/register')
-  Register(@Body() data: RegisterAccountCredentialRequestDto) {
-    return this._accountCredentialService.register(data);
+  async Register(
+    @Body() data: RegisterAccountCredentialRequestDto,
+    @Request() req: any,
+  ) {
+    return await this._accountCredentialService.register(
+      data,
+      req.user.accountId,
+    );
   }
 }

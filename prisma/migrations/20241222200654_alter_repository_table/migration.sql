@@ -1,3 +1,0 @@
--- AlterTable
-ALTER TABLE "PullRequest" ALTER COLUMN "summary" DROP DEFAULT,
-ALTER COLUMN "summary" SET DATA TYPE TEXT;

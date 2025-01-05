@@ -24,7 +24,6 @@ export class RepositoryController {
   @ApiBearerAuth()
   @Get('/github')
   GithubRepositories(@Request() req: any) {
-    console.log('req: ', req.user);
     return this._repositoryService.githubRepositories(req.user.accountId);
   }
 
@@ -34,7 +33,6 @@ export class RepositoryController {
     @Query() params: GithubRepositoryBranches,
     @Request() req: any,
   ) {
-    console.log('req: ', req.user);
     return this._repositoryService.githubRepositoryBranches(
       params,
       req.user.accountId,
@@ -47,7 +45,6 @@ export class RepositoryController {
     @Request() req: any,
     @Body() data: RegisterRepositoryRequestDto,
   ) {
-    console.log('req: ', req.user);
     return this._repositoryService.registerRepository(data, req.user.accountId);
   }
 
@@ -82,13 +79,15 @@ export class RepositoryController {
   }
 
   @ApiBearerAuth()
-  @Get('/:repositoryId')
+  @Get('/:repositoryId/:orgId')
   async GetRepositoryById(
     @Request() req: any,
     @Param('repositoryId') repositoryId: string,
+    @Param('orgId') orgId: string,
   ) {
     return await this._repositoryService.getRepositoryById(
       repositoryId,
+      orgId,
       req.user.accountId,
     );
   }

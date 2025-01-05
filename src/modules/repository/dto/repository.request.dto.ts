@@ -26,6 +26,9 @@ export class RegisterRepositoryRequestDto {
   @ApiProperty({ example: 'main', required: true })
   baseBranch: string;
 
+  @ApiProperty({ example: 'hikaflow', required: true })
+  organizationId: string;
+
   @ApiProperty({ example: 'discoursefy.com', required: false }) // Assuming the repository name is in the format owner/repoName
   webhookEndpoint: string;
 }

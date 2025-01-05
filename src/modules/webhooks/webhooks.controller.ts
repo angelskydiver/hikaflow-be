@@ -11,7 +11,6 @@ export class WebhooksController {
   @Post('/ping') // The route is /webhooks/ping
   async handlePing(@Body() body: any) {
     console.log('Ping received!');
-    console.log('Request body:', body); // Log the body of the request
     if (body.pull_request) {
       console.log(
         "body.action != 'closed' && body?.pull_request?.merged: ",
@@ -22,7 +21,10 @@ export class WebhooksController {
       } else if (body.action == 'closed' && body?.pull_request?.merged) {
         return await this._webhooksService.generatePrReport(body);
       } else if (body.action == 'synchronize') {
+        return await this._webhooksService.syncPR(body);
       }
+    } else {
+      console.log('Request body:', body); // Log the body of the request
     }
     return 'Pong'; // Respond with 'Pong' when ping is received
   }
@@ -30,7 +32,7 @@ export class WebhooksController {
   @Public()
   @Get('diffTesting')
   async DiffFunctionality() {
-    return await this._webhooksService.generatePrReport();
+    return await this._webhooksService.syncPR(null);
   }
   //
 }

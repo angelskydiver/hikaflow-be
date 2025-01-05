@@ -10,6 +10,7 @@ import { AccountModule } from './modules/account/account.module';
 import { AccountCredentialModule } from './modules/accountCredentials/accountCredentials.module';
 import { CommentModule } from './modules/comment/comment.module';
 import { ExecutiveReportModule } from './modules/executiveReport/executiveReport.module';
+import { OrganizationModule } from './modules/organization/organization.module';
 import { PullRequestModule } from './modules/pullRequest/pullRequest.module';
 import { RepositoryModule } from './modules/repository/repository.module';
 import { UsersModule } from './modules/user/user.module';
@@ -48,6 +49,7 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
     PullRequestModule,
     CommentModule,
     ExecutiveReportModule,
+    OrganizationModule,
   ],
   controllers: [AppController],
   providers: [

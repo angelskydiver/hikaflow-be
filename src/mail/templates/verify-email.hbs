@@ -1,4 +1,3 @@
-<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -18,7 +17,14 @@
         border-radius: 5px;
         box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
         overflow: hidden;
-        border-top: 5px solid #8254f8;
+        border-top: 5px solid #008c6e;
+      }
+      .logoImage {
+        font-size: 48px;
+        font-weight: bold;
+        color: #008c6e;
+        margin-bottom: 20px;
+        text-align: left;
       }
       .wrapper {
         padding: 20px;
@@ -26,10 +32,10 @@
       .banner {
         height: 50px;
         background: #ffffff;
-        color: #8254f8;
-        text-align: center;
+        color: #008c6e;
+        text-align: left;
         display: flex;
-        justify-content: center;
+        justify-content: start;
         align-items: center;
         font-size: 40px;
         gap: 10px;
@@ -47,7 +53,7 @@
       .otp {
         font-size: 24px;
         font-weight: bold;
-        color: #8254f8;
+        color: #008c6e;
         background-color: #e7e7ff;
         padding: 15px;
         border-radius: 5px;
@@ -59,7 +65,7 @@
         padding: 12px 25px;
         font-size: 18px;
         color: #fff;
-        background-color: #8254f8;
+        background-color: #008c6e;
         text-align: center;
         text-decoration: none;
         border-radius: 5px;
@@ -67,7 +73,7 @@
         transition: background-color 0.3s;
       }
       .button:hover {
-        background-color: #6a3fcf;
+        background-color: #222e35;
       }
       .footer {
         margin-top: 20px;
@@ -80,19 +86,15 @@
   <body>
     <div class="container">
       <section class="banner">
-        <img
-          src="https://discoursefy-public-bucket.s3.ap-south-1.amazonaws.com/logo+h.png"
-          alt="Discoursefy Logo"
-          style="height: 50px"
-        />
+        <h1 class="logoImage">Hikaflow</h1>
       </section>
       <div class="wrapper">
         <h1>Email Verification</h1>
-        <p>Hello {{ userName }},</p>
+        <p>Hello {{userName}},</p>
         <p>
           Please use the following OTP (One-Time Password) to verify your email:
         </p>
-        <p class="otp">{{ otp }}</p>
+        <p class="otp">{{otp}}</p>
         <p>
           The OTP will expire in 10 minutes. If you didn't request this
           verification, you can safely ignore this email.
@@ -102,9 +104,8 @@
         </p>
         <p>
           Best regards,<br />
-          The Discoursefy Team
+          The Hikaflow Team
         </p>
-        <p class="footer">Learn. Evaluate. Get Noticed.<br />Discoursefy</p>
       </div>
     </div>
   </body>

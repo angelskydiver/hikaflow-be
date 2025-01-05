@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { PrismaModule } from 'src/prisma/prisma.module';
 import { CommentModule } from '../comment/comment.module';
 import { ExecutiveReportModule } from '../executiveReport/executiveReport.module';
 import { PullRequestModule } from '../pullRequest/pullRequest.module';
@@ -8,6 +9,7 @@ import { WebhooksService } from './webhooks.service';
 
 @Module({
   imports: [
+    PrismaModule,
     PullRequestModule,
     RepositoryModule,
     CommentModule,

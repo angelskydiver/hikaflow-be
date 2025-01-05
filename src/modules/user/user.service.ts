@@ -60,6 +60,10 @@ export class UserService {
     // let Account: Account = await this._prismaService.account.findUnique({
     //   where: { userId: User.id },
     // });
+    let accountCreds = await this._prismaService.accountCredentials.findFirst({
+      where: { accountId: User?.account?.id },
+    });
+    User.account['gitConnected'] = Boolean(accountCreds);
     const payload = {
       accountId: User?.account?.id,
       userId: User.id,

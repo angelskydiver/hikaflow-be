@@ -44,17 +44,43 @@ model User {
 }
 
 model Account {
-  id                 String               @id @default(uuid())
-  status             String               @default("active")
-  subscribedPlanType Int                  @default(1)
-  tokens             Int                  @default(0)
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-  userId             String               @unique
-  user               User                 @relation(fields: [userId], references: [id])
-  verified           Boolean              @default(false)
-  repositories       AccountRepository[] // Many-to-many relationship
-  accountCredentials AccountCredentials[]
+  id                  String                 @id @default(uuid())
+  status              String                 @default("active")
+  subscribedPlanType  Int                    @default(1)
+  tokens              Int                    @default(0)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  userId              String                 @unique
+  user                User                   @relation(fields: [userId], references: [id])
+  verified            Boolean                @default(false)
+  repositories        AccountRepository[] // Many-to-many relationship
+  accountCredentials  AccountCredentials[]
+  accountOrganization OrganizationAccounts[]
+}
+
+model Organization {
+  id   String  @id @default(uuid())
+  name String  @unique
+  logo String? @default("")
+
+  organizationalAccount OrganizationAccounts[] // Many-to-many relationship
+  repositories          Repository[] // One-to-many relation with repositories
+  AccountRepository     AccountRepository[] // Many-to-many relationship
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model OrganizationAccounts {
+  id             String       @id @default(uuid())
+  accountId      String
+  organizationId String
+  role           String       @default("member")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  account        Account      @relation(fields: [accountId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model AccountCredentials {
@@ -79,28 +105,33 @@ model VerificationCode {
 
 // repositories
 
+// repository can only be ad by admin
 model Repository {
-  id           String              @id @default(uuid())
-  repositoryId String              @unique // github repository reference
-  provider     RepositoryProvider  @default(GITHUB)
-  name         String
-  owner        String              @default("mudassir693")
-  baseBranch   String              @default("main")
-  private      Boolean             @default(false)
-  description  String              @default("")
-  language     String              @default("")
-  accounts     AccountRepository[] // Many-to-many relationship
-  // pullRequests PullRequest[]
-  comments     Comment[]
-  reports      ExecutiveReport[]
+  id             String             @id @default(uuid())
+  repositoryId   String             @unique // GitHub repository reference
+  provider       RepositoryProvider @default(GITHUB)
+  name           String
+  owner          String             @default("mudassir693")
+  baseBranch     String             @default("main")
+  private        Boolean            @default(false)
+  description    String             @default("")
+  language       String             @default("")
+  organizationId String? // Foreign key for the organization (optional)
+  organization   Organization?      @relation(fields: [organizationId], references: [id]) // Optional relation
+
+  accounts AccountRepository[] // Many-to-many relationship
+  comments Comment[]
+  reports  ExecutiveReport[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model AccountRepository {
-  accountId    String
-  repositoryId String
+  accountId      String
+  repositoryId   String
+  organizationId String? // Foreign key for the organization (optional)
+  organization   Organization? @relation(fields: [organizationId], references: [id]) // Optional relation
 
   account     Account          @relation(fields: [accountId], references: [id])
   repository  Repository       @relation(fields: [repositoryId], references: [id])
@@ -163,5 +194,5 @@ model ExecutiveReport {
   prNumber     Int
   summary      Json   @default("{}")
 
-  repository Repository @relation(fields: [repositoryId], references: [id])
+  repository Repository @relation(fields: [repositoryId], references: [repositoryId])
 }

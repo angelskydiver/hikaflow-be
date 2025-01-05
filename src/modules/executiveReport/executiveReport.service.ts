@@ -17,4 +17,20 @@ export class ExecutiveReportService {
       throw new BadRequestException(error.message);
     }
   }
+
+  async getExecutiveReportById(id) {
+    try {
+      let report = this._prismaService.executiveReport.findUnique({
+        where: { id },
+        include: { repository: true },
+      });
+      if (!report) {
+        throw new BadRequestException('Report not found');
+      }
+      return report;
+    } catch (error) {
+      console.log(error.message);
+      throw new BadRequestException(error.message);
+    }
+  }
 }

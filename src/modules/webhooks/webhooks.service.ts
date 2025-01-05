@@ -6,29 +6,105 @@ import {
   commitInfo,
   fetchPrCommits,
   fetchPrFiles,
+  parseGitHubPatchResponse,
 } from 'src/config/helpers/repositories/github.helper';
 import { filterFiles } from 'src/config/helpers/unnecessary.files.helper';
 import { CommentService } from '../comment/comment.service';
 import { ExecutiveReportService } from '../executiveReport/executiveReport.service';
 import { PullRequestService } from '../pullRequest/pullRequest.service';
 import { RepositoryService } from '../repository/repository.service';
+import { PrismaService } from './../../prisma/prisma.service';
 
 @Injectable()
 export class WebhooksService {
   // private _repositoryService: RepositoryService
   constructor(
+    private _prismaService: PrismaService,
     private _pullRequestService: PullRequestService,
     private _repositoryService: RepositoryService,
     private _commentService: CommentService,
     private _executiveReportService: ExecutiveReportService,
   ) {}
 
+  async syncPR(data: any) {
+    try {
+      // data.pull_request.commits_url
+
+      let prCommits = await fetchPrCommits(data.pull_request.commits_url); // we need to use Codedeno github token here.
+      let lastPrCommit = prCommits[prCommits.length - 1].sha;
+      // // commitInfo()
+
+      // // data.pull_request.patch_url
+      let prInfo = {
+        id: data.repository.id.toString(),
+        owner: data.repository.owner.login,
+        prNumber: data.number,
+        repo: data.repository.name,
+        lastCommit: lastPrCommit,
+      };
+
+      let resp = await commitInfo({
+        owner: prInfo.owner,
+        repo: prInfo.repo,
+        commitSha: lastPrCommit,
+      });
+      let fileChanges = parseGitHubPatchResponse(resp.files);
+      // let fileChanges = await synchronizePrPatches(data.pull_request.diff_url);
+      let changes = [];
+      fileChanges.forEach((file) => {
+        changes = [
+          ...changes,
+          ...file.changes
+            .filter((change) => change.type === 'addition')
+            .map((change) =>
+              change.lines.map((eachline, i) => ({
+                lineNumber: change.startLine + i,
+                content: eachline,
+                fileName: file.file,
+              })),
+            )
+            .flat(),
+        ];
+      });
+
+      let deepSeekWrapper = new DeepSeek();
+      let AiResponse = await deepSeekWrapper.analyzeCodeFilesForIssues(changes);
+
+      // lastCommit should need to send.
+      let commentsMapping = AiResponse.codeIssues.map((data) =>
+        commentPr(data, prInfo),
+      );
+      let pullRequest = await this._prismaService.pullRequest.findFirst({
+        where: { prUrl: data.pull_request.url },
+      });
+      // await this._pullRequestService.registerPullRequest(pullRequestPayload);
+      prInfo['prId'] = pullRequest.id;
+
+      let createCommentsMapping = AiResponse.codeIssues.map((data) => {
+        let payload = {
+          repositoryId: prInfo.id,
+          prId: pullRequest.id,
+          content: data.content,
+          line: data.line,
+          file: data.file,
+          issue: data.issue,
+          issueCategory: data.category,
+        };
+        return this._commentService.createComment(payload);
+      });
+
+      await Promise.all(commentsMapping);
+      await Promise.all(createCommentsMapping);
+
+      return changes;
+    } catch (error) {
+      console.log(error.message);
+      throw new BadRequestException(error.message);
+    }
+  }
+
   async managePRs(data: any) {
     try {
-      console.log(
-        'data.pull_request.commits_url: ',
-        data.pull_request.commits_url,
-      );
       let prCommits = await fetchPrCommits(data.pull_request.commits_url); // we need to use Codedeno github token here.
       console.log('PR commits: ', prCommits);
 
@@ -118,14 +194,6 @@ export class WebhooksService {
       let contributorsAndCodeOwnership =
         await this._analyzeContributorsAndCodeOwnership(commits);
 
-      console.log({
-        modified,
-        added,
-        complexityAndDuplication,
-        codeChurn,
-        contributorsAndCodeOwnership,
-      });
-
       let repository = await this._repositoryService.getRepository(
         {
           repositoryId: data.repository.id.toString(),
@@ -133,7 +201,7 @@ export class WebhooksService {
         {},
       );
       let executiveReportPayload = {
-        repositoryId: repository.id,
+        repositoryId: repository.repositoryId,
         prNumber: data.number,
         summary: {
           modified,
@@ -358,12 +426,12 @@ export class WebhooksService {
         return this._commentService.createComment(payload);
       });
 
-      await Promise.all(commentsMapping);
-      await Promise.all(createCommentsMapping);
       await this._pullRequestService.updatePullRequest(prInfo.prId, {
         summary: AiResponse.prSummary,
       });
       await commentPrSummary(prInfo, { issue: AiResponse.prSummary });
+      await Promise.all(commentsMapping);
+      await Promise.all(createCommentsMapping);
 
       return {
         fileChanges,
@@ -392,10 +460,5 @@ export class WebhooksService {
       added: addedCount,
       modified: modifiedCount,
     };
-  }
-
-  private _removeUnnecessaryFiles(files) {
-    try {
-    } catch (error) {}
   }
 }

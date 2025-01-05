@@ -35,15 +35,25 @@ export class PullRequestService {
 
   async recentPullRequests(accountId: string, payload: GetPullRequestDto) {
     try {
-      console.log('payload:: ', payload);
       let repositoryIdToTitleMap = {};
       let accountRepositories;
       let repositoryIds;
 
+      let accountOrganization =
+        await this._prismaService.organizationAccounts.findMany({
+          where: {
+            accountId: accountId,
+          },
+        });
+
+      let organizationIds = accountOrganization.map(
+        (data) => data.organizationId,
+      );
+
       if (!payload.repositoryId) {
         accountRepositories =
           await this._prismaService.accountRepository.findMany({
-            where: { accountId: accountId },
+            where: { organizationId: { in: organizationIds } },
             include: { repository: true },
           });
         repositoryIds = accountRepositories.map((data) => {
@@ -59,7 +69,6 @@ export class PullRequestService {
           }),
         ];
 
-        console.log('accountRepositories:: ', accountRepositories);
         repositoryIds = [accountRepositories[0].repository.repositoryId];
         repositoryIdToTitleMap[accountRepositories[0].repository.repositoryId] =
           accountRepositories[0].repository.name;
@@ -78,10 +87,19 @@ export class PullRequestService {
         include: { comments: true },
       });
 
-      pullRequests.forEach((pullRequest) => {
+      let prReportMapping = pullRequests.map((data) =>
+        this._prismaService.executiveReport.findFirst({
+          where: { prNumber: data.prNumber, repositoryId: data.repositoryId },
+        }),
+      );
+
+      let prReport = await Promise.all(prReportMapping);
+
+      pullRequests.forEach((pullRequest, index) => {
         pullRequest.repositoryTitle =
           repositoryIdToTitleMap[pullRequest.repositoryId];
         pullRequest.commentCount = pullRequest.comments.length;
+        pullRequest.report = prReport[index];
       });
 
       let prCount = await this._prismaService.pullRequest.count({
