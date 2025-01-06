@@ -8,14 +8,10 @@ export class WebhooksController {
   // Simple POST method to handle the ping and log the body
 
   @Public()
-  @Post('/ping') // The route is /webhooks/ping
+  @Post('/github') // The route is /webhooks/ping
   async handlePing(@Body() body: any) {
-    console.log('Ping received!');
+    // console.log('Ping received!');
     if (body.pull_request) {
-      console.log(
-        "body.action != 'closed' && body?.pull_request?.merged: ",
-        body.action == 'closed' && body?.pull_request?.merged,
-      );
       if (body.action == 'opened') {
         return await this._webhooksService.managePRs(body);
       } else if (body.action == 'closed' && body?.pull_request?.merged) {
@@ -26,7 +22,9 @@ export class WebhooksController {
     } else {
       console.log('Request body:', body); // Log the body of the request
     }
-    return 'Pong'; // Respond with 'Pong' when ping is received
+    return {
+      success: true,
+    }; // Respond with 'Pong' when ping is received
   }
 
   @Public()
