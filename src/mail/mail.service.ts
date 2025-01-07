@@ -106,7 +106,7 @@ export class MailService {
       await this.mailerService.sendMail({
         to: user.email,
         // from: '"Support Team" <support@example.com>', // override default from
-        subject: 'Welcome to Codedeno! Confirm your Email 🚀',
+        subject: 'Welcome to Hikaflow! Confirm your Email 🚀',
         template: './verify-email', // `.hbs` extension is appended automatically
         context: {
           // ✏️ filling curly brackets with content

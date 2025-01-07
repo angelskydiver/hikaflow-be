@@ -28,7 +28,15 @@ export class WebhooksService {
 
   async syncPR(data: any) {
     try {
-      // data.pull_request.commits_url
+      let isBaseBranchMatch = await this._prismaService.repository.findUnique({
+        where: {
+          repositoryId: data.repository.id.toString(),
+          baseBranch: data.pull_request.base.ref,
+        },
+      });
+      if (!isBaseBranchMatch) {
+        return;
+      }
 
       let prCommits = await fetchPrCommits(data.pull_request.commits_url); // we need to use Codedeno github token here.
       let lastPrCommit = prCommits[prCommits.length - 1].sha;
@@ -105,6 +113,15 @@ export class WebhooksService {
 
   async managePRs(data: any) {
     try {
+      let isBaseBranchMatch = await this._prismaService.repository.findUnique({
+        where: {
+          repositoryId: data.repository.id.toString(),
+          baseBranch: data.pull_request.base.ref,
+        },
+      });
+      if (!isBaseBranchMatch) {
+        return;
+      }
       let prCommits = await fetchPrCommits(data.pull_request.commits_url); // we need to use Codedeno github token here.
       console.log('PR commits: ', prCommits);
 
@@ -147,6 +164,16 @@ export class WebhooksService {
 
   async generatePrReport(data?: any) {
     try {
+      let isBaseBranchMatch = await this._prismaService.repository.findUnique({
+        where: {
+          repositoryId: data.repository.id.toString(),
+          baseBranch: data.pull_request.base.ref,
+        },
+      });
+      if (!isBaseBranchMatch) {
+        return;
+      }
+
       let prCommits = await fetchPrCommits(data.pull_request.commits_url);
       // let prCommits = await fetchPrCommits(
       //   'https://api.github.com/repos/mudassir693/mini-microservices-blog-app/pulls/22/commits',
