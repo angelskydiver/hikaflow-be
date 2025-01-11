@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { AccountCredentialsType } from '@prisma/client';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
 import {
   commentPr,
@@ -9,6 +10,7 @@ import {
   parseGitHubPatchResponse,
 } from 'src/config/helpers/repositories/github.helper';
 import { filterFiles } from 'src/config/helpers/unnecessary.files.helper';
+import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
 import { CommentService } from '../comment/comment.service';
 import { ExecutiveReportService } from '../executiveReport/executiveReport.service';
 import { PullRequestService } from '../pullRequest/pullRequest.service';
@@ -17,6 +19,9 @@ import { PrismaService } from './../../prisma/prisma.service';
 
 const MAX_TOKENS = 63000;
 const MIN_TOKENS = 10;
+const DEFAULT_TOKENS = 50;
+const DEFAULT_TOKENS_2 = 150;
+
 @Injectable()
 export class WebhooksService {
   // private _repositoryService: RepositoryService
@@ -26,7 +31,39 @@ export class WebhooksService {
     private _repositoryService: RepositoryService,
     private _commentService: CommentService,
     private _executiveReportService: ExecutiveReportService,
+    private _accountCredentialService: AccountCredentialService,
   ) {}
+
+  private _accountCredentialByRepository = async (data) => {
+    let repository = await this._prismaService.repository.findUnique({
+      where: {
+        repositoryId: data.repository.id.toString(),
+      },
+    });
+
+    let organization = await this._prismaService.organization.findFirst({
+      where: {
+        id: repository.organizationId,
+      },
+    });
+
+    let organizationAccount =
+      await this._prismaService.organizationAccounts.findFirst({
+        where: {
+          organizationId: organization.id,
+          role: 'ADMIN',
+        },
+      });
+
+    let credentialPayload = {
+      accountId: organizationAccount.accountId,
+      type: AccountCredentialsType.GITHUB_TOKEN,
+    };
+    let accountGithubCredentials =
+      await this._accountCredentialService.getAccountToken(credentialPayload);
+
+    return { decryptedToken: accountGithubCredentials.decryptedToken };
+  };
 
   async syncPR(data: any) {
     try {
@@ -40,7 +77,13 @@ export class WebhooksService {
         return;
       }
 
-      let prCommits = await fetchPrCommits(data.pull_request.commits_url); // we need to use Codedeno github token here.
+      let { decryptedToken } = await this._accountCredentialByRepository(data);
+
+      // , accountGithubCredentials.decryptedToken
+      let prCommits = await fetchPrCommits(
+        data.pull_request.commits_url,
+        decryptedToken,
+      ); // we need to use Codedeno github token here.
       let lastPrCommit = prCommits[prCommits.length - 1].sha;
       // // commitInfo()
 
@@ -124,7 +167,12 @@ export class WebhooksService {
       if (!isBaseBranchMatch) {
         return;
       }
-      let prCommits = await fetchPrCommits(data.pull_request.commits_url); // we need to use Codedeno github token here.
+
+      let { decryptedToken } = await this._accountCredentialByRepository(data);
+      let prCommits = await fetchPrCommits(
+        data.pull_request.commits_url,
+        decryptedToken,
+      ); // we need to use Codedeno github token here.
       console.log('PR commits: ', prCommits);
 
       let lastPrCommit = prCommits[prCommits.length - 1].sha;
@@ -176,7 +224,12 @@ export class WebhooksService {
         return;
       }
 
-      let prCommits = await fetchPrCommits(data.pull_request.commits_url);
+      let { decryptedToken } = await this._accountCredentialByRepository(data);
+
+      let prCommits = await fetchPrCommits(
+        data.pull_request.commits_url,
+        decryptedToken,
+      );
       // let prCommits = await fetchPrCommits(
       //   'https://api.github.com/repos/mudassir693/mini-microservices-blog-app/pulls/22/commits',
       // );
