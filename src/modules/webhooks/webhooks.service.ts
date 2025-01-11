@@ -16,6 +16,7 @@ import { RepositoryService } from '../repository/repository.service';
 import { PrismaService } from './../../prisma/prisma.service';
 
 const MAX_TOKENS = 63000;
+const MIN_TOKENS = 10;
 @Injectable()
 export class WebhooksService {
   // private _repositoryService: RepositoryService
