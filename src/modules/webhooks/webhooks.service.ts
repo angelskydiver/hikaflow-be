@@ -18,6 +18,8 @@ import { PrismaService } from './../../prisma/prisma.service';
 const MAX_TOKENS = 63000;
 const MIN_TOKENS = 10;
 const DEFAULT_TOKENS = 50;
+const DEFAULT_TOKENS_2 = 150;
+
 
 @Injectable()
 export class WebhooksService {
