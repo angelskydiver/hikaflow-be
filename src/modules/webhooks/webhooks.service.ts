@@ -15,6 +15,7 @@ import { PullRequestService } from '../pullRequest/pullRequest.service';
 import { RepositoryService } from '../repository/repository.service';
 import { PrismaService } from './../../prisma/prisma.service';
 
+const MAX_TOKENS = 63000;
 @Injectable()
 export class WebhooksService {
   // private _repositoryService: RepositoryService
@@ -445,7 +446,6 @@ export class WebhooksService {
       let allSummaries = [];
 
       for (const [fileName, changes] of changesByFile.entries()) {
-        const MAX_TOKENS = 63000; // DeepSeek's token limit
         const tokenizer = require('gpt-3-encoder'); // Use a tokenizer library
 
         let tokenCount = tokenizer.encode(JSON.stringify(changes)).length;
@@ -539,7 +539,6 @@ export class WebhooksService {
     try {
       let deepSeekWrapper = new DeepSeek();
       const tokenizer = require('gpt-3-encoder'); // Tokenizer library
-      const MAX_TOKENS = 63000; // DeepSeek's token limit
 
       // Helper function to calculate token count for a block of changes
       const calculateTokenCount = (block) => {
