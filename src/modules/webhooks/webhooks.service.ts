@@ -415,37 +415,94 @@ export class WebhooksService {
   async diffFunctionality2(prInfo: any) {
     try {
       let fileChanges = await fetchPrFiles(prInfo);
+      let { duplicateIdenticalCodeIssue } =
+        await this.detectDuplicateAndIdenticalCode(fileChanges);
       let deepSeekWrapper = new DeepSeek();
-      console.log('fileChanges:: ', fileChanges);
-      let changes = [];
+
+      // Step 1: Group changes by file
+      const changesByFile = new Map<string, any[]>();
+
       fileChanges.forEach((file) => {
-        changes = [
-          ...changes,
-          ...file.changes
-            .filter((change) => change.type === 'addition')
-            .map((change) =>
-              change.lines.map((eachline, i) => ({
-                lineNumber: change.startLine + i,
-                content: eachline,
-                fileName: file.file,
-              })),
-            )
-            .flat(),
-        ];
+        const fileChanges = file.changes
+          .filter((change) => change.type === 'addition')
+          .map((change) =>
+            change.lines.map((eachline, i) => ({
+              lineNumber: change.startLine + i,
+              content: eachline,
+              fileName: file.file,
+            })),
+          )
+          .flat();
+
+        if (changesByFile.has(file.file)) {
+          changesByFile.get(file.file).push(...fileChanges);
+        } else {
+          changesByFile.set(file.file, fileChanges);
+        }
       });
 
-      let AiResponse = await deepSeekWrapper.analyzeCodeFilesForIssues(changes);
+      let allIssues = duplicateIdenticalCodeIssue;
+      let allSummaries = [];
 
-      let commentsMapping = AiResponse.codeIssues.map((data) =>
-        commentPr(data, prInfo),
-      );
+      for (const [fileName, changes] of changesByFile.entries()) {
+        const MAX_TOKENS = 63000; // DeepSeek's token limit
+        const tokenizer = require('gpt-3-encoder'); // Use a tokenizer library
 
-      let createCommentsMapping = AiResponse.codeIssues.map((data) => {
+        let tokenCount = tokenizer.encode(JSON.stringify(changes)).length;
+
+        if (tokenCount > MAX_TOKENS) {
+          // If the file's changes exceed the token limit, split into smaller chunks
+          let chunks = [];
+          let currentChunk = [];
+          let currentTokenCount = 0;
+
+          for (const change of changes) {
+            const changeTokens = tokenizer.encode(
+              JSON.stringify(change),
+            ).length;
+
+            if (currentTokenCount + changeTokens > MAX_TOKENS) {
+              chunks.push(currentChunk);
+              currentChunk = [change];
+              currentTokenCount = changeTokens;
+            } else {
+              currentChunk.push(change);
+              currentTokenCount += changeTokens;
+            }
+          }
+
+          if (currentChunk.length > 0) {
+            chunks.push(currentChunk);
+          }
+
+          // Analyze each chunk
+          for (const chunk of chunks) {
+            const AiResponse =
+              await deepSeekWrapper.analyzeCodeFilesForIssues(chunk);
+            allIssues.push(...AiResponse.codeIssues);
+            allSummaries.push(AiResponse.prSummary);
+          }
+        } else {
+          // If the file's changes are within the token limit, analyze as a single chunk
+          const AiResponse =
+            await deepSeekWrapper.analyzeCodeFilesForIssues(changes);
+          allIssues.push(...AiResponse.codeIssues);
+          allSummaries.push({ prSummary: AiResponse.prSummary });
+        }
+      }
+
+      // Step 3: Combine summaries into a single PR summary
+      const combinedSummary = allSummaries;
+
+      // Step 4: Create comments and update PR
+      let commentsMapping = allIssues.map((data) => commentPr(data, prInfo));
+
+      let createCommentsMapping = allIssues.map((data) => {
         let payload = {
           repositoryId: prInfo.id,
           prId: prInfo.prId,
           content: data.content,
-          line: data.line,
+          line: parseInt(data.line),
           file: data.file,
           issue: data.issue,
           issueCategory: data.category,
@@ -453,22 +510,230 @@ export class WebhooksService {
         return this._commentService.createComment(payload);
       });
 
+      let analyzeCombineSummary =
+        await deepSeekWrapper.analyzeCombineSummary(combinedSummary);
+
       await this._pullRequestService.updatePullRequest(prInfo.prId, {
-        summary: AiResponse.prSummary,
+        summary: analyzeCombineSummary.prSummary,
       });
-      await commentPrSummary(prInfo, { issue: AiResponse.prSummary });
+      await commentPrSummary(prInfo, {
+        issue: analyzeCombineSummary.prSummary,
+      });
       await Promise.all(commentsMapping);
       await Promise.all(createCommentsMapping);
 
       return {
         fileChanges,
-        AiResponse,
+        AiResponse: {
+          codeIssues: allIssues,
+          prSummary: analyzeCombineSummary.prSummary,
+        },
       };
     } catch (error) {
       console.log(error.message);
       throw new BadRequestException(error.message);
     }
   }
+
+  async detectDuplicateAndIdenticalCode(fileChanges: any) {
+    try {
+      let deepSeekWrapper = new DeepSeek();
+      const tokenizer = require('gpt-3-encoder'); // Tokenizer library
+      const MAX_TOKENS = 63000; // DeepSeek's token limit
+
+      // Helper function to calculate token count for a block of changes
+      const calculateTokenCount = (block) => {
+        return tokenizer.encode(JSON.stringify(block)).length;
+      };
+
+      let chunks = [];
+      let currentChunk = [];
+      let currentTokenCount = 0;
+
+      for (const file of fileChanges) {
+        let fileBlock = [];
+
+        for (const change of file.changes.filter(
+          (c) => c.type === 'addition',
+        )) {
+          const lines = change.lines.map((line, i) => ({
+            lineNumber: change.startLine + i,
+            content: line,
+            fileName: file.file,
+          }));
+
+          for (const line of lines) {
+            const lineTokens = calculateTokenCount([line]);
+
+            if (currentTokenCount + lineTokens > MAX_TOKENS) {
+              // Push the current chunk to the chunks array
+              if (currentChunk.length > 0) {
+                chunks.push(currentChunk);
+                currentChunk = [];
+                currentTokenCount = 0;
+              }
+
+              // Start a new chunk if this line doesn't fit in the current chunk
+              if (lineTokens <= MAX_TOKENS) {
+                currentChunk.push(line);
+                currentTokenCount += lineTokens;
+              } else {
+                // Split this line into a standalone chunk
+                chunks.push([line]);
+              }
+            } else {
+              // Add line to the current chunk
+              currentChunk.push(line);
+              currentTokenCount += lineTokens;
+            }
+          }
+        }
+
+        // Finalize the file's block and add to the chunks
+        if (fileBlock.length > 0) {
+          chunks.push(fileBlock);
+        }
+      }
+
+      // Add any remaining changes in the current chunk
+      if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+      }
+
+      console.log('Chunks: ', chunks);
+      console.log('Chunks Count: ', chunks.length);
+
+      // Analyze each chunk with DeepSeek
+      let duplicateCodes = [];
+      let identicalCodes = [];
+      let allIssues = [];
+
+      for (const chunk of chunks) {
+        const AiResponse = await deepSeekWrapper.analyzeDuplicateIdenticalCode(
+          chunk,
+          JSON.stringify(duplicateCodes),
+          JSON.stringify(identicalCodes),
+        );
+
+        duplicateCodes.push(...AiResponse.duplicateCodes);
+        identicalCodes.push(...AiResponse.identicalCodes);
+        allIssues.push(...AiResponse.codeIssues);
+      }
+
+      return {
+        duplicateIdenticalCodeIssue: allIssues,
+        duplicateCodes,
+        identicalCodes,
+      };
+    } catch (error) {
+      console.error(error.message);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  // async diffFunctionality2(prInfo: any) {
+  //   try {
+  //     let fileChanges = await fetchPrFiles(prInfo);
+  //     let deepSeekWrapper = new DeepSeek();
+  //     console.log('fileChanges:: ', fileChanges);
+
+  //     // Step 1: Extract changes and group them into chunks
+  //     let changes = [];
+  //     fileChanges.forEach((file) => {
+  //       changes = [
+  //         ...changes,
+  //         ...file.changes
+  //           .filter((change) => change.type === 'addition')
+  //           .map((change) =>
+  //             change.lines.map((eachline, i) => ({
+  //               lineNumber: change.startLine + i,
+  //               content: eachline,
+  //               fileName: file.file,
+  //             })),
+  //           )
+  //           .flat(),
+  //       ];
+  //     });
+
+  //     // Step 2: Split changes into chunks based on token limits
+  //     const MAX_TOKENS = 63000; // DeepSeek's token limit
+  //     // const tokenizer = require('gpt-3-encoder'); // Use a tokenizer library
+  //     // const MAX_TOKENS = 200;
+
+  //     let chunks = [];
+  //     let currentChunk = [];
+  //     let currentTokenCount = 0;
+
+  //     for (const change of changes) {
+  //       const changeTokens = encode(JSON.stringify(change)).length;
+
+  //       if (currentTokenCount + changeTokens > MAX_TOKENS) {
+  //         // If adding this change exceeds the token limit, start a new chunk
+  //         chunks.push(currentChunk);
+  //         currentChunk = [change];
+  //         currentTokenCount = changeTokens;
+  //       } else {
+  //         // Add the change to the current chunk
+  //         currentChunk.push(change);
+  //         currentTokenCount += changeTokens;
+  //       }
+  //     }
+
+  //     // Add the last chunk
+  //     if (currentChunk.length > 0) {
+  //       chunks.push(currentChunk);
+  //     }
+
+  //     console.log('chunks: ', chunks);
+  //     console.log('chunks.length: ', chunks.length);
+  //     return;
+
+  //     // Step 3: Analyze each chunk with DeepSeek
+  //     let allIssues = [];
+  //     let allSummaries = [];
+
+  //     for (const chunk of chunks) {
+  //       const AiResponse =
+  //         await deepSeekWrapper.analyzeCodeFilesForIssues(chunk);
+  //       allIssues.push(...AiResponse.codeIssues);
+  //       allSummaries.push(AiResponse.prSummary);
+  //     }
+
+  //     // Step 4: Combine summaries into a single PR summary
+  //     const combinedSummary = allSummaries.join('\n\n');
+
+  //     // Step 5: Create comments and update PR
+  //     let commentsMapping = allIssues.map((data) => commentPr(data, prInfo));
+
+  //     let createCommentsMapping = allIssues.map((data) => {
+  //       let payload = {
+  //         repositoryId: prInfo.id,
+  //         prId: prInfo.prId,
+  //         content: data.content,
+  //         line: parseInt(data.line),
+  //         file: data.file,
+  //         issue: data.issue,
+  //         issueCategory: data.category,
+  //       };
+  //       return this._commentService.createComment(payload);
+  //     });
+
+  //     await this._pullRequestService.updatePullRequest(prInfo.prId, {
+  //       summary: combinedSummary,
+  //     });
+  //     await commentPrSummary(prInfo, { issue: combinedSummary });
+  //     await Promise.all(commentsMapping);
+  //     await Promise.all(createCommentsMapping);
+
+  //     return {
+  //       fileChanges,
+  //       AiResponse: { codeIssues: allIssues, prSummary: combinedSummary },
+  //     };
+  //   } catch (error) {
+  //     console.log(error.message);
+  //     throw new BadRequestException(error.message);
+  //   }
+  // }
 
   private _countChanges(files) {
     let addedCount = 0;
