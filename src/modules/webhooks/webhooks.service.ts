@@ -22,6 +22,10 @@ const MIN_TOKENS = 10;
 const DEFAULT_TOKENS = 50;
 const DEFAULT_TOKENS_2 = 150;
 
+const MIN_TOKENS_2 = 10;
+const DEFAULT_TOKENS_3 = 50;
+const DEFAULT_TOKENS_4 = 150;
+
 // const DEFAULT_TOKENS = 50;
 // const DEFAULT_TOKENS_2 = 150;
 
