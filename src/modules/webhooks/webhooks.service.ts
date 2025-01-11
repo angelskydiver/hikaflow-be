@@ -186,6 +186,7 @@ export class WebhooksService {
         prNumber: data.number,
         repo: data.repository.name,
         lastCommit: lastPrCommit,
+        token: decryptedToken,
       };
 
       let repository = await this._repositoryService.getRepository(
@@ -243,6 +244,7 @@ export class WebhooksService {
         prNumber: data.number,
         repo: data.repository.name,
         lastCommit: lastPrCommit,
+        token: decryptedToken,
       };
       // let prInfo = {
       //   owner: 'mudassir693',
