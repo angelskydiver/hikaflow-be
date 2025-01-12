@@ -5,4 +5,6 @@ export const unnecessaryFiles = [
   'jsconfig.json',
   'babel.config.js',
   'package.json',
+
+  'node_modules'
 ];
