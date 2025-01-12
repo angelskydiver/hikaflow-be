@@ -97,12 +97,14 @@ export class WebhooksService {
         prNumber: data.number,
         repo: data.repository.name,
         lastCommit: lastPrCommit,
+        token: decryptedToken,
       };
 
       let resp = await commitInfo({
         owner: prInfo.owner,
         repo: prInfo.repo,
         commitSha: lastPrCommit,
+        token: decryptedToken,
       });
       let fileChanges = parseGitHubPatchResponse(resp.files);
       // let fileChanges = await synchronizePrPatches(data.pull_request.diff_url);
