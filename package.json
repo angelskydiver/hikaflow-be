@@ -38,6 +38,7 @@
     "fetch": "^1.1.0",
     "gpt-3-encoder": "^1.1.4",
     "hbs": "^4.2.0",
+    "jsonwebtoken": "^9.0.2",
     "moment": "^2.30.1",
     "node-fetch": "^3.3.2",
     "nodemailer": "^6.9.16",
