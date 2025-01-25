@@ -17,10 +17,7 @@ import { PullRequestService } from '../pullRequest/pullRequest.service';
 import { RepositoryService } from '../repository/repository.service';
 import { PrismaService } from './../../prisma/prisma.service';
 
-const MAX_TOKENS = 63000;
-const MIN_TOKENS = 10;
-const DEFAULT_TOKENS = 50;
-const DEFAULT_TOKENS_2 = 150;
+const MAX_TOKENS = 62000;
 
 // const DEFAULT_TOKENS = 50;
 // const DEFAULT_TOKENS_2 = 150;
@@ -107,34 +104,64 @@ export class WebhooksService {
         token: decryptedToken,
       });
       let fileChanges = parseGitHubPatchResponse(resp.files);
+
+      let pullRequest = await this._prismaService.pullRequest.findFirst({
+        where: { prUrl: data.pull_request.url },
+      });
+
+      let currentComments = await this._prismaService.comment.findMany({
+        where: {
+          prId: pullRequest.id,
+          file: { in: fileChanges.map((data) => data.file) },
+        },
+      });
+
+      let currentChangesMap = {};
+
+      currentComments.forEach((data) => {
+        currentChangesMap[`${data.file}-${data.line}`] = data;
+      });
+
       // let fileChanges = await synchronizePrPatches(data.pull_request.diff_url);
       let changes = [];
       fileChanges.forEach((file) => {
         changes = [
           ...changes,
           ...file.changes
-            .filter((change) => change.type === 'addition')
+            // .filter((change) => change.type === 'addition')
             .map((change) =>
               change.lines.map((eachline, i) => ({
                 lineNumber: change.startLine + i,
                 content: eachline,
                 fileName: file.file,
+                type: change.type,
               })),
             )
             .flat(),
         ];
       });
 
+      let outdatedComments = [];
+      changes.forEach((data) => {
+        if (currentChangesMap[`${data.fileName}-${data.lineNumber}`]?.id) {
+          outdatedComments.push(
+            currentChangesMap[`${data.fileName}-${data.lineNumber}`].id,
+          );
+        }
+      });
+
+      this._commentService.updateComments(outdatedComments);
+
       let deepSeekWrapper = new DeepSeek();
-      let AiResponse = await deepSeekWrapper.analyzeCodeFilesForIssues(changes);
+      let AiResponse = await deepSeekWrapper.analyzeCodeFilesForIssues(
+        changes.filter((data) => data.type === 'addition'),
+      );
 
       // lastCommit should need to send.
       let commentsMapping = AiResponse.codeIssues.map((data) =>
         commentPr(data, prInfo),
       );
-      let pullRequest = await this._prismaService.pullRequest.findFirst({
-        where: { prUrl: data.pull_request.url },
-      });
+
       // await this._pullRequestService.registerPullRequest(pullRequestPayload);
       prInfo['prId'] = pullRequest.id;
 
@@ -147,12 +174,13 @@ export class WebhooksService {
           file: data.file,
           issue: data.issue,
           issueCategory: data.category,
+          severity: data.priority,
         };
         return this._commentService.createComment(payload);
       });
 
-      await Promise.all(commentsMapping);
-      await Promise.all(createCommentsMapping);
+      await Promise.allSettled(commentsMapping);
+      await Promise.allSettled(createCommentsMapping);
 
       return changes;
     } catch (error) {
@@ -567,6 +595,7 @@ export class WebhooksService {
           file: data.file,
           issue: data.issue,
           issueCategory: data.category,
+          severity: data.priority,
         };
         return this._commentService.createComment(payload);
       });
@@ -580,8 +609,8 @@ export class WebhooksService {
       await commentPrSummary(prInfo, {
         issue: analyzeCombineSummary.prSummary,
       });
-      await Promise.all(commentsMapping);
-      await Promise.all(createCommentsMapping);
+      await Promise.allSettled(commentsMapping);
+      await Promise.allSettled(createCommentsMapping);
 
       return {
         fileChanges,

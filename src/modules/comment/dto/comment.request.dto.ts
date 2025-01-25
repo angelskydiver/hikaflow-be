@@ -6,10 +6,12 @@ export class CreateCommentRequestDto {
   file: string;
   issue: string;
   issueCategory: string;
+  severity: string;
 }
 
 export class GetCommentRequestDto {
   repositoryId: string;
   pageSize: string;
   currentPage: string;
+  prId: string;
 }

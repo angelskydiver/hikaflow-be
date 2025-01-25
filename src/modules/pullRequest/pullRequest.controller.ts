@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Request } from '@nestjs/common';
+import { Controller, Get, Param, Query, Request } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { GetPullRequestDto } from './dto/pullRequest.request.dto';
 import { PullRequestService } from './pullRequest.service';
@@ -17,6 +17,20 @@ export class PullRequestController {
     return await this._pullRequestService.recentPullRequests(
       req.user.accountId,
       payload,
+    );
+  }
+
+  @ApiBearerAuth()
+  @Get('/:pullRequestId/:prNumber/commits')
+  async PullRequestCommits(
+    @Request() req: any,
+    @Param('pullRequestId') pullRequestId: string,
+    @Param('prNumber') prNumber: string,
+  ) {
+    return await this._pullRequestService.pullRequestCommits(
+      pullRequestId,
+      parseInt(prNumber),
+      req.user.accountId,
     );
   }
 }
