@@ -15,6 +15,10 @@ export class OrganizationService {
     accountId: string,
   ) {
     try {
+      let { organizationExist } = await this.organizationExist(accountId);
+      if (organizationExist) {
+        throw new BadRequestException('Organization already exists');
+      }
       await this._prismaService.$transaction(async () => {
         let organization = await this._prismaService.organization.create({
           data: data,

@@ -1,6 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { PullRequest } from '@prisma/client';
+import { AccountCredentialsType, PullRequest } from '@prisma/client';
+import {
+  commitInfo,
+  fetchPrCommits,
+} from 'src/config/helpers/repositories/github.helper';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
 import {
   GetPullRequestDto,
   RegisterPullRequestDto,
@@ -8,7 +13,10 @@ import {
 
 @Injectable()
 export class PullRequestService {
-  constructor(private _prismaService: PrismaService) {}
+  constructor(
+    private _prismaService: PrismaService,
+    private _accountCredentialService: AccountCredentialService,
+  ) {}
 
   async registerPullRequest(
     data: RegisterPullRequestDto,
@@ -108,6 +116,45 @@ export class PullRequestService {
         },
       });
       return { pullRequests, totalPRs: prCount };
+    } catch (error) {
+      console.log(error.message);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  async pullRequestCommits(id: string, prNumber: number, accountId: string) {
+    try {
+      // console.log(id);
+      // let pr = await this._prismaService.pullRequest.findFirst({
+      //   where: { id: id },
+      // });
+      // console.log(pr);
+      // if (!pr) {
+      //   throw new BadRequestException(
+      //     'No pull request found for this repository',
+      //   );
+      // }
+      let repository = await this._prismaService.repository.findUnique({
+        where: { id: id },
+      });
+      let prUrl = `https://api.github.com/repos/${repository.owner}/${repository.name}/pulls/${prNumber}/commits`;
+
+      let token = await this._accountCredentialService.getAccountToken({
+        accountId,
+        type: AccountCredentialsType.GITHUB_TOKEN,
+      });
+      let prCommits = await fetchPrCommits(prUrl, token.decryptedToken);
+
+      let prCommitDetailsMapping = prCommits.map((data) =>
+        commitInfo({
+          owner: repository.owner,
+          repo: repository.name,
+          commitSha: data.sha,
+          token: token.decryptedToken,
+        }),
+      );
+      let prCommitDetails = await Promise.all(prCommitDetailsMapping);
+      return prCommitDetails;
     } catch (error) {
       console.log(error.message);
       throw new BadRequestException(error.message);

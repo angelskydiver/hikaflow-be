@@ -28,6 +28,12 @@ enum AccountCredentialsType {
   BITBUCKET_TOKEN @map("2")
 }
 
+enum CommentStatus {
+  NOT_TRACKED @map("1")
+  OPEN        @map("2")
+  OUTDATED    @map("3")
+}
+
 model User {
   id        String        @id @default(uuid())
   firstName String
@@ -172,14 +178,16 @@ model PullRequest {
 }
 
 model Comment {
-  id            String @id @default(uuid())
+  id            String        @id @default(uuid())
   repositoryId  String
   prId          String
   content       String
   line          Int
   file          String
   issue         String
-  issueCategory String @default("CodeSmells")
+  issueCategory String        @default("CodeSmells")
+  status        CommentStatus @default(NOT_TRACKED)
+  severity      String        @default("LOW")
 
   repository Repository  @relation(fields: [repositoryId], references: [repositoryId])
   pr         PullRequest @relation(fields: [prId], references: [id])
