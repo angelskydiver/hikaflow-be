@@ -124,16 +124,6 @@ export class PullRequestService {
 
   async pullRequestCommits(id: string, prNumber: number, accountId: string) {
     try {
-      // console.log(id);
-      // let pr = await this._prismaService.pullRequest.findFirst({
-      //   where: { id: id },
-      // });
-      // console.log(pr);
-      // if (!pr) {
-      //   throw new BadRequestException(
-      //     'No pull request found for this repository',
-      //   );
-      // }
       let repository = await this._prismaService.repository.findUnique({
         where: { id: id },
       });
