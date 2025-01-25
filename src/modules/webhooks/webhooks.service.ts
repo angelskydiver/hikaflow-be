@@ -174,7 +174,7 @@ export class WebhooksService {
           file: data.file,
           issue: data.issue,
           issueCategory: data.category,
-          severity: data.priority,
+          severity: data.priority.split(' ')[0],
         };
         return this._commentService.createComment(payload);
       });
@@ -595,7 +595,7 @@ export class WebhooksService {
           file: data.file,
           issue: data.issue,
           issueCategory: data.category,
-          severity: data.priority,
+          severity: data.priority.split(' ')[0],
         };
         return this._commentService.createComment(payload);
       });
