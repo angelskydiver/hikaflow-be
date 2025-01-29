@@ -10,6 +10,7 @@
     "prisma:migrate:create": "npx prisma migrate dev --name",
     "prisma:migrate:run": "npx prisma migrate deploy",
     "prisma:migrate:reset": "npx prisma migrate reset --force",
+    "prisma:sync": "npx prisma generate",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",

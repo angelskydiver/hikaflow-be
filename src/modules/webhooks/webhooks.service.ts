@@ -5,6 +5,7 @@ import {
   commentPr,
   commentPrSummary,
   commitInfo,
+  fetchFiles,
   fetchPrCommits,
   fetchPrFiles,
   parseGitHubPatchResponse,
@@ -205,8 +206,7 @@ export class WebhooksService {
       let prCommits = await fetchPrCommits(
         data.pull_request.commits_url,
         decryptedToken,
-      ); // we need to use Codedeno github token here.
-      console.log('PR commits: ', prCommits);
+      );
 
       let lastPrCommit = prCommits[prCommits.length - 1].sha;
 
@@ -239,7 +239,8 @@ export class WebhooksService {
       let pullRequest =
         await this._pullRequestService.registerPullRequest(pullRequestPayload);
       prInfo['prId'] = pullRequest.id;
-      this.diffFunctionality2(prInfo);
+      prInfo['head'] = data.pull_request.head.ref;
+      this.diffFunctionality3(prInfo);
     } catch (error) {
       console.log(error.message);
       throw new BadRequestException(error.message);
@@ -268,7 +269,6 @@ export class WebhooksService {
       //   'https://api.github.com/repos/mudassir693/mini-microservices-blog-app/pulls/22/commits',
       // );
       let lastPrCommit = prCommits[prCommits.length - 1].sha;
-      console.log('lastPrCommit: ', lastPrCommit);
       let prInfo = {
         owner: data.repository.owner.login,
         prNumber: data.number,
@@ -302,12 +302,10 @@ export class WebhooksService {
       );
 
       let commits = await Promise.all(mapPrCommit);
-      console.log('commits: ', commits);
 
       // let codeChurn =
       // await deepSeekAgent.analyzeHotSpotsAndCodeChurnWithAI(commits);
       let codeChurn = await this._analyzeHotSpotsAndCodeChurn(commits);
-      console.log('codeChurn: ', codeChurn);
       let contributorsAndCodeOwnership =
         await this._analyzeContributorsAndCodeOwnership(commits);
 
@@ -354,10 +352,6 @@ export class WebhooksService {
   }
 
   private async _analyzeContributorsAndCodeOwnership(commitHistory) {
-    console.log(
-      'Analyzing commit history for contributors and code ownership...',
-    );
-
     // Step 1: Initialize maps to track commit counts, code ownership, and commit URLs
     const contributorCommitCounts = new Map(); // Map<contributor, commitCount>
     const fileOwnership = new Map(); // Map<fileName, Map<contributor, { commitCount, commitUrls }>>
@@ -401,9 +395,6 @@ export class WebhooksService {
       });
     });
 
-    console.log('contributorCommitCounts: ', contributorCommitCounts);
-    console.log('fileOwnership: ', fileOwnership);
-
     // Step 3: Prepare the results for contributors
     const contributors = Array.from(contributorCommitCounts.entries())
       .map(([contributor, commitCount]) => ({
@@ -444,8 +435,6 @@ export class WebhooksService {
   }
 
   private async _analyzeHotSpotsAndCodeChurn(commitHistory, topN = 3) {
-    console.log('Analyzing commit history for hot spots and code churn...');
-
     // Step 1: Initialize a map to track file modification counts
     const fileModificationCounts = new Map();
 
@@ -463,8 +452,6 @@ export class WebhooksService {
         }
       });
     });
-
-    console.log('fileModificationCounts: ', fileModificationCounts);
 
     // Step 3: Convert the map to an array and sort by modification count (descending)
     const sortedFiles = Array.from(fileModificationCounts.entries()).sort(
@@ -500,6 +487,162 @@ export class WebhooksService {
         files: codeChurn,
       },
     };
+  }
+
+  async diffFunctionality3(prInfo: any) {
+    try {
+      let fileChanges = await fetchPrFiles(prInfo);
+
+      let filePaths = await fileChanges.map((data) => data.file);
+
+      let fileMapping = filePaths.map((data) => fetchFiles(prInfo, data));
+      let files = await Promise.all(fileMapping);
+      files = files.map((data, i) => ({
+        fileName: filePaths[i],
+        content: data.toString(),
+      }));
+
+      let filesContent = [];
+
+      files.forEach((data) => {
+        const lines = data.content.split('\n');
+        const withLineNumbers = lines
+          .map((line, index) => `${index + 1}: ${line}`)
+          .join('\n');
+        filesContent.push({ file: data.fileName, content: withLineNumbers });
+      });
+      // return;
+      let { duplicateIdenticalCodeIssue } =
+        await this.detectDuplicateAndIdenticalCode(fileChanges);
+      let deepSeekWrapper = new DeepSeek();
+
+      // Step 1: Group changes by file
+      // const changesByFile = new Map<string, any[]>();
+
+      // fileChanges.forEach((file) => {
+      //   const fileChanges = file.changes
+      //     .filter((change) => change.type === 'addition')
+      //     .map((change) =>
+      //       change.lines.map((eachline, i) => ({
+      //         lineNumber: change.startLine + i,
+      //         content: eachline,
+      //         fileName: file.file,
+      //       })),
+      //     )
+      //     .flat();
+
+      //   if (changesByFile.has(file.file)) {
+      //     changesByFile.get(file.file).push(...fileChanges);
+      //   } else {
+      //     changesByFile.set(file.file, fileChanges);
+      //   }
+      // });
+
+      // let allIssues = duplicateIdenticalCodeIssue;
+      // let allSummaries = [];
+
+      // for (const [fileName, changes] of changesByFile.entries()) {
+      //   const tokenizer = require('gpt-3-encoder'); // Use a tokenizer library
+
+      //   let tokenCount = tokenizer.encode(JSON.stringify(changes)).length;
+
+      //   if (tokenCount > MAX_TOKENS) {
+      //     // If the file's changes exceed the token limit, split into smaller chunks
+      //     let chunks = [];
+      //     let currentChunk = [];
+      //     let currentTokenCount = 0;
+
+      //     for (const change of changes) {
+      //       const changeTokens = tokenizer.encode(
+      //         JSON.stringify(change),
+      //       ).length;
+
+      //       if (currentTokenCount + changeTokens > MAX_TOKENS) {
+      //         chunks.push(currentChunk);
+      //         currentChunk = [change];
+      //         currentTokenCount = changeTokens;
+      //       } else {
+      //         currentChunk.push(change);
+      //         currentTokenCount += changeTokens;
+      //       }
+      //     }
+
+      //     if (currentChunk.length > 0) {
+      //       chunks.push(currentChunk);
+      //     }
+
+      //     // Analyze each chunk
+      //     for (const chunk of chunks) {
+      //       const AiResponse =
+      //         await deepSeekWrapper.analyzeCodeFilesForIssues(chunk);
+      //       allIssues.push(...AiResponse.codeIssues);
+      //       allSummaries.push(AiResponse.prSummary);
+      //     }
+      //   } else {
+      //     // If the file's changes are within the token limit, analyze as a single chunk
+      //     const AiResponse =
+      //       await deepSeekWrapper.analyzeCodeFilesForIssues(changes);
+      //     allIssues.push(...AiResponse.codeIssues);
+      //     allSummaries.push({ prSummary: AiResponse.prSummary });
+      //   }
+      // }
+
+      // let allIssues = duplicateIdenticalCodeIssue;
+      let allIssues = duplicateIdenticalCodeIssue;
+      let allSummaries = [];
+      for (let i = 0; i < filesContent.length; i++) {
+        let changes = filesContent[i];
+        const AiResponse =
+          await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(changes);
+        allIssues = [...allIssues, ...AiResponse.codeIssues];
+        allSummaries.push({ prSummary: AiResponse.prSummary });
+      }
+
+      // return;
+
+      // Step 3: Combine summaries into a single PR summary
+      const combinedSummary = allSummaries;
+
+      // Step 4: Create comments and update PR
+      let commentsMapping = allIssues.map((data) => commentPr(data, prInfo));
+
+      let createCommentsMapping = allIssues.map((data) => {
+        let payload = {
+          repositoryId: prInfo.id,
+          prId: prInfo.prId,
+          content: data.content,
+          line: parseInt(data.line),
+          file: data.file,
+          issue: data.issue,
+          issueCategory: data.category,
+          severity: data.priority.split(' ')[0],
+        };
+        return this._commentService.createComment(payload);
+      });
+
+      let analyzeCombineSummary =
+        await deepSeekWrapper.analyzeCombineSummary(combinedSummary);
+
+      await this._pullRequestService.updatePullRequest(prInfo.prId, {
+        summary: analyzeCombineSummary.prSummary,
+      });
+      await commentPrSummary(prInfo, {
+        issue: analyzeCombineSummary.prSummary,
+      });
+      await Promise.allSettled(commentsMapping);
+      await Promise.allSettled(createCommentsMapping);
+
+      return {
+        fileChanges,
+        AiResponse: {
+          codeIssues: allIssues,
+          prSummary: analyzeCombineSummary.prSummary,
+        },
+      };
+    } catch (error) {
+      console.log(error.message);
+      throw new BadRequestException(error.message);
+    }
   }
 
   async diffFunctionality2(prInfo: any) {
@@ -688,9 +831,6 @@ export class WebhooksService {
       if (currentChunk.length > 0) {
         chunks.push(currentChunk);
       }
-
-      console.log('Chunks: ', chunks);
-      console.log('Chunks Count: ', chunks.length);
 
       // Analyze each chunk with DeepSeek
       let duplicateCodes = [];
