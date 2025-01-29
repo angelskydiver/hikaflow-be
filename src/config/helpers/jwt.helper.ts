@@ -6,7 +6,7 @@ export const getJwtToken = async () => {
 
   // Define the current time and expiration time (10 minutes from now)
   const now = Math.floor(Date.now() / 1000); // Current time in seconds
-  const expiration = now + 60; // 10 minutes (600 seconds)
+  const expiration = now + 60 * 5; // 10 minutes (600 seconds)
 
   const payload = {
     iss: process.env.GITHUB_APP_ID, // Replace with your GitHub App ID

@@ -206,8 +206,7 @@ export class WebhooksService {
       let prCommits = await fetchPrCommits(
         data.pull_request.commits_url,
         decryptedToken,
-      ); // we need to use Codedeno github token here.
-      console.log('PR commits: ', prCommits);
+      );
 
       let lastPrCommit = prCommits[prCommits.length - 1].sha;
 
@@ -270,7 +269,6 @@ export class WebhooksService {
       //   'https://api.github.com/repos/mudassir693/mini-microservices-blog-app/pulls/22/commits',
       // );
       let lastPrCommit = prCommits[prCommits.length - 1].sha;
-      console.log('lastPrCommit: ', lastPrCommit);
       let prInfo = {
         owner: data.repository.owner.login,
         prNumber: data.number,
@@ -304,12 +302,10 @@ export class WebhooksService {
       );
 
       let commits = await Promise.all(mapPrCommit);
-      console.log('commits: ', commits);
 
       // let codeChurn =
       // await deepSeekAgent.analyzeHotSpotsAndCodeChurnWithAI(commits);
       let codeChurn = await this._analyzeHotSpotsAndCodeChurn(commits);
-      console.log('codeChurn: ', codeChurn);
       let contributorsAndCodeOwnership =
         await this._analyzeContributorsAndCodeOwnership(commits);
 
@@ -356,10 +352,6 @@ export class WebhooksService {
   }
 
   private async _analyzeContributorsAndCodeOwnership(commitHistory) {
-    console.log(
-      'Analyzing commit history for contributors and code ownership...',
-    );
-
     // Step 1: Initialize maps to track commit counts, code ownership, and commit URLs
     const contributorCommitCounts = new Map(); // Map<contributor, commitCount>
     const fileOwnership = new Map(); // Map<fileName, Map<contributor, { commitCount, commitUrls }>>
@@ -403,9 +395,6 @@ export class WebhooksService {
       });
     });
 
-    console.log('contributorCommitCounts: ', contributorCommitCounts);
-    console.log('fileOwnership: ', fileOwnership);
-
     // Step 3: Prepare the results for contributors
     const contributors = Array.from(contributorCommitCounts.entries())
       .map(([contributor, commitCount]) => ({
@@ -446,8 +435,6 @@ export class WebhooksService {
   }
 
   private async _analyzeHotSpotsAndCodeChurn(commitHistory, topN = 3) {
-    console.log('Analyzing commit history for hot spots and code churn...');
-
     // Step 1: Initialize a map to track file modification counts
     const fileModificationCounts = new Map();
 
@@ -465,8 +452,6 @@ export class WebhooksService {
         }
       });
     });
-
-    console.log('fileModificationCounts: ', fileModificationCounts);
 
     // Step 3: Convert the map to an array and sort by modification count (descending)
     const sortedFiles = Array.from(fileModificationCounts.entries()).sort(
@@ -609,11 +594,10 @@ export class WebhooksService {
         let changes = filesContent[i];
         const AiResponse =
           await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(changes);
-        allIssues.push(...AiResponse.codeIssues);
+        allIssues = [...allIssues, ...AiResponse.codeIssues];
         allSummaries.push({ prSummary: AiResponse.prSummary });
       }
 
-      console.log('AiResponse: ', JSON.stringify(allSummaries, null, 2));
       // return;
 
       // Step 3: Combine summaries into a single PR summary
@@ -847,9 +831,6 @@ export class WebhooksService {
       if (currentChunk.length > 0) {
         chunks.push(currentChunk);
       }
-
-      console.log('Chunks: ', chunks);
-      console.log('Chunks Count: ', chunks.length);
 
       // Analyze each chunk with DeepSeek
       let duplicateCodes = [];
