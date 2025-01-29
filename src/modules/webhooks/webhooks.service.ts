@@ -5,6 +5,7 @@ import {
   commentPr,
   commentPrSummary,
   commitInfo,
+  fetchFiles,
   fetchPrCommits,
   fetchPrFiles,
   parseGitHubPatchResponse,
@@ -239,7 +240,8 @@ export class WebhooksService {
       let pullRequest =
         await this._pullRequestService.registerPullRequest(pullRequestPayload);
       prInfo['prId'] = pullRequest.id;
-      this.diffFunctionality2(prInfo);
+      prInfo['head'] = data.pull_request.head.ref;
+      this.diffFunctionality3(prInfo);
     } catch (error) {
       console.log(error.message);
       throw new BadRequestException(error.message);
@@ -500,6 +502,163 @@ export class WebhooksService {
         files: codeChurn,
       },
     };
+  }
+
+  async diffFunctionality3(prInfo: any) {
+    try {
+      let fileChanges = await fetchPrFiles(prInfo);
+
+      let filePaths = await fileChanges.map((data) => data.file);
+
+      let fileMapping = filePaths.map((data) => fetchFiles(prInfo, data));
+      let files = await Promise.all(fileMapping);
+      files = files.map((data, i) => ({
+        fileName: filePaths[i],
+        content: data.toString(),
+      }));
+
+      let filesContent = [];
+
+      files.forEach((data) => {
+        const lines = data.content.split('\n');
+        const withLineNumbers = lines
+          .map((line, index) => `${index + 1}: ${line}`)
+          .join('\n');
+        filesContent.push({ file: data.fileName, content: withLineNumbers });
+      });
+      // return;
+      let { duplicateIdenticalCodeIssue } =
+        await this.detectDuplicateAndIdenticalCode(fileChanges);
+      let deepSeekWrapper = new DeepSeek();
+
+      // Step 1: Group changes by file
+      // const changesByFile = new Map<string, any[]>();
+
+      // fileChanges.forEach((file) => {
+      //   const fileChanges = file.changes
+      //     .filter((change) => change.type === 'addition')
+      //     .map((change) =>
+      //       change.lines.map((eachline, i) => ({
+      //         lineNumber: change.startLine + i,
+      //         content: eachline,
+      //         fileName: file.file,
+      //       })),
+      //     )
+      //     .flat();
+
+      //   if (changesByFile.has(file.file)) {
+      //     changesByFile.get(file.file).push(...fileChanges);
+      //   } else {
+      //     changesByFile.set(file.file, fileChanges);
+      //   }
+      // });
+
+      // let allIssues = duplicateIdenticalCodeIssue;
+      // let allSummaries = [];
+
+      // for (const [fileName, changes] of changesByFile.entries()) {
+      //   const tokenizer = require('gpt-3-encoder'); // Use a tokenizer library
+
+      //   let tokenCount = tokenizer.encode(JSON.stringify(changes)).length;
+
+      //   if (tokenCount > MAX_TOKENS) {
+      //     // If the file's changes exceed the token limit, split into smaller chunks
+      //     let chunks = [];
+      //     let currentChunk = [];
+      //     let currentTokenCount = 0;
+
+      //     for (const change of changes) {
+      //       const changeTokens = tokenizer.encode(
+      //         JSON.stringify(change),
+      //       ).length;
+
+      //       if (currentTokenCount + changeTokens > MAX_TOKENS) {
+      //         chunks.push(currentChunk);
+      //         currentChunk = [change];
+      //         currentTokenCount = changeTokens;
+      //       } else {
+      //         currentChunk.push(change);
+      //         currentTokenCount += changeTokens;
+      //       }
+      //     }
+
+      //     if (currentChunk.length > 0) {
+      //       chunks.push(currentChunk);
+      //     }
+
+      //     // Analyze each chunk
+      //     for (const chunk of chunks) {
+      //       const AiResponse =
+      //         await deepSeekWrapper.analyzeCodeFilesForIssues(chunk);
+      //       allIssues.push(...AiResponse.codeIssues);
+      //       allSummaries.push(AiResponse.prSummary);
+      //     }
+      //   } else {
+      //     // If the file's changes are within the token limit, analyze as a single chunk
+      //     const AiResponse =
+      //       await deepSeekWrapper.analyzeCodeFilesForIssues(changes);
+      //     allIssues.push(...AiResponse.codeIssues);
+      //     allSummaries.push({ prSummary: AiResponse.prSummary });
+      //   }
+      // }
+
+      // let allIssues = duplicateIdenticalCodeIssue;
+      let allIssues = duplicateIdenticalCodeIssue;
+      let allSummaries = [];
+      for (let i = 0; i < filesContent.length; i++) {
+        let changes = filesContent[i];
+        const AiResponse =
+          await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(changes);
+        allIssues.push(...AiResponse.codeIssues);
+        allSummaries.push({ prSummary: AiResponse.prSummary });
+      }
+
+      console.log('AiResponse: ', JSON.stringify(allSummaries, null, 2));
+      // return;
+
+      // Step 3: Combine summaries into a single PR summary
+      const combinedSummary = allSummaries;
+
+      // Step 4: Create comments and update PR
+      let commentsMapping = allIssues.map((data) => commentPr(data, prInfo));
+
+      let createCommentsMapping = allIssues.map((data) => {
+        let payload = {
+          repositoryId: prInfo.id,
+          prId: prInfo.prId,
+          content: data.content,
+          line: parseInt(data.line),
+          file: data.file,
+          issue: data.issue,
+          issueCategory: data.category,
+          severity: data.priority.split(' ')[0],
+        };
+        return this._commentService.createComment(payload);
+      });
+
+      let analyzeCombineSummary =
+        await deepSeekWrapper.analyzeCombineSummary(combinedSummary);
+
+      await this._pullRequestService.updatePullRequest(prInfo.prId, {
+        summary: analyzeCombineSummary.prSummary,
+      });
+      await commentPrSummary(prInfo, {
+        issue: analyzeCombineSummary.prSummary,
+      });
+      await Promise.allSettled(commentsMapping);
+      await Promise.allSettled(createCommentsMapping);
+
+      return {
+        fileChanges,
+        AiResponse: {
+          codeIssues: allIssues,
+          prSummary: analyzeCombineSummary.prSummary,
+        },
+      };
+    } catch (error) {
+      console.log(error.message);
+      throw new BadRequestException(error.message);
+    }
   }
 
   async diffFunctionality2(prInfo: any) {
