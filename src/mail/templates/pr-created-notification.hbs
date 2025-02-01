@@ -1,0 +1,128 @@
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>New Pull Request Notification</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        background-color: #f4f4f4;
+      }
+      .container {
+        max-width: 600px;
+        margin: 20px auto;
+        background-color: #fff;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+        border-top: 5px solid #008c6e;
+      }
+      .logoImage {
+        font-size: 48px;
+        font-weight: bold;
+        color: #008c6e;
+        margin-bottom: 20px;
+        text-align: left;
+      }
+      .wrapper {
+        padding: 20px;
+      }
+      .banner {
+        height: 50px;
+        background: #ffffff;
+        color: #008c6e;
+        text-align: left;
+        display: flex;
+        justify-content: start;
+        align-items: center;
+        font-size: 40px;
+        gap: 10px;
+        padding: 20px;
+        font-weight: bold;
+      }
+      h1 {
+        color: #333;
+        margin-bottom: 10px;
+      }
+      p {
+        color: #555;
+        line-height: 1.6;
+      }
+      .button {
+        display: inline-block;
+        padding: 12px 25px;
+        font-size: 18px;
+        color: #fff;
+        background-color: #008c6e;
+        text-align: center;
+        text-decoration: none;
+        border-radius: 5px;
+        margin-top: 20px;
+        transition: background-color 0.3s;
+      }
+      .button:hover {
+        background-color: #222e35;
+      }
+      .footer {
+        margin-top: 20px;
+        text-align: left;
+        font-size: 12px;
+        color: #666;
+      }
+      .pr-details {
+        background-color: #e7e7ff;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+      }
+      .pr-details ul {
+        list-style-type: none;
+        padding-left: 0;
+      }
+      .pr-details li {
+        margin-bottom: 10px;
+      }
+      .pr-details li::before {
+        content: '✔ ';
+        color: #008c6e;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <section class="banner">
+        <h1 class="logoImage">Hikaflow</h1>
+      </section>
+      <div class="wrapper">
+        <h1>New Pull Request Notification</h1>
+        <p>Hi {{adminName}},</p>
+        <p>
+          A new pull request has been created in {{repositoryName}} by
+          {{authorName}}. You can review the changes and provide feedback.
+        </p>
+        <a href="{{prUrl}}" class="button">View Pull Request</a>
+        <div class="pr-details">
+          <p>This PR includes:</p>
+          <ul>
+            <li>Code changes summary</li>
+            <li>Initial AI analysis of potential issues</li>
+            <li>Duplicate code and security checks</li>
+          </ul>
+        </div>
+        <p>Stay ahead of your review process with AI-driven insights!</p>
+        <p>
+          Best regards,<br />
+          The Hikaflow Team
+        </p>
+      </div>
+      <div class="footer">
+        <p>
+          This is an automated message. Please do not reply to this email. If
+          you have any questions, please contact our support team.
+        </p>
+      </div>
+    </div>
+  </body>
+</html>
