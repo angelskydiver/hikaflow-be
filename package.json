@@ -54,8 +54,7 @@
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.1",
     "simple-git": "^3.27.0",
-    "swagger-ui-express": "^5.0.1",
-    "together-ai": "^0.13.0"
+    "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.0.0",
