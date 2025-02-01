@@ -11,6 +11,7 @@ import {
   parseGitHubPatchResponse,
 } from 'src/config/helpers/repositories/github.helper';
 import { filterFiles } from 'src/config/helpers/unnecessary.files.helper';
+import { MailService } from 'src/mail/mail.service';
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
 import { CommentService } from '../comment/comment.service';
 import { ExecutiveReportService } from '../executiveReport/executiveReport.service';
@@ -33,6 +34,7 @@ export class WebhooksService {
     private _commentService: CommentService,
     private _executiveReportService: ExecutiveReportService,
     private _accountCredentialService: AccountCredentialService,
+    private _mailService: MailService,
   ) {}
 
   private _accountCredentialByRepository = async (data) => {
@@ -63,7 +65,10 @@ export class WebhooksService {
     let accountGithubCredentials =
       await this._accountCredentialService.getAccountToken(credentialPayload);
 
-    return { decryptedToken: accountGithubCredentials.decryptedToken };
+    return {
+      decryptedToken: accountGithubCredentials.decryptedToken,
+      accountId: organizationAccount.accountId,
+    };
   };
 
   async syncPR(data: any) {
@@ -202,7 +207,8 @@ export class WebhooksService {
         return;
       }
 
-      let { decryptedToken } = await this._accountCredentialByRepository(data);
+      let { decryptedToken, accountId } =
+        await this._accountCredentialByRepository(data);
       let prCommits = await fetchPrCommits(
         data.pull_request.commits_url,
         decryptedToken,
@@ -217,6 +223,8 @@ export class WebhooksService {
         repo: data.repository.name,
         lastCommit: lastPrCommit,
         token: decryptedToken,
+        repositoryId: isBaseBranchMatch.id,
+        accountId,
       };
 
       let repository = await this._repositoryService.getRepository(
@@ -516,78 +524,6 @@ export class WebhooksService {
         await this.detectDuplicateAndIdenticalCode(fileChanges);
       let deepSeekWrapper = new DeepSeek();
 
-      // Step 1: Group changes by file
-      // const changesByFile = new Map<string, any[]>();
-
-      // fileChanges.forEach((file) => {
-      //   const fileChanges = file.changes
-      //     .filter((change) => change.type === 'addition')
-      //     .map((change) =>
-      //       change.lines.map((eachline, i) => ({
-      //         lineNumber: change.startLine + i,
-      //         content: eachline,
-      //         fileName: file.file,
-      //       })),
-      //     )
-      //     .flat();
-
-      //   if (changesByFile.has(file.file)) {
-      //     changesByFile.get(file.file).push(...fileChanges);
-      //   } else {
-      //     changesByFile.set(file.file, fileChanges);
-      //   }
-      // });
-
-      // let allIssues = duplicateIdenticalCodeIssue;
-      // let allSummaries = [];
-
-      // for (const [fileName, changes] of changesByFile.entries()) {
-      //   const tokenizer = require('gpt-3-encoder'); // Use a tokenizer library
-
-      //   let tokenCount = tokenizer.encode(JSON.stringify(changes)).length;
-
-      //   if (tokenCount > MAX_TOKENS) {
-      //     // If the file's changes exceed the token limit, split into smaller chunks
-      //     let chunks = [];
-      //     let currentChunk = [];
-      //     let currentTokenCount = 0;
-
-      //     for (const change of changes) {
-      //       const changeTokens = tokenizer.encode(
-      //         JSON.stringify(change),
-      //       ).length;
-
-      //       if (currentTokenCount + changeTokens > MAX_TOKENS) {
-      //         chunks.push(currentChunk);
-      //         currentChunk = [change];
-      //         currentTokenCount = changeTokens;
-      //       } else {
-      //         currentChunk.push(change);
-      //         currentTokenCount += changeTokens;
-      //       }
-      //     }
-
-      //     if (currentChunk.length > 0) {
-      //       chunks.push(currentChunk);
-      //     }
-
-      //     // Analyze each chunk
-      //     for (const chunk of chunks) {
-      //       const AiResponse =
-      //         await deepSeekWrapper.analyzeCodeFilesForIssues(chunk);
-      //       allIssues.push(...AiResponse.codeIssues);
-      //       allSummaries.push(AiResponse.prSummary);
-      //     }
-      //   } else {
-      //     // If the file's changes are within the token limit, analyze as a single chunk
-      //     const AiResponse =
-      //       await deepSeekWrapper.analyzeCodeFilesForIssues(changes);
-      //     allIssues.push(...AiResponse.codeIssues);
-      //     allSummaries.push({ prSummary: AiResponse.prSummary });
-      //   }
-      // }
-
-      // let allIssues = duplicateIdenticalCodeIssue;
       let allIssues = duplicateIdenticalCodeIssue;
       let allSummaries = [];
       for (let i = 0; i < filesContent.length; i++) {
@@ -615,7 +551,7 @@ export class WebhooksService {
           file: data.file,
           issue: data.issue,
           issueCategory: data.category,
-          severity: data.priority.split(' ')[0],
+          severity: data.priority,
         };
         return this._commentService.createComment(payload);
       });
@@ -631,7 +567,17 @@ export class WebhooksService {
       });
       await Promise.allSettled(commentsMapping);
       await Promise.allSettled(createCommentsMapping);
+      // TODO: email
 
+      let payload = {
+        accountId: prInfo.accountId,
+        authorName: prInfo.owner,
+        repositoryInfo: {
+          repositoryName: prInfo.repo,
+          repositoryId: prInfo.repositoryId,
+        },
+      };
+      await this.sendPrCreateNotification(payload);
       return {
         fileChanges,
         AiResponse: {
@@ -860,110 +806,6 @@ export class WebhooksService {
     }
   }
 
-  // async diffFunctionality2(prInfo: any) {
-  //   try {
-  //     let fileChanges = await fetchPrFiles(prInfo);
-  //     let deepSeekWrapper = new DeepSeek();
-  //     console.log('fileChanges:: ', fileChanges);
-
-  //     // Step 1: Extract changes and group them into chunks
-  //     let changes = [];
-  //     fileChanges.forEach((file) => {
-  //       changes = [
-  //         ...changes,
-  //         ...file.changes
-  //           .filter((change) => change.type === 'addition')
-  //           .map((change) =>
-  //             change.lines.map((eachline, i) => ({
-  //               lineNumber: change.startLine + i,
-  //               content: eachline,
-  //               fileName: file.file,
-  //             })),
-  //           )
-  //           .flat(),
-  //       ];
-  //     });
-
-  //     // Step 2: Split changes into chunks based on token limits
-  //     const MAX_TOKENS = 63000; // DeepSeek's token limit
-  //     // const tokenizer = require('gpt-3-encoder'); // Use a tokenizer library
-  //     // const MAX_TOKENS = 200;
-
-  //     let chunks = [];
-  //     let currentChunk = [];
-  //     let currentTokenCount = 0;
-
-  //     for (const change of changes) {
-  //       const changeTokens = encode(JSON.stringify(change)).length;
-
-  //       if (currentTokenCount + changeTokens > MAX_TOKENS) {
-  //         // If adding this change exceeds the token limit, start a new chunk
-  //         chunks.push(currentChunk);
-  //         currentChunk = [change];
-  //         currentTokenCount = changeTokens;
-  //       } else {
-  //         // Add the change to the current chunk
-  //         currentChunk.push(change);
-  //         currentTokenCount += changeTokens;
-  //       }
-  //     }
-
-  //     // Add the last chunk
-  //     if (currentChunk.length > 0) {
-  //       chunks.push(currentChunk);
-  //     }
-
-  //     console.log('chunks: ', chunks);
-  //     console.log('chunks.length: ', chunks.length);
-  //     return;
-
-  //     // Step 3: Analyze each chunk with DeepSeek
-  //     let allIssues = [];
-  //     let allSummaries = [];
-
-  //     for (const chunk of chunks) {
-  //       const AiResponse =
-  //         await deepSeekWrapper.analyzeCodeFilesForIssues(chunk);
-  //       allIssues.push(...AiResponse.codeIssues);
-  //       allSummaries.push(AiResponse.prSummary);
-  //     }
-
-  //     // Step 4: Combine summaries into a single PR summary
-  //     const combinedSummary = allSummaries.join('\n\n');
-
-  //     // Step 5: Create comments and update PR
-  //     let commentsMapping = allIssues.map((data) => commentPr(data, prInfo));
-
-  //     let createCommentsMapping = allIssues.map((data) => {
-  //       let payload = {
-  //         repositoryId: prInfo.id,
-  //         prId: prInfo.prId,
-  //         content: data.content,
-  //         line: parseInt(data.line),
-  //         file: data.file,
-  //         issue: data.issue,
-  //         issueCategory: data.category,
-  //       };
-  //       return this._commentService.createComment(payload);
-  //     });
-
-  //     await this._pullRequestService.updatePullRequest(prInfo.prId, {
-  //       summary: combinedSummary,
-  //     });
-  //     await commentPrSummary(prInfo, { issue: combinedSummary });
-  //     await Promise.all(commentsMapping);
-  //     await Promise.all(createCommentsMapping);
-
-  //     return {
-  //       fileChanges,
-  //       AiResponse: { codeIssues: allIssues, prSummary: combinedSummary },
-  //     };
-  //   } catch (error) {
-  //     console.log(error.message);
-  //     throw new BadRequestException(error.message);
-  //   }
-  // }
-
   private _countChanges(files) {
     let addedCount = 0;
     let modifiedCount = 0;
@@ -981,5 +823,33 @@ export class WebhooksService {
       added: addedCount,
       modified: modifiedCount,
     };
+  }
+
+  async sendPrCreateNotification(data: {
+    accountId: string;
+    authorName: string;
+    repositoryInfo: { repositoryName: string; repositoryId: string };
+  }) {
+    try {
+      let account = await this._prismaService.account.findUnique({
+        where: {
+          id: data.accountId,
+        },
+        include: {
+          user: true,
+        },
+      });
+      // TODO: send email
+      let payload = {
+        email: account.user.email,
+        adminName: account.user.firstName,
+        repositoryName: data.repositoryInfo.repositoryName,
+        authorName: data.authorName,
+        prUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/${data.repositoryInfo.repositoryId}`,
+      };
+      await this._mailService.prCreatedNotification(payload);
+    } catch (error) {
+      console.error(error.message);
+    }
   }
 }

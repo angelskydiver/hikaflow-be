@@ -1,8 +1,6 @@
 import { MailerService } from '@nestjs-modules/mailer';
 import { Injectable } from '@nestjs/common';
 
-let debug = true
-
 @Injectable()
 export class MailService {
   constructor(private mailerService: MailerService) {}
@@ -118,6 +116,34 @@ export class MailService {
     } catch (error) {
       console.log('*** ERROR: ', error);
       console.log(error.message);
+    }
+  }
+
+  async prCreatedNotification(data: {
+    email: string;
+    adminName: string;
+    repositoryName: string;
+    authorName: string;
+    prUrl: string;
+  }) {
+    try {
+      await this.mailerService.sendMail({
+        to: data.email,
+        text: `${data.authorName} [Hikaflow]`,
+        // from: '"Support Team" <support@example.com>', // override default from
+        subject: `[Hikaflow] 🔔New Pull Request Created`,
+        template: './pr-created-notification', // `.hbs` extension is appended automatically
+        context: {
+          // ✏️ filling curly brackets with content
+          adminName: data.adminName,
+          repositoryName: data.repositoryName,
+          authorName: data.authorName,
+          prUrl: data.prUrl,
+        },
+      });
+    } catch (error) {
+      console.error(error.message);
+      throw new Error(error.message);
     }
   }
 
