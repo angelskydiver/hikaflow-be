@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from 'src/prisma/prisma.module';
 import { AccountCredentialModule } from '../accountCredentials/accountCredentials.module';
+import { CodeOverviewModule } from '../codeOverview/codeOverview.module';
 import { CommentModule } from '../comment/comment.module';
 import { ExecutiveReportModule } from '../executiveReport/executiveReport.module';
 import { PullRequestModule } from '../pullRequest/pullRequest.module';
@@ -16,6 +17,7 @@ import { WebhooksService } from './webhooks.service';
     CommentModule,
     ExecutiveReportModule,
     AccountCredentialModule,
+    CodeOverviewModule,
   ],
   providers: [WebhooksService],
   controllers: [WebhooksController],

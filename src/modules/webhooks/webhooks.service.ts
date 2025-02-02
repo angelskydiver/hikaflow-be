@@ -13,6 +13,7 @@ import {
 import { filterFiles } from 'src/config/helpers/unnecessary.files.helper';
 import { MailService } from 'src/mail/mail.service';
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
+import { CodeOverviewService } from '../codeOverview/codeOverview.service';
 import { CommentService } from '../comment/comment.service';
 import { ExecutiveReportService } from '../executiveReport/executiveReport.service';
 import { PullRequestService } from '../pullRequest/pullRequest.service';
@@ -34,6 +35,7 @@ export class WebhooksService {
     private _commentService: CommentService,
     private _executiveReportService: ExecutiveReportService,
     private _accountCredentialService: AccountCredentialService,
+    private _codeOverviewService: CodeOverviewService,
     private _mailService: MailService,
   ) {}
 
@@ -224,6 +226,7 @@ export class WebhooksService {
         lastCommit: lastPrCommit,
         token: decryptedToken,
         repositoryId: isBaseBranchMatch.id,
+        organizationId: isBaseBranchMatch.organizationId,
         accountId,
       };
 
@@ -267,7 +270,8 @@ export class WebhooksService {
         return;
       }
 
-      let { decryptedToken } = await this._accountCredentialByRepository(data);
+      let { decryptedToken, accountId } =
+        await this._accountCredentialByRepository(data);
 
       let prCommits = await fetchPrCommits(
         data.pull_request.commits_url,
@@ -283,6 +287,7 @@ export class WebhooksService {
         repo: data.repository.name,
         lastCommit: lastPrCommit,
         token: decryptedToken,
+        accountId,
       };
       // let prInfo = {
       //   owner: 'mudassir693',
@@ -334,9 +339,30 @@ export class WebhooksService {
           contributorsAndCodeOwnership,
         },
       };
-      await this._executiveReportService.createExecutiveReport(
+      let { report } = await this._executiveReportService.createExecutiveReport(
         executiveReportPayload,
       );
+
+      let payload = {
+        accountId: prInfo.accountId,
+        authorName: prInfo.owner,
+        reportId: report.id,
+        repositoryInfo: {
+          repositoryName: prInfo.repo,
+        },
+      };
+
+      let response = await deepSeekAgent.processCodeFiles(filteredFiles);
+      // TODO: Code Overview
+      let createCodeOverviewPayload = {
+        summary: response,
+        repositoryId: repository.repositoryId,
+        reportId: report.id,
+      };
+      await this._codeOverviewService.createCodeOverview(
+        createCodeOverviewPayload,
+      );
+      await this.sendPrCloseNotification(payload);
       return {
         modified,
         added,
@@ -576,6 +602,7 @@ export class WebhooksService {
           repositoryName: prInfo.repo,
           repositoryId: prInfo.repositoryId,
         },
+        organizationId: prInfo.organizationId,
       };
       await this.sendPrCreateNotification(payload);
       return {
@@ -828,6 +855,7 @@ export class WebhooksService {
   async sendPrCreateNotification(data: {
     accountId: string;
     authorName: string;
+    organizationId: string;
     repositoryInfo: { repositoryName: string; repositoryId: string };
   }) {
     try {
@@ -845,9 +873,38 @@ export class WebhooksService {
         adminName: account.user.firstName,
         repositoryName: data.repositoryInfo.repositoryName,
         authorName: data.authorName,
-        prUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/${data.repositoryInfo.repositoryId}`,
+        prUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/${data.repositoryInfo.repositoryId}/${data.organizationId}`,
       };
       await this._mailService.prCreatedNotification(payload);
+    } catch (error) {
+      console.error(error.message);
+    }
+  }
+
+  async sendPrCloseNotification(data: {
+    accountId: string;
+    authorName: string;
+    reportId: string;
+    repositoryInfo: { repositoryName: string };
+  }) {
+    try {
+      let account = await this._prismaService.account.findUnique({
+        where: {
+          id: data.accountId,
+        },
+        include: {
+          user: true,
+        },
+      });
+      // TODO: send email
+      let payload = {
+        email: account.user.email,
+        adminName: account.user.firstName,
+        repositoryName: data.repositoryInfo.repositoryName,
+        authorName: data.authorName,
+        reportUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/report/${data.reportId}`,
+      };
+      await this._mailService.prClosedNotification(payload);
     } catch (error) {
       console.error(error.message);
     }

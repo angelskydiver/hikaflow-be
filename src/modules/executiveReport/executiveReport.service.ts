@@ -8,8 +8,11 @@ export class ExecutiveReportService {
 
   async createExecutiveReport(data: ExecutiveReportRequestDto): Promise<any> {
     try {
-      await this._prismaService.executiveReport.create({ data });
+      let report = await this._prismaService.executiveReport.create({
+        data,
+      });
       return {
+        report: report,
         Success: true,
       };
     } catch (error) {
@@ -20,14 +23,20 @@ export class ExecutiveReportService {
 
   async getExecutiveReportById(id) {
     try {
-      let report = this._prismaService.executiveReport.findUnique({
+      let report = await this._prismaService.executiveReport.findUnique({
         where: { id },
-        include: { repository: true },
+        include: { repository: true, codeOverview: true },
       });
+
       if (!report) {
         throw new BadRequestException('Report not found');
       }
-      return report;
+      return {
+        ...report,
+        codeReview: report.codeOverview.length
+          ? report.codeOverview[report.codeOverview.length - 1]
+          : null,
+      };
     } catch (error) {
       console.log(error.message);
       throw new BadRequestException(error.message);

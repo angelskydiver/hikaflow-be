@@ -9,7 +9,7 @@ export class ExecutiveReportController {
 
   @ApiBearerAuth()
   @Get('/fetch/:id')
-  GetExecutiveReportById(@Param('id') id: string) {
-    return this.executiveReportService.getExecutiveReportById(id);
+  async GetExecutiveReportById(@Param('id') id: string) {
+    return await this.executiveReportService.getExecutiveReportById(id);
   }
 }
