@@ -125,9 +125,10 @@ model Repository {
   organizationId String? // Foreign key for the organization (optional)
   organization   Organization?      @relation(fields: [organizationId], references: [id]) // Optional relation
 
-  accounts AccountRepository[] // Many-to-many relationship
-  comments Comment[]
-  reports  ExecutiveReport[]
+  accounts     AccountRepository[] // Many-to-many relationship
+  comments     Comment[]
+  reports      ExecutiveReport[]
+  codeOverview CodeOverview[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -202,5 +203,19 @@ model ExecutiveReport {
   prNumber     Int
   summary      Json   @default("{}")
 
-  repository Repository @relation(fields: [repositoryId], references: [repositoryId])
+  repository   Repository     @relation(fields: [repositoryId], references: [repositoryId])
+  codeOverview CodeOverview[]
+}
+
+model CodeOverview {
+  id      String @id @default(uuid())
+  summary Json   @default("{}")
+
+  reportId     String          @default("2a26d830-794d-452c-9d23-3d20902bce2b")
+  repositoryId String
+  repository   Repository      @relation(fields: [repositoryId], references: [repositoryId])
+  report       ExecutiveReport @relation(fields: [reportId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

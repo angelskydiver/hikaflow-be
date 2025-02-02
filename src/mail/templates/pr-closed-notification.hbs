@@ -1,0 +1,73 @@
+import type React from "react" const ClosedPREmail: React.FC = () => { return (
+<html lang='en'>
+  <head>
+    <meta charSet='UTF-8' />
+    <meta name='viewport' content='width=device-width, initial-scale=1.0' />
+    <title>Pull Request Closed Notification</title>
+    <style>{` body { font-family: Arial, sans-serif; margin: 0; padding: 20px 0;
+      /* Added vertical padding */ background-color: #f4f4f4; } .container {
+      max-width: 600px; margin: 20px auto; background-color: #fff;
+      border-radius: 5px; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1); overflow:
+      hidden; border-top: 5px solid #008c6e; padding: 30px 0; /* Added vertical
+      padding */ } .logoImage { font-size: 48px; font-weight: bold; color:
+      #008c6e; margin-bottom: 20px; text-align: left; } .wrapper { padding: 0
+      20px; /* Adjusted horizontal padding */ } .banner { height: 50px;
+      background: #ffffff; color: #008c6e; text-align: left; display: flex;
+      justify-content: start; align-items: center; font-size: 40px; gap: 10px;
+      padding: 20px; font-weight: bold; } h1 { color: #333; margin-bottom: 20px;
+      /* Increased bottom margin */ } p { color: #555; line-height: 1.6;
+      margin-bottom: 15px; /* Added bottom margin to paragraphs */ } .button {
+      display: inline-block; padding: 12px 25px; font-size: 18px; color: #fff;
+      background-color: #008c6e; text-align: center; text-decoration: none;
+      border-radius: 5px; margin: 20px 0; /* Added vertical margin */
+      transition: background-color 0.3s; } .button:hover { background-color:
+      #222e35; } .footer { margin-top: 30px; /* Increased top margin */
+      text-align: left; font-size: 12px; color: #666; padding: 0 20px; /* Added
+      horizontal padding */ } .pr-details { background-color: #e7e7ff; padding:
+      20px; /* Increased padding */ border-radius: 5px; margin: 20px 0; }
+      .pr-details ul { list-style-type: none; padding-left: 0; margin-bottom: 0;
+      /* Removed bottom margin from list */ } .pr-details li { margin-bottom:
+      10px; } .pr-details li:last-child { margin-bottom: 0; /* Removed margin
+      from last list item */ } .pr-details li::before { content: '✔ '; color:
+      #008c6e; } `}</style>
+  </head>
+  <body>
+    <div className='container'>
+      <section className='banner'>
+        <h1 className='logoImage'>Hikaflow</h1>
+      </section>
+      <div className='wrapper'>
+        <h1>Pull Request Closed Notification</h1>
+        <p>Hi {"{{adminName}}"},</p>
+        <p>
+          The pull request in {"{{repositoryName}}"} by {"{{authorName}}"} has
+          been closed. Here's a summary of the changes and actions taken.
+        </p>
+        <a href="{'{{reportUrl}}'}" className='button'>
+          Deep Analysis
+        </a>
+        <div className='pr-details'>
+          <p>Closure details:</p>
+          <ul>
+            <li>Final code changes summary</li>
+            <li>Resolved issues and improvements</li>
+            <li>Merge status (merged or closed without merging)</li>
+          </ul>
+        </div>
+        <p>Thank you for your contribution to maintaining code quality!</p>
+        <p>
+          Best regards,
+          <br />
+          The Hikaflow Team
+        </p>
+      </div>
+      <div className='footer'>
+        <p>
+          This is an automated message. Please do not reply to this email. If
+          you have any questions, please contact our support team.
+        </p>
+      </div>
+    </div>
+  </body>
+</html>
+) } export default ClosedPREmail

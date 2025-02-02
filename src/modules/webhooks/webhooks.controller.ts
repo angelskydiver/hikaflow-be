@@ -10,7 +10,6 @@ export class WebhooksController {
   @Public()
   @Post('/github') // The route is /webhooks/ping
   async handlePing(@Body() body: any) {
-    // console.log('Ping received!');
     if (body.pull_request) {
       if (body.action == 'opened') {
         return await this._webhooksService.managePRs(body);

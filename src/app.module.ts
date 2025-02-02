@@ -8,6 +8,7 @@ import { AppService } from './app.service';
 import { MailModule } from './mail/mail.module';
 import { AccountModule } from './modules/account/account.module';
 import { AccountCredentialModule } from './modules/accountCredentials/accountCredentials.module';
+import { CodeOverviewModule } from './modules/codeOverview/codeOverview.module';
 import { CommentModule } from './modules/comment/comment.module';
 import { ExecutiveReportModule } from './modules/executiveReport/executiveReport.module';
 import { OrganizationModule } from './modules/organization/organization.module';
@@ -50,6 +51,7 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
     CommentModule,
     ExecutiveReportModule,
     OrganizationModule,
+    CodeOverviewModule,
   ],
   controllers: [AppController],
   providers: [

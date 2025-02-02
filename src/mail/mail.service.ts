@@ -129,8 +129,7 @@ export class MailService {
     try {
       await this.mailerService.sendMail({
         to: data.email,
-        text: `${data.authorName} [Hikaflow]`,
-        // from: '"Support Team" <support@example.com>', // override default from
+        // from: `${data.authorName} [Hikaflow]`, // override default from
         subject: `[Hikaflow] 🔔New Pull Request Created`,
         template: './pr-created-notification', // `.hbs` extension is appended automatically
         context: {
@@ -139,6 +138,34 @@ export class MailService {
           repositoryName: data.repositoryName,
           authorName: data.authorName,
           prUrl: data.prUrl,
+        },
+      });
+    } catch (error) {
+      console.error(error.message);
+      throw new Error(error.message);
+    }
+  }
+
+  async prClosedNotification(data: {
+    email: string;
+    adminName: string;
+    repositoryName: string;
+    authorName: string;
+    reportUrl: string;
+  }) {
+    try {
+      await this.mailerService.sendMail({
+        to: data.email,
+        // text: `${data.authorName} [Hikaflow]`,
+        // from: `${data.authorName} [Hikaflow]`, // override default from
+        subject: `[Hikaflow] 🔔New Pull Request Created`,
+        template: './pr-closed-notification', // `.hbs` extension is appended automatically
+        context: {
+          // ✏️ filling curly brackets with content
+          adminName: data.adminName,
+          repositoryName: data.repositoryName,
+          authorName: data.authorName,
+          reportUrl: data.reportUrl,
         },
       });
     } catch (error) {
