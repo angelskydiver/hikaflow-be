@@ -129,7 +129,7 @@ export class MailService {
     try {
       await this.mailerService.sendMail({
         to: data.email,
-        from: `${data.authorName} [Hikaflow]`, // override default from
+        // from: `${data.authorName} [Hikaflow]`, // override default from
         subject: `[Hikaflow] 🔔New Pull Request Created`,
         template: './pr-created-notification', // `.hbs` extension is appended automatically
         context: {
@@ -156,7 +156,7 @@ export class MailService {
     try {
       await this.mailerService.sendMail({
         to: data.email,
-        from: `${data.authorName} [Hikaflow]`, // override default from
+        // from: `${data.authorName} [Hikaflow]`, // override default from
         subject: `[Hikaflow] Pull Request Closed`,
         template: './pr-closed-notification', // `.hbs` extension is appended automatically
         context: {
