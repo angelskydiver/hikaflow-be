@@ -129,10 +129,19 @@ export class PullRequestService {
       });
       let prUrl = `https://api.github.com/repos/${repository.owner}/${repository.name}/pulls/${prNumber}/commits`;
 
-      let token = await this._accountCredentialService.getAccountToken({
+      let organizationAccount =
+        await this._prismaService.organizationAccounts.findFirst({
+          where: { role: 'ADMIN', organizationId: repository.organizationId },
+          include: { account: true },
+        });
+      let accountId = organizationAccount.accountId;
+      let credentialPayload = {
         accountId,
         type: AccountCredentialsType.GITHUB_TOKEN,
-      });
+      };
+
+      let token =
+        await this._accountCredentialService.getAccountToken(credentialPayload);
       let prCommits = await fetchPrCommits(prUrl, token.decryptedToken);
 
       let prCommitDetailsMapping = prCommits.map((data) =>
