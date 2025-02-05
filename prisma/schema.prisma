@@ -34,6 +34,18 @@ enum CommentStatus {
   OUTDATED    @map("3")
 }
 
+enum PrTrackerStatus {
+  PENDING  @map("1")
+  APPROVED @map("2")
+  REJECTED @map("3")
+}
+
+enum CommentType {
+  NOT_TRACKED  @map("-")
+  ISSUE        @map("1")
+  PULL_REQUEST @map("2")
+}
+
 model User {
   id        String        @id @default(uuid())
   firstName String
@@ -186,6 +198,7 @@ model Comment {
   line          Int
   file          String
   issue         String
+  type          CommentType   @default(NOT_TRACKED)
   issueCategory String        @default("CodeSmells")
   status        CommentStatus @default(NOT_TRACKED)
   severity      String        @default("LOW")
@@ -218,4 +231,14 @@ model CodeOverview {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model PrTracker {
+  id        String          @id @default(uuid())
+  prId      String
+  status    PrTrackerStatus @default(PENDING)
+  try       Int             @default(1)
+  response  Json            @default("{}")
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
 }

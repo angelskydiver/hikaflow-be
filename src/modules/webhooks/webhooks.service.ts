@@ -1,5 +1,14 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { AccountCredentialsType } from '@prisma/client';
+import {
+  BadRequestException,
+  forwardRef,
+  Inject,
+  Injectable,
+} from '@nestjs/common';
+import {
+  AccountCredentialsType,
+  CommentType,
+  PrTrackerStatus,
+} from '@prisma/client';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
 import {
   commentPr,
@@ -16,6 +25,7 @@ import { AccountCredentialService } from '../accountCredentials/accountCredentia
 import { CodeOverviewService } from '../codeOverview/codeOverview.service';
 import { CommentService } from '../comment/comment.service';
 import { ExecutiveReportService } from '../executiveReport/executiveReport.service';
+import { PrTrackerService } from '../prTracker/prTracker.service';
 import { PullRequestService } from '../pullRequest/pullRequest.service';
 import { RepositoryService } from '../repository/repository.service';
 import { PrismaService } from './../../prisma/prisma.service';
@@ -37,6 +47,8 @@ export class WebhooksService {
     private _accountCredentialService: AccountCredentialService,
     private _codeOverviewService: CodeOverviewService,
     private _mailService: MailService,
+    @Inject(forwardRef(() => PrTrackerService))
+    private _prTrackerService: PrTrackerService,
   ) {}
 
   private _accountCredentialByRepository = async (data) => {
@@ -183,6 +195,7 @@ export class WebhooksService {
           issue: data.issue,
           issueCategory: data.category,
           severity: data.priority.split(' ')[0],
+          type: CommentType.PULL_REQUEST,
         };
         return this._commentService.createComment(payload);
       });
@@ -206,8 +219,17 @@ export class WebhooksService {
         },
       });
       if (!isBaseBranchMatch) {
+        console.log('base branch not found');
         return;
       }
+
+      let prTrackerPayload = {
+        prId: `${data.repository.name}-${data.number}`,
+        status: PrTrackerStatus.PENDING,
+        response: data,
+      };
+
+      this._prTrackerService.trackPr(prTrackerPayload);
 
       let { decryptedToken, accountId } =
         await this._accountCredentialByRepository(data);
@@ -253,6 +275,10 @@ export class WebhooksService {
       prInfo['head'] = data.pull_request.head.ref;
       this.diffFunctionality3(prInfo);
     } catch (error) {
+      this._prTrackerService.updatePrInfo(
+        `${data.repository.name}-${data.number}`,
+        PrTrackerStatus.REJECTED,
+      );
       console.log(error.message);
       throw new BadRequestException(error.message);
     }
@@ -269,6 +295,14 @@ export class WebhooksService {
       if (!isBaseBranchMatch) {
         return;
       }
+
+      let prTrackerPayload = {
+        prId: `${data.repository.name}-${data.number}`,
+        status: PrTrackerStatus.PENDING,
+        response: data,
+      };
+
+      this._prTrackerService.trackPr(prTrackerPayload);
 
       let { decryptedToken, accountId } =
         await this._accountCredentialByRepository(data);
@@ -363,6 +397,10 @@ export class WebhooksService {
         createCodeOverviewPayload,
       );
       await this.sendPrCloseNotification(payload);
+      this._prTrackerService.updatePrInfo(
+        `${prInfo.repo}-${prInfo.prNumber}`,
+        PrTrackerStatus.APPROVED,
+      );
       return {
         modified,
         added,
@@ -380,6 +418,10 @@ export class WebhooksService {
       // 2. Review and comments
       // 3. code ownership
     } catch (error) {
+      this._prTrackerService.updatePrInfo(
+        `${data.repository.name}-${data.number}`,
+        PrTrackerStatus.REJECTED,
+      );
       console.log(error.message);
       throw new BadRequestException(error.message);
     }
@@ -568,7 +610,8 @@ export class WebhooksService {
       // Step 4: Create comments and update PR
       let commentsMapping = allIssues.map((data) => commentPr(data, prInfo));
 
-      let createCommentsMapping = allIssues.map((data) => {
+      let comments = await Promise.allSettled(commentsMapping);
+      let createCommentsMapping = allIssues.map((data, index) => {
         let payload = {
           repositoryId: prInfo.id,
           prId: prInfo.prId,
@@ -578,6 +621,10 @@ export class WebhooksService {
           issue: data.issue,
           issueCategory: data.category,
           severity: data.priority,
+          // @ts-ignore
+          type: comments[index].value.isPrIssue
+            ? CommentType.PULL_REQUEST
+            : CommentType.ISSUE,
         };
         return this._commentService.createComment(payload);
       });
@@ -591,7 +638,6 @@ export class WebhooksService {
       await commentPrSummary(prInfo, {
         issue: analyzeCombineSummary.prSummary,
       });
-      await Promise.allSettled(commentsMapping);
       await Promise.allSettled(createCommentsMapping);
       // TODO: email
 
@@ -605,6 +651,10 @@ export class WebhooksService {
         organizationId: prInfo.organizationId,
       };
       await this.sendPrCreateNotification(payload);
+      this._prTrackerService.updatePrInfo(
+        `${prInfo.repo}-${prInfo.prNumber}`,
+        PrTrackerStatus.APPROVED,
+      );
       return {
         fileChanges,
         AiResponse: {
@@ -712,6 +762,7 @@ export class WebhooksService {
           issue: data.issue,
           issueCategory: data.category,
           severity: data.priority.split(' ')[0],
+          type: CommentType.PULL_REQUEST,
         };
         return this._commentService.createComment(payload);
       });

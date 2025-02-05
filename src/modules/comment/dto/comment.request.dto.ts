@@ -1,3 +1,5 @@
+import { CommentType } from '@prisma/client';
+
 export class CreateCommentRequestDto {
   repositoryId: string;
   prId: string;
@@ -7,6 +9,7 @@ export class CreateCommentRequestDto {
   issue: string;
   issueCategory: string;
   severity: string;
+  type: CommentType;
 }
 
 export class GetCommentRequestDto {
