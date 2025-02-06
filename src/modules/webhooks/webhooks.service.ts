@@ -275,10 +275,6 @@ export class WebhooksService {
       prInfo['head'] = data.pull_request.head.ref;
       this.diffFunctionality3(prInfo);
     } catch (error) {
-      this._prTrackerService.updatePrInfo(
-        `${data.repository.name}-${data.number}`,
-        PrTrackerStatus.REJECTED,
-      );
       console.log(error.message);
       throw new BadRequestException(error.message);
     }
@@ -663,6 +659,10 @@ export class WebhooksService {
         },
       };
     } catch (error) {
+      this._prTrackerService.updatePrInfo(
+        `${prInfo.repo}-${prInfo.prNumber}`,
+        PrTrackerStatus.REJECTED,
+      );
       console.log(error.message);
       throw new BadRequestException(error.message);
     }
