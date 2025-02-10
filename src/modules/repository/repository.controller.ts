@@ -79,6 +79,14 @@ export class RepositoryController {
   }
 
   @ApiBearerAuth()
+  @Get('/settings/:repositoryId')
+  async FetchRepositorySettings(@Param('repositoryId') repositoryId: string) {
+    let response =
+      await this._repositoryService.fetchRepositorySettings(repositoryId);
+    return response;
+  }
+
+  @ApiBearerAuth()
   @Get('/:repositoryId/:orgId')
   async GetRepositoryById(
     @Request() req: any,
@@ -104,5 +112,16 @@ export class RepositoryController {
       req.user.accountId,
       data,
     );
+  }
+
+  @Public()
+  @Post('/createRepositorySettings')
+  async CreateRepositorySettings() {
+    return await this._repositoryService.createRepositorySettings();
+  }
+  @Public()
+  @Put('/updateRepositorySettings/:id')
+  async UpdateRepositorySettings(@Param('id') id: string) {
+    return await this._repositoryService.updateRepositorySettings(id);
   }
 }
