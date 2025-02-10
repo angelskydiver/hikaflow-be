@@ -14,15 +14,22 @@ export class PrTrackerService {
 
   async trackPr(data: RegisterTrackerRequestDto) {
     try {
-      let prTracker = await this._prismaService.prTracker.count({
+      let prTracker = await this._prismaService.prTracker.findMany({
         where: { prId: data.prId },
       });
-      if (prTracker + 1 > 3) {
+      if (prTracker.length + 1 > 3) {
         return;
       }
-      await this._prismaService.prTracker.create({
-        data: { ...data, try: prTracker + 1 },
-      });
+      if (prTracker.length) {
+        await this._prismaService.prTracker.update({
+          where: { id: prTracker[0].id },
+          data: { try: prTracker.length + 1 },
+        });
+      } else {
+        await this._prismaService.prTracker.create({
+          data: { ...data, try: prTracker.length + 1 },
+        });
+      }
       return { success: true };
     } catch (error) {
       console.log(error.message);
