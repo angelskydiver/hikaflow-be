@@ -10,6 +10,7 @@ import {
   PrTrackerStatus,
 } from '@prisma/client';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
+import { transformPrompts } from 'src/config/helpers/prompt.transformer.helper';
 import {
   commentPr,
   commentPrSummary,
@@ -586,14 +587,25 @@ export class WebhooksService {
       // return;
       let { duplicateIdenticalCodeIssue } =
         await this.detectDuplicateAndIdenticalCode(fileChanges);
+
+      let { repositorySettings } =
+        await this._prismaService.repository.findFirst({
+          where: { id: prInfo.repositoryId },
+          include: {
+            repositorySettings: true,
+          },
+        });
       let deepSeekWrapper = new DeepSeek();
 
       let allIssues = duplicateIdenticalCodeIssue;
       let allSummaries = [];
+      let prompt = transformPrompts(repositorySettings);
       for (let i = 0; i < filesContent.length; i++) {
         let changes = filesContent[i];
-        const AiResponse =
-          await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(changes);
+        const AiResponse = await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(
+          changes,
+          prompt,
+        );
         allIssues = [...allIssues, ...AiResponse.codeIssues];
         allSummaries.push({ prSummary: AiResponse.prSummary });
       }

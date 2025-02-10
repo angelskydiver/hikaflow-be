@@ -142,8 +142,9 @@ model Repository {
   reports      ExecutiveReport[]
   codeOverview CodeOverview[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  repositorySettings RepositorySettings[]
 }
 
 model AccountRepository {
@@ -241,4 +242,19 @@ model PrTracker {
   response  Json            @default("{}")
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
+}
+
+model RepositorySettings {
+  id           String  @id @default(uuid())
+  repositoryId String
+  key          String
+  description  String
+  prompt       String
+  active       Boolean
+  category     String
+
+  repository Repository @relation(fields: [repositoryId], references: [repositoryId])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
