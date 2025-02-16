@@ -25,7 +25,7 @@ export class ExecutiveReportService {
     try {
       let report = await this._prismaService.executiveReport.findUnique({
         where: { id },
-        include: { repository: true, codeOverview: true },
+        include: { repository: true, codeOverview: true, commitSummary: true },
       });
 
       if (!report) {
