@@ -145,6 +145,7 @@ model Repository {
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
   repositorySettings RepositorySettings[]
+  commitSummary      commitSummary[]
 }
 
 model AccountRepository {
@@ -217,8 +218,9 @@ model ExecutiveReport {
   prNumber     Int
   summary      Json   @default("{}")
 
-  repository   Repository     @relation(fields: [repositoryId], references: [repositoryId])
-  codeOverview CodeOverview[]
+  repository    Repository      @relation(fields: [repositoryId], references: [repositoryId])
+  codeOverview  CodeOverview[]
+  commitSummary commitSummary[]
 }
 
 model CodeOverview {
@@ -242,6 +244,25 @@ model PrTracker {
   response  Json            @default("{}")
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
+}
+
+model commitSummary {
+  id            String @id @default(uuid())
+  repositoryId  String
+  reportId      String
+  commitId      String
+  commitMessage String
+  additions     Int
+  deletions     Int
+  totalFiles    Int
+  committer     String
+  summary       Json   @default("{}")
+
+  repository Repository      @relation(fields: [repositoryId], references: [repositoryId])
+  report     ExecutiveReport @relation(fields: [reportId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model RepositorySettings {

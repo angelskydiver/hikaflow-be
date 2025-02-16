@@ -3,6 +3,7 @@ import { PrismaModule } from 'src/prisma/prisma.module';
 import { AccountCredentialModule } from '../accountCredentials/accountCredentials.module';
 import { CodeOverviewModule } from '../codeOverview/codeOverview.module';
 import { CommentModule } from '../comment/comment.module';
+import { CommitSummaryModule } from '../commitSummary/commitSummary.module';
 import { ExecutiveReportModule } from '../executiveReport/executiveReport.module';
 import { PrTrackerModule } from '../prTracker/prTracker.module';
 import { PullRequestModule } from '../pullRequest/pullRequest.module';
@@ -19,6 +20,7 @@ import { WebhooksService } from './webhooks.service';
     ExecutiveReportModule,
     AccountCredentialModule,
     CodeOverviewModule,
+    CommitSummaryModule,
     forwardRef(() => PrTrackerModule),
   ],
   providers: [WebhooksService],
