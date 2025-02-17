@@ -26,6 +26,7 @@ import { MailService } from 'src/mail/mail.service';
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
 import { CodeOverviewService } from '../codeOverview/codeOverview.service';
 import { CommentService } from '../comment/comment.service';
+import { CommitSummaryService } from '../commitSummary/commitSummary.service';
 import { ExecutiveReportService } from '../executiveReport/executiveReport.service';
 import { PrTrackerService } from '../prTracker/prTracker.service';
 import { PullRequestService } from '../pullRequest/pullRequest.service';
@@ -49,6 +50,7 @@ export class WebhooksService {
     private _accountCredentialService: AccountCredentialService,
     private _codeOverviewService: CodeOverviewService,
     private _mailService: MailService,
+    private _commitSummaryService: CommitSummaryService,
     @Inject(forwardRef(() => PrTrackerService))
     private _prTrackerService: PrTrackerService,
   ) {}
@@ -348,8 +350,6 @@ export class WebhooksService {
 
       let commits = await Promise.all(mapPrCommit);
 
-      // let codeChurn =
-      // await deepSeekAgent.analyzeHotSpotsAndCodeChurnWithAI(commits);
       let codeChurn = await this._analyzeHotSpotsAndCodeChurn(commits);
       let contributorsAndCodeOwnership =
         await this._analyzeContributorsAndCodeOwnership(commits);
@@ -373,6 +373,14 @@ export class WebhooksService {
       };
       let { report } = await this._executiveReportService.createExecutiveReport(
         executiveReportPayload,
+      );
+
+      let commitSummaryMapping = commits.map((commit, index) =>
+        this._commitSummaryService.createCommitSummary(
+          commit,
+          data.repository.id.toString(),
+          report.id,
+        ),
       );
 
       let payload = {

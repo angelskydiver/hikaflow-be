@@ -12,6 +12,7 @@ import { AccountModule } from './modules/account/account.module';
 import { AccountCredentialModule } from './modules/accountCredentials/accountCredentials.module';
 import { CodeOverviewModule } from './modules/codeOverview/codeOverview.module';
 import { CommentModule } from './modules/comment/comment.module';
+import { CommitSummaryModule } from './modules/commitSummary/commitSummary.module';
 import { ExecutiveReportModule } from './modules/executiveReport/executiveReport.module';
 import { OrganizationModule } from './modules/organization/organization.module';
 import { PrTrackerModule } from './modules/prTracker/prTracker.module';
@@ -57,6 +58,7 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
     OrganizationModule,
     CodeOverviewModule,
     PrTrackerModule,
+    CommitSummaryModule,
   ],
   controllers: [AppController],
   providers: [
