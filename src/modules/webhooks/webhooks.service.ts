@@ -9,6 +9,7 @@ import {
   CommentType,
   PrTrackerStatus,
 } from '@prisma/client';
+import { shouldAnalyze } from 'src/config/constants/unnecessary.files.constant';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
 import { transformPrompts } from 'src/config/helpers/prompt.transformer.helper';
 import {
@@ -565,7 +566,6 @@ export class WebhooksService {
   async diffFunctionality3(prInfo: any) {
     try {
       let fileChanges = await fetchPrFiles(prInfo);
-
       let filePaths = await fileChanges.map((data) => data.file);
 
       let fileMapping = filePaths.map((data) => fetchFiles(prInfo, data));
@@ -575,6 +575,7 @@ export class WebhooksService {
         content: data.toString(),
       }));
 
+      files = files.filter((file) => shouldAnalyze(file.fileName));
       let filesContent = [];
 
       files.forEach((data) => {
