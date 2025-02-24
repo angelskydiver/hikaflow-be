@@ -102,12 +102,21 @@ model OrganizationAccounts {
 }
 
 model AccountCredentials {
-  id    String                 @id @default(uuid())
-  type  AccountCredentialsType @default(GITHUB_TOKEN)
-  value String
+  id              String                 @id @default(uuid())
+  type            AccountCredentialsType @default(GITHUB_TOKEN)
+  value           String
+  bitbucketSecret Json?                  @default("{}")
 
   accountId String
   account   Account @relation(fields: [accountId], references: [id])
+}
+
+model bitbucketSecret {
+  id        String   @id @default(uuid())
+  clientKey String
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model VerificationCode {
