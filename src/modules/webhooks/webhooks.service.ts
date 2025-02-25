@@ -628,23 +628,31 @@ export class WebhooksService {
       let commentsMapping = allIssues.map((data) => commentPr(data, prInfo));
 
       let comments = await Promise.allSettled(commentsMapping);
-      let createCommentsMapping = allIssues.map((data, index) => {
-        let payload = {
-          repositoryId: prInfo.id,
-          prId: prInfo.prId,
-          content: data.content,
-          line: parseInt(data.line),
-          file: data.file,
-          issue: data.issue,
-          issueCategory: data.category,
-          severity: data.priority,
+      let createCommentsMapping = allIssues
+        .map((data, index) => {
+          // Check if it's a PR comment by checking the 'isPrIssue' flag
           // @ts-ignore
-          type: comments[index].value.isPrIssue
-            ? CommentType.PULL_REQUEST
-            : CommentType.ISSUE,
-        };
-        return this._commentService.createComment(payload);
-      });
+          if (comments[index].value.isPrIssue) {
+            let payload = {
+              repositoryId: prInfo.id,
+              prId: prInfo.prId,
+              content: data.content,
+              line: parseInt(data.line),
+              file: data.file,
+              issue: data.issue,
+              issueCategory: data.category,
+              severity: data.priority,
+              type: CommentType.PULL_REQUEST, // Since it's a PR comment, set the type as PULL_REQUEST
+            };
+
+            // Only create the comment if it's a PR-related comment
+            return this._commentService.createComment(payload);
+          }
+
+          // If it's not a PR comment, return undefined (or you can filter out these)
+          return undefined;
+        })
+        .filter((comment) => comment !== undefined);
 
       let analyzeCombineSummary =
         await deepSeekWrapper.analyzeCombineSummary(combinedSummary);
@@ -931,23 +939,41 @@ export class WebhooksService {
     repositoryInfo: { repositoryName: string; repositoryId: string };
   }) {
     try {
-      let account = await this._prismaService.account.findUnique({
+      let orgAdmins = await this._prismaService.organizationAccounts.findMany({
         where: {
-          id: data.accountId,
+          organizationId: data.organizationId,
+          role: { not: 'MEMBER' },
+        },
+        include: {
+          account: true,
+        },
+      });
+      let organizationAdminsAccount = orgAdmins.map((data) => data.accountId);
+      let accounts = await this._prismaService.account.findMany({
+        where: {
+          id: { in: organizationAdminsAccount },
         },
         include: {
           user: true,
         },
       });
-      // TODO: send email
-      let payload = {
-        email: account.user.email,
-        adminName: account.user.firstName,
-        repositoryName: data.repositoryInfo.repositoryName,
-        authorName: data.authorName,
-        prUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/${data.repositoryInfo.repositoryId}/${data.organizationId}`,
+
+      let emailMapping = accounts.map((account) => {
+        let payload = {
+          email: account.user.email,
+          adminName: account.user.firstName,
+          repositoryName: data.repositoryInfo.repositoryName,
+          authorName: data.authorName,
+          prUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/${data.repositoryInfo.repositoryId}/${data.organizationId}`,
+        };
+        return this._mailService.prCreatedNotification(payload);
+      });
+
+      await Promise.all(emailMapping);
+      return {
+        success: true,
       };
-      await this._mailService.prCreatedNotification(payload);
+      // TODO: send email
     } catch (error) {
       console.error(error.message);
     }
@@ -960,23 +986,49 @@ export class WebhooksService {
     repositoryInfo: { repositoryName: string };
   }) {
     try {
-      let account = await this._prismaService.account.findUnique({
+      let organizationalAccount =
+        await this._prismaService.organizationAccounts.findFirst({
+          where: {
+            role: 'ADMIN',
+            accountId: data.accountId,
+          },
+        });
+      if (!organizationalAccount) {
+        throw new Error('Account not found');
+      }
+      let orgAdmins = await this._prismaService.organizationAccounts.findMany({
         where: {
-          id: data.accountId,
+          organizationId: organizationalAccount.organizationId,
+          role: { not: 'MEMBER' },
+        },
+        include: {
+          account: true,
+        },
+      });
+      let organizationAdminsAccount = orgAdmins.map((data) => data.accountId);
+      let accounts = await this._prismaService.account.findMany({
+        where: {
+          id: { in: organizationAdminsAccount },
         },
         include: {
           user: true,
         },
       });
+
+      let emailMapping = accounts.map((account) => {
+        let payload = {
+          email: account.user.email,
+          adminName: account.user.firstName,
+          repositoryName: data.repositoryInfo.repositoryName,
+          authorName: data.authorName,
+          reportUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/report/${data.reportId}`,
+        };
+        this._mailService.prClosedNotification(payload);
+      });
+
+      await Promise.all(emailMapping);
+
       // TODO: send email
-      let payload = {
-        email: account.user.email,
-        adminName: account.user.firstName,
-        repositoryName: data.repositoryInfo.repositoryName,
-        authorName: data.authorName,
-        reportUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/report/${data.reportId}`,
-      };
-      await this._mailService.prClosedNotification(payload);
     } catch (error) {
       console.error(error.message);
     }
