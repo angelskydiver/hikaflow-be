@@ -1,7 +1,10 @@
 import { Body, Controller, Get, Param, Post, Request } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Public } from 'src/decorators/public';
-import { CreateOrganizationRequestDto } from './dto/organization.request.dto';
+import {
+  CreateOrganizationRequestDto,
+  InviteUserToOrganizationRequestDTO,
+} from './dto/organization.request.dto';
 import { OrganizationService } from './organization.service';
 
 @ApiTags('Organization')
@@ -40,6 +43,30 @@ export class OrganizationController {
   async AcceptInvitation(@Param('id') id: string, @Request() req: any) {
     return await this._organizationService.acceptInvitation(
       id,
+      req.user.accountId,
+    );
+  }
+
+  @ApiBearerAuth()
+  @Get('/invitations/:orgId')
+  async GetOrganizationInvitations(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+  ) {
+    return await this._organizationService.getOrganizationInvitations(
+      orgId,
+      req.user.accountId,
+    );
+  }
+
+  @ApiBearerAuth()
+  @Post('invite/user')
+  async InviteUserToOrganization(
+    @Body() data: InviteUserToOrganizationRequestDTO,
+    @Request() req: any,
+  ) {
+    return await this._organizationService.inviteUserToOrganization(
+      data,
       req.user.accountId,
     );
   }

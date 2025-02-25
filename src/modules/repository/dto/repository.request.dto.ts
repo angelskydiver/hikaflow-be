@@ -36,6 +36,11 @@ export class RegisterRepositoryRequestDto {
 export class GithubRepositoryBranches {
   owner: string;
   repo: string;
+  organizationId: string;
+}
+
+export class GithubRepository {
+  organizationId: string;
 }
 
 export class UpdateRepositoryRequestDto {
