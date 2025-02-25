@@ -1,0 +1,115 @@
+<html lang='en'>
+  <head>
+    <meta charset='UTF-8' />
+    <meta name='viewport' content='width=device-width, initial-scale=1.0' />
+    <title>Hikaflow Invitation</title>
+  </head>
+  <body
+    style='
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px 0;
+      background-color: #f4f4f4;
+    '
+  >
+    <div
+      style='
+        max-width: 600px;
+        margin: 20px auto;
+        background-color: #fff;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+        border-top: 5px solid #008c6e;
+      '
+    >
+      <table cellpadding='0' cellspacing='0' border='0' width='100%'>
+        <tr>
+          <td style='padding: 20px; background-color: #ffffff'>
+            <h1 style='color: #008c6e; font-size: 40px; margin: 0'>Hikaflow</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style='padding: 20px'>
+            <h2 style='color: #333; margin-bottom: 20px'>
+              You're Invited to Join
+              {{organizationName}}
+            </h2>
+            <p style='color: #555; line-height: 1.6; margin-bottom: 15px'>
+              Dear
+              {{userName}},
+            </p>
+            <p style='color: #555; line-height: 1.6; margin-bottom: 15px'>
+              You have been invited to join
+              {{organizationName}}
+              on Hikaflow, where we streamline software development with
+              AI-powered automation. Your role has been assigned as
+              {{role}}, and we'd love to have you onboard.
+            </p>
+            <table
+              cellpadding='20'
+              cellspacing='0'
+              border='0'
+              width='100%'
+              style='
+                background-color: #e7e7ff;
+                border-radius: 5px;
+                margin: 20px 0;
+              '
+            >
+              <tr>
+                <td>
+                  <p style='color: #555; margin: 0 0 10px 0'>
+                    Invitation details:
+                  </p>
+                  <ul style='color: #555; padding-left: 20px; margin: 0'>
+                    <li>Organization: {{organizationName}}</li>
+                    <li>Your Role: {{role}}</li>
+                    <li>Inviter: {{inviterName}}</li>
+                  </ul>
+                </td>
+              </tr>
+            </table>
+            <p style='color: #555; line-height: 1.6; margin-bottom: 15px'>
+              Click the button below to complete your signup and get started:
+            </p>
+            <table cellpadding='0' cellspacing='0' border='0'>
+              <tr>
+                <td style='background-color: #008c6e; border-radius: 5px'>
+                  <a
+                    href='{{signupLink}}'
+                    style='
+                      display: inline-block;
+                      padding: 12px 25px;
+                      font-size: 18px;
+                      color: #fff;
+                      text-decoration: none;
+                    '
+                  >Join Hikaflow</a>
+                </td>
+              </tr>
+            </table>
+            <p style='color: #555; line-height: 1.6; margin-top: 20px'>
+              If you have any questions, feel free to reach out. Looking forward
+              to seeing you on Hikaflow!
+            </p>
+            <p style='color: #555; line-height: 1.6'>
+              Best regards,<br />
+              {{inviterName}}<br />
+              {{organizationName}}
+              Team
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style='padding: 20px; font-size: 12px; color: #666'>
+            <p style='margin: 0'>
+              This is an automated invitation. If you believe you've received
+              this in error, please disregard this email.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </div>
+  </body>
+</html>

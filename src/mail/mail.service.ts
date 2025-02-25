@@ -146,6 +146,37 @@ export class MailService {
     }
   }
 
+  async organizationInvitation(data: {
+    email: string;
+    userName: string;
+    organizationName: string;
+    inviterName: string;
+    signupLink: string;
+    role: string;
+  }) {
+    let { email, userName, organizationName, inviterName, signupLink, role } =
+      data;
+    try {
+      await this.mailerService.sendMail({
+        to: data.email,
+        from: `Hikaflow`, // override default from
+        subject: `Invitation to Join ${organizationName} on Hikaflow`,
+        template: './organization-invitation.hbs', // `.hbs` extension is appended automatically
+        context: {
+          email,
+          userName,
+          organizationName,
+          inviterName,
+          signupLink,
+          role,
+        },
+      });
+    } catch (error) {
+      console.error(error.message);
+      throw new Error(error.message);
+    }
+  }
+
   async prClosedNotification(data: {
     email: string;
     adminName: string;

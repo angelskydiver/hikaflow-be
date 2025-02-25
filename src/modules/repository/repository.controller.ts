@@ -11,6 +11,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Public } from 'src/decorators/public';
 import {
+  GithubRepository,
   GithubRepositoryBranches,
   RegisterRepositoryRequestDto,
 } from './dto/repository.request.dto';
@@ -23,8 +24,11 @@ export class RepositoryController {
 
   @ApiBearerAuth()
   @Get('/github')
-  GithubRepositories(@Request() req: any) {
-    return this._repositoryService.githubRepositories(req.user.accountId);
+  GithubRepositories(@Query() params: GithubRepository, @Request() req: any) {
+    return this._repositoryService.githubRepositories(
+      params,
+      req.user.accountId,
+    );
   }
 
   @ApiBearerAuth()
