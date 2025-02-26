@@ -159,7 +159,7 @@ export class MailService {
     try {
       await this.mailerService.sendMail({
         to: data.email,
-        from: `Hikaflow`, // override default from
+        // from: `Hikaflow`, // override default from
         subject: `Invitation to Join ${organizationName} on Hikaflow`,
         template: './organization-invitation.hbs', // `.hbs` extension is appended automatically
         context: {
