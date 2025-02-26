@@ -69,11 +69,20 @@ export class UserService {
       userId: User.id,
       verified: User?.account?.verified,
     };
+    let isInvited = await this._prismaService.organizationInvitation.findFirst({
+      where: {
+        email: User.email,
+      },
+    });
     return {
       user: User,
       account: User?.account?.id,
       verified: User?.account?.verified,
       access_token: await this._jwtService.signAsync(payload),
+      isInvited: {
+        isInvited,
+        organizationId: isInvited?.organizationId || null,
+      },
     };
   }
 
@@ -173,11 +182,22 @@ export class UserService {
         verified: true,
       };
 
+      let isInvited =
+        await this._prismaService.organizationInvitation.findFirst({
+          where: {
+            email: user.email,
+          },
+        });
+
       return {
         user: user,
         account: user?.account?.id,
         verified: true,
         access_token: await this._jwtService.signAsync(payload),
+        isInvited: {
+          isInvited,
+          organizationId: isInvited?.organizationId || null,
+        },
       };
     } catch (error) {
       console.log(error.message);
