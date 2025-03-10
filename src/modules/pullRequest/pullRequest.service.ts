@@ -85,6 +85,7 @@ export class PullRequestService {
       let pullRequests: any = await this._prismaService.pullRequest.findMany({
         where: {
           repositoryId: { in: repositoryIds },
+          summary: { not: '' },
         },
         orderBy: { createdAt: 'desc' },
         take: parseInt(payload?.pageSize) || 5,
@@ -113,6 +114,7 @@ export class PullRequestService {
       let prCount = await this._prismaService.pullRequest.count({
         where: {
           repositoryId: { in: repositoryIds },
+          summary: { not: '' },
         },
       });
       return { pullRequests, totalPRs: prCount };

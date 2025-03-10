@@ -234,7 +234,6 @@ export class WebhooksService {
       };
 
       this._prTrackerService.trackPr(prTrackerPayload);
-
       let { decryptedToken, accountId } =
         await this._accountCredentialByRepository(data);
       let prCommits = await fetchPrCommits(
@@ -578,10 +577,12 @@ export class WebhooksService {
 
       let fileMapping = filePaths.map((data) => fetchFiles(prInfo, data));
       let files = await Promise.all(fileMapping);
-      files = files.map((data, i) => ({
-        fileName: filePaths[i],
-        content: data.toString(),
-      }));
+      files = files
+        .filter((data) => data)
+        .map((data, i) => ({
+          fileName: filePaths[i],
+          content: data.toString(),
+        }));
 
       files = files.filter((file) => shouldAnalyze(file.fileName));
       let filesContent = [];
