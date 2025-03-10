@@ -27,6 +27,25 @@ export class WebhooksController {
   }
 
   @Public()
+  @Post('/bitbucket') // The route is /webhooks/ping
+  async handleBitbucketWebhooks(@Body() body: any) {
+    if (body.event.includes('pullrequest')) {
+      if (body.event == 'pullrequest:created') {
+        return await this._webhooksService.bitbucketCreateRequest(body.data);
+      } else if (body.event == 'pullrequest:fulfilled') {
+        return await this._webhooksService.generateBitbucketPrReport(body.data);
+      } else if (body.event == 'pullrequest:updated') {
+        return await this._webhooksService.syncBitbucketPR(body.data);
+      }
+    } else {
+      console.log('Request body:', body); // Log the body of the request
+    }
+    return {
+      success: true,
+    }; // Respond with 'Pong' when ping is received
+  }
+
+  @Public()
   @Get('diffTesting')
   async DiffFunctionality() {
     return await this._webhooksService.syncPR(null);

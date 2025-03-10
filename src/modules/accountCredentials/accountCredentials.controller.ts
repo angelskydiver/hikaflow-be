@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Query, Request } from '@nestjs/common';
+import { Body, Controller, Post, Request } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Public } from 'src/decorators/public';
 import { AccountCredentialService } from './accountCredentials.service';
@@ -29,7 +29,7 @@ export class AccountCredentialController {
   @Public()
   @Post('/register/bitbucketSecret')
   async RegisterBitbucketSecret(
-    @Query() data: RegisterBitbucketAccountCredentialRequestDto,
+    @Body() data: RegisterBitbucketAccountCredentialRequestDto,
   ) {
     try {
       await this._accountCredentialService.registerBitbucketSecret(data);

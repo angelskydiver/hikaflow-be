@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
+import { parseGitDiffByFile } from 'src/config/helpers/repositories/bitbucket.helper';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
@@ -10,11 +11,19 @@ export class CommitSummaryService {
     try {
       let deepSeek = new DeepSeek();
 
+      let filesPatch = {};
+      if (!data.files[0].filename) {
+        filesPatch = parseGitDiffByFile(data.files, data.patch);
+      }
+
+      // TODO need to do proper testing with github
       let summary = await deepSeek.analyzeCommitSummary(
-        data.files.map((file) => ({
-          fileName: file.filename,
-          patch: file.patch,
-        })),
+        data.files.map((file, index) => {
+          if (file.filename)
+            return { fileName: file.filename, patch: file.patch };
+
+          return { fileName: file, patch: filesPatch[file] };
+        }),
       );
       let payload = {
         commitId: data.sha,

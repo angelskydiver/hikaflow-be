@@ -128,4 +128,14 @@ export class RepositoryController {
   async UpdateRepositorySettings(@Param('id') id: string) {
     return await this._repositoryService.updateRepositorySettings(id);
   }
+
+  //
+  @Public()
+  @Get('/bitbucket-branches')
+  async BitbucketRepositorySlug(@Query() data: { repoSlug: string }) {
+    console.log('hllo');
+    return await this._repositoryService.bitbucketRepositoryBranches(
+      data.repoSlug,
+    );
+  }
 }

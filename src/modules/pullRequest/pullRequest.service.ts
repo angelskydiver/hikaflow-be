@@ -1,6 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { AccountCredentialsType, PullRequest } from '@prisma/client';
 import {
+  commitInfoBitbucket,
+  fetchBitbucketPrCommits,
+  parseGitDiff,
+} from 'src/config/helpers/repositories/bitbucket.helper';
+import {
   commitInfo,
   fetchPrCommits,
 } from 'src/config/helpers/repositories/github.helper';
@@ -127,7 +132,6 @@ export class PullRequestService {
       let repository = await this._prismaService.repository.findUnique({
         where: { id: id },
       });
-      let prUrl = `https://api.github.com/repos/${repository.owner}/${repository.name}/pulls/${prNumber}/commits`;
 
       let organizationAccount =
         await this._prismaService.organizationAccounts.findFirst({
@@ -140,20 +144,71 @@ export class PullRequestService {
         type: AccountCredentialsType.GITHUB_TOKEN,
       };
 
-      let token =
+      let { decryptedToken, accountType, payload } =
         await this._accountCredentialService.getAccountToken(credentialPayload);
-      let prCommits = await fetchPrCommits(prUrl, token.decryptedToken);
 
+      if (accountType == AccountCredentialsType.BITBUCKET_TOKEN) {
+        let prCommits = await fetchBitbucketPrCommits({
+          token: decryptedToken,
+          workspace: payload.workspace,
+          repoSlug: repository.name,
+          prNumber: prNumber,
+        });
+
+        let diffChangesMapping = prCommits.map((commit) => {
+          return commitInfoBitbucket(
+            {
+              token: decryptedToken,
+              commitDiffUrl: commit.links.diff.href,
+            },
+            true,
+          );
+        });
+        let diffChanges = await Promise.all(diffChangesMapping);
+
+        diffChanges = diffChanges.map((patch, i) => {
+          let { fileChanges, totalAdditions, totalDeletions } =
+            parseGitDiff(patch);
+          return {
+            sha: prCommits[i].hash,
+            date: prCommits[i].date,
+            author: prCommits[i].author.user.display_name,
+            message: prCommits[i].message,
+            additions: totalAdditions,
+            deletions: totalDeletions,
+            totalChanges: totalAdditions + totalDeletions,
+            url: prCommits[i].links.html.href,
+            files: fileChanges,
+          };
+        });
+
+        return diffChanges.reverse();
+      }
+
+      let prUrl = `https://api.github.com/repos/${repository.owner}/${repository.name}/pulls/${prNumber}/commits`;
+      let prCommits = await fetchPrCommits(prUrl, decryptedToken);
       let prCommitDetailsMapping = prCommits.map((data) =>
         commitInfo({
           owner: repository.owner,
           repo: repository.name,
           commitSha: data.sha,
-          token: token.decryptedToken,
+          token: decryptedToken,
         }),
       );
       let prCommitDetails = await Promise.all(prCommitDetailsMapping);
-      return prCommitDetails;
+      return prCommitDetails.map((data) => {
+        return {
+          sha: data.sha,
+          date: data.commit.author.date,
+          author: data.commit.author.name,
+          message: data.commit.message,
+          additions: data.stats.additions,
+          deletions: data.stats.deletions,
+          totalChanges: data.stats.total,
+          url: data.html_url,
+          files: data.files,
+        };
+      });
     } catch (error) {
       console.log(error.message);
       throw new BadRequestException(error.message);
