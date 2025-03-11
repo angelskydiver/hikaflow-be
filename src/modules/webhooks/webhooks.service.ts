@@ -475,8 +475,6 @@ export class WebhooksService {
         prNumber: data.pullrequest.id,
       });
 
-      // // console.log('prCommits: ', prCommits);
-
       let lastPrCommit = prCommits[prCommits.length - 1].hash;
 
       let prInfo = {
@@ -516,7 +514,7 @@ export class WebhooksService {
       //
       this.bitbucketDiffFunctionality(prInfo);
     } catch (error) {
-      // console.log(error.message);
+      console.log(error.message);
       throw new BadRequestException(error.message);
     }
   }
@@ -1118,7 +1116,7 @@ export class WebhooksService {
         `${prInfo.repo}-${prInfo.prNumber}`,
         PrTrackerStatus.REJECTED,
       );
-      // console.log(error.message);
+      console.log(error.message);
       throw new BadRequestException(error.message);
     }
   }

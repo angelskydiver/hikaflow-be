@@ -37,8 +37,6 @@ export class WebhooksController {
       } else if (body.event == 'pullrequest:updated') {
         return await this._webhooksService.syncBitbucketPR(body.data);
       }
-    } else {
-      console.log('Request body:', body); // Log the body of the request
     }
     return {
       success: true,

@@ -126,11 +126,10 @@ export const fetchBitbucketPrCommits = async (data: {
       },
     });
 
-    // console.log'response: ', JSON.stringify(response.data, null, 2));
     return response.data.values;
   } catch (error) {
-    // console.logerror);
-    // throw error; // It's better to throw the actual error for debugging
+    console.log(error);
+    throw error; // It's better to throw the actual error for debugging
   }
 };
 
