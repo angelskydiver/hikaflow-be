@@ -153,7 +153,8 @@ export class OrganizationService {
         return {
           organizationExist: true,
           organizationId: organization.organizationId,
-          isAdmin: organization.role === 'ADMIN',
+          isAdmin:
+            organization.role === 'ADMIN' || organization.role === 'MANAGER',
           role: organization.role,
         };
       } else {

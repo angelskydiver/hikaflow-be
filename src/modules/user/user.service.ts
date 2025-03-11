@@ -74,13 +74,21 @@ export class UserService {
         email: User.email,
       },
     });
+
+    let isOrgMember = await this._prismaService.organizationAccounts.findFirst({
+      where: {
+        accountId: User?.account?.id,
+        role: { not: 'ADMIN' },
+      },
+    });
+
     return {
       user: User,
       account: User?.account?.id,
       verified: User?.account?.verified,
       access_token: await this._jwtService.signAsync(payload),
       isInvited: {
-        isInvited,
+        isInvited: isInvited || isOrgMember,
         organizationId: isInvited?.organizationId || null,
       },
     };
