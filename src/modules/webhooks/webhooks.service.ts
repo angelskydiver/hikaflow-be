@@ -4,14 +4,19 @@ import {
   Inject,
   Injectable,
 } from '@nestjs/common';
-import {
-  AccountCredentialsType,
-  CommentType,
-  PrTrackerStatus,
-} from '@prisma/client';
+import { CommentType, PrTrackerStatus } from '@prisma/client';
 import { shouldAnalyze } from 'src/config/constants/unnecessary.files.constant';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
+import { filterHighPriorityComments } from 'src/config/helpers/comment.helper';
 import { transformPrompts } from 'src/config/helpers/prompt.transformer.helper';
+import {
+  commentBitbucketPr,
+  commitInfoBitbucket,
+  extractChangesFromPatch,
+  fetchBitbucketDiff,
+  fetchBitbucketPrCommits,
+  fetchBitbucketPrPatch,
+} from 'src/config/helpers/repositories/bitbucket.helper';
 import {
   commentPr,
   commentPrSummary,
@@ -78,13 +83,13 @@ export class WebhooksService {
 
     let credentialPayload = {
       accountId: organizationAccount.accountId,
-      type: AccountCredentialsType.GITHUB_TOKEN,
+      // type: AccountCredentialsType.GITHUB_TOKEN,
     };
-    let accountGithubCredentials =
+    let remoteAccountCredentials =
       await this._accountCredentialService.getAccountToken(credentialPayload);
 
     return {
-      decryptedToken: accountGithubCredentials.decryptedToken,
+      decryptedToken: remoteAccountCredentials.decryptedToken,
       accountId: organizationAccount.accountId,
     };
   };
@@ -209,7 +214,154 @@ export class WebhooksService {
 
       return changes;
     } catch (error) {
-      console.log(error.message);
+      // console.log(error.message);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  async syncBitbucketPR(data: any) {
+    try {
+      let isBaseBranchMatch = await this._prismaService.repository.findUnique({
+        where: {
+          repositoryId: data.repository.uuid,
+          baseBranch: data.pullrequest.destination.branch.name,
+        },
+      });
+      if (!isBaseBranchMatch) {
+        return;
+      }
+
+      data = {
+        ...data,
+        repository: {
+          ...data.repository,
+          id: data.repository.uuid,
+        },
+      };
+
+      let { decryptedToken } = await this._accountCredentialByRepository(data);
+
+      // , accountGithubCredentials.decryptedToken
+      let prCommits = await fetchBitbucketPrCommits({
+        token: decryptedToken,
+        workspace: data.repository.workspace.slug,
+        repoSlug: data.repository.name,
+        prNumber: data.pullrequest.id,
+      });
+
+      let lastPrCommit = prCommits[prCommits.length - 1];
+
+      let prInfo = {
+        id: data.repository.uuid,
+        owner: data.repository.owner.display_name,
+        prNumber: data.pullrequest.id,
+        repo: data.repository.name,
+        lastCommit: lastPrCommit.hash,
+        token: decryptedToken,
+      };
+
+      let diffChanges = await commitInfoBitbucket({
+        token: decryptedToken,
+        commitDiffUrl: lastPrCommit.links.diff.href,
+      });
+
+      diffChanges = {
+        ...lastPrCommit,
+        author: {
+          ...lastPrCommit.author,
+          login: lastPrCommit.author.user.display_name,
+        },
+        html_url: lastPrCommit.links.html.href,
+        files: diffChanges.map((commit) => commit.filename),
+        patch: diffChanges.map((commit) => commit.patch),
+      };
+
+      let pullRequest = await this._prismaService.pullRequest.findFirst({
+        where: { prUrl: data.pullrequest.links.html.href },
+      });
+
+      let currentComments = await this._prismaService.comment.findMany({
+        where: {
+          prId: pullRequest.id,
+          file: { in: diffChanges.files.map((data) => data) },
+        },
+      });
+
+      let currentChangesMap = {};
+
+      currentComments.forEach((data) => {
+        currentChangesMap[`${data.file}-${data.line}`] = data;
+      });
+
+      let changes = [];
+      diffChanges.files.forEach((file, index) => {
+        changes = [
+          ...changes,
+          ...extractChangesFromPatch(diffChanges.patch[index])
+            .additions // .filter((change) => change.type === 'addition')
+            .map((change, i) => ({
+              lineNumber: change.line + i,
+              content: change.content,
+              fileName: file,
+            }))
+            .flat(),
+        ];
+      });
+
+      let outdatedComments = [];
+      changes.forEach((data) => {
+        if (currentChangesMap[`${data.fileName}-${data.lineNumber}`]?.id) {
+          outdatedComments.push(
+            currentChangesMap[`${data.fileName}-${data.lineNumber}`].id,
+          );
+        }
+      });
+
+      this._commentService.updateComments(outdatedComments);
+
+      let deepSeekWrapper = new DeepSeek();
+      // TODO need to use flags from DB
+      let AiResponse = await deepSeekWrapper.analyzeCodeFilesForIssues(changes);
+
+      let commentsMapping = AiResponse.codeIssues.map((issue) =>
+        commentBitbucketPr({
+          token: prInfo.token,
+          commentUrl: data.pullrequest.links.comments.href,
+          body: {
+            content: {
+              raw: `${issue.issue} - Priority: ${issue.priority} \n ${issue.reason}`,
+            },
+            inline: {
+              to: parseInt(issue.line),
+              path: issue.file,
+            },
+          },
+        }),
+      );
+
+      prInfo['prId'] = pullRequest.id;
+
+      let createCommentsMapping = AiResponse.codeIssues.map((data) => {
+        let payload = {
+          repositoryId: prInfo.id,
+          prId: pullRequest.id,
+          content: data.content,
+          line: data.line,
+          file: data.file,
+          issue: data.issue,
+          issueCategory: data.category,
+          severity: data.priority.split(' ')[0],
+          type: CommentType.PULL_REQUEST,
+        };
+        return this._commentService.createComment(payload);
+      });
+
+      await Promise.allSettled(commentsMapping);
+      await Promise.allSettled(createCommentsMapping);
+
+      return changes;
+    } catch (error) {
+      // console.log(error.message);
       throw new BadRequestException(error.message);
     }
   }
@@ -223,7 +375,7 @@ export class WebhooksService {
         },
       });
       if (!isBaseBranchMatch) {
-        console.log('base branch not found');
+        // console.log('base branch not found');
         return;
       }
 
@@ -277,6 +429,90 @@ export class WebhooksService {
       prInfo['prId'] = pullRequest.id;
       prInfo['head'] = data.pull_request.head.ref;
       this.diffFunctionality3(prInfo);
+    } catch (error) {
+      // console.log(error.message);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  async bitbucketCreateRequest(data: any) {
+    try {
+      let isBaseBranchMatch = await this._prismaService.repository.findUnique({
+        where: {
+          repositoryId: data.repository.uuid,
+          baseBranch: data.pullrequest.destination.branch.name,
+        },
+      });
+      if (!isBaseBranchMatch) {
+        console.log('base branch not found');
+        return;
+      }
+
+      let prTrackerPayload = {
+        prId: `${data.repository.name}-${data.pullrequest.id}`,
+        status: PrTrackerStatus.PENDING,
+        response: data,
+      };
+
+      this._prTrackerService.trackPr(prTrackerPayload);
+
+      data = {
+        ...data,
+        repository: {
+          ...data.repository,
+          id: data.repository.uuid,
+        },
+      };
+
+      let { decryptedToken, accountId } =
+        await this._accountCredentialByRepository(data);
+
+      // need to hit bitbucket api
+      let prCommits = await fetchBitbucketPrCommits({
+        token: decryptedToken,
+        workspace: data.repository.workspace.slug,
+        repoSlug: data.repository.name,
+        prNumber: data.pullrequest.id,
+      });
+
+      let lastPrCommit = prCommits[prCommits.length - 1].hash;
+
+      let prInfo = {
+        id: data.repository.id.toString(),
+        owner: data.repository.owner.login, // what is this?
+        prNumber: data.pullrequest.id,
+        repo: data.repository.name,
+        lastCommit: lastPrCommit,
+        token: decryptedToken,
+        repositoryId: isBaseBranchMatch.id,
+        organizationId: isBaseBranchMatch.organizationId,
+        accountId,
+        links: data.pullrequest.links,
+      };
+
+      let repository = await this._repositoryService.getRepository(
+        {
+          repositoryId: data.repository.id.toString(),
+        },
+        {},
+      );
+
+      let pullRequestPayload = {
+        repositoryId: repository.repositoryId,
+        prUrl: data.pullrequest.links.html.href,
+        prNumber: data.pullrequest.id,
+        prTitle: data.pullrequest.title,
+        prDescription: data.pullrequest?.description || '',
+        head: data.pullrequest.source.branch.name,
+        base: data.pullrequest.destination.branch.name,
+      };
+
+      let pullRequest =
+        await this._pullRequestService.registerPullRequest(pullRequestPayload);
+      prInfo['prId'] = pullRequest.id;
+      prInfo['head'] = data.pullrequest.source.branch.name;
+      //
+      this.bitbucketDiffFunctionality(prInfo);
     } catch (error) {
       console.log(error.message);
       throw new BadRequestException(error.message);
@@ -427,7 +663,192 @@ export class WebhooksService {
         `${data.repository.name}-${data.number}`,
         PrTrackerStatus.REJECTED,
       );
-      console.log(error.message);
+      // console.log(error.message);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  async generateBitbucketPrReport(data?: any) {
+    try {
+      let isBaseBranchMatch = await this._prismaService.repository.findUnique({
+        where: {
+          repositoryId: data.repository.uuid,
+          baseBranch: data.pullrequest.destination.branch.name,
+        },
+      });
+      if (!isBaseBranchMatch) {
+        return;
+      }
+
+      let prTrackerPayload = {
+        prId: `${data.repository.name}-${data.pullrequest.id}`,
+        status: PrTrackerStatus.PENDING,
+        response: data,
+      };
+
+      this._prTrackerService.trackPr(prTrackerPayload);
+
+      let { decryptedToken, accountId } =
+        await this._accountCredentialByRepository({
+          ...data,
+          repository: { ...data.repository, id: data.repository.uuid },
+        });
+
+      let prCommits = await fetchBitbucketPrCommits({
+        token: decryptedToken,
+        workspace: data.repository.workspace.slug,
+        repoSlug: data.repository.name,
+        prNumber: data.pullrequest.id,
+      });
+
+      let lastPrCommit = prCommits[prCommits.length - 1].hash;
+
+      let prInfo = {
+        owner: data.repository.owner.display_name,
+        prNumber: data.repository.id,
+        repo: data.repository.name,
+        lastCommit: lastPrCommit,
+        token: decryptedToken,
+        accountId,
+        links: data.pullrequest.links,
+      };
+
+      let fileChanges = await fetchBitbucketPrPatch({
+        token: decryptedToken,
+        diffUrl: prInfo.links.diff.href,
+      }); // after this I want to check each file patch
+
+      let { modified, added } = this._countChanges(fileChanges);
+
+      // remove setup or unnecessary files.
+      let filteredFiles = filterFiles(fileChanges);
+
+      filteredFiles = filteredFiles.map((data) => ({
+        filename: data.filename,
+        patch: data.changes.map((data) => data.lines.join()),
+      }));
+      let deepSeekAgent = new DeepSeek();
+
+      // let complexityAndDuplication = {};
+      let complexityAndDuplication =
+        await deepSeekAgent.analyzeCodeComplexityAndDuplication(filteredFiles);
+
+      let mapPrCommit = prCommits.map((data, i) => {
+        // console.log('mapPrCommit: ', i + ' ' + JSON.stringify(data, null, 2));
+        return commitInfoBitbucket({
+          token: decryptedToken,
+          commitDiffUrl: data.links.diff.href,
+        });
+      });
+
+      let commits = await Promise.all(mapPrCommit);
+      commits = commits.map((data, index) => {
+        return {
+          ...prCommits[index],
+          author: {
+            ...prCommits[index].author,
+            login: prCommits[index].author.user.display_name,
+          },
+          html_url: prCommits[index].links.html.href,
+          files: data.map((commit) => commit.filename),
+          patch: data.map((commit) => commit.patch),
+        };
+      });
+      let codeChurn = {};
+      // let codeChurn = await this._analyzeHotSpotsAndCodeChurn(commits);
+      let contributorsAndCodeOwnership =
+        await this._analyzeContributorsAndCodeOwnership(commits);
+      // console.log('Commits;;;', contributorsAndCodeOwnership);
+
+      let repository = await this._repositoryService.getRepository(
+        {
+          repositoryId: data.repository.uuid.toString(),
+        },
+        {},
+      );
+      // console.log('WOW;;;', repository);
+
+      let executiveReportPayload = {
+        repositoryId: repository.repositoryId,
+        prNumber: data.pullrequest.id,
+        summary: {
+          modified,
+          added,
+          complexityAndDuplication,
+          codeChurn,
+          contributorsAndCodeOwnership,
+        },
+      };
+      let { report } = await this._executiveReportService.createExecutiveReport(
+        executiveReportPayload,
+      );
+
+      // TODO contibue from here
+
+      let commitSummaryMapping = commits.map((commit, index) => {
+        let stats = extractChangesFromPatch(commit.patch[0]);
+        return this._commitSummaryService.createCommitSummary(
+          {
+            ...commit,
+            stats: {
+              additions: stats.additionCount,
+              deletions: stats.deletionCount,
+            },
+            commit: { message: commit.message },
+            sha: commit.hash,
+            author: { login: commit.author.user.display_name },
+          },
+          data.repository.uuid.toString(),
+          report.id,
+        );
+      });
+
+      let payload = {
+        accountId: prInfo.accountId,
+        authorName: prInfo.owner,
+        reportId: report.id,
+        repositoryInfo: {
+          repositoryName: prInfo.repo,
+        },
+      };
+
+      let response = await deepSeekAgent.processCodeFiles(filteredFiles);
+      // TODO: Code Overview
+      let createCodeOverviewPayload = {
+        summary: response,
+        repositoryId: repository.repositoryId,
+        reportId: report.id,
+      };
+      await this._codeOverviewService.createCodeOverview(
+        createCodeOverviewPayload,
+      );
+      await this.sendPrCloseNotification(payload);
+      this._prTrackerService.updatePrInfo(
+        `${data.repository.name}-${data.pullrequest.id}`,
+        PrTrackerStatus.APPROVED,
+      );
+      return {
+        modified,
+        added,
+        complexityAndDuplication,
+        codeChurn,
+        contributorsAndCodeOwnership,
+      };
+
+      // fetch commits
+      // 1. hot spots frequently changed and error-prone files
+      // 2. code churn - High modification frequency in file
+
+      // team contribution
+      // 1. commits by contributors
+      // 2. Review and comments
+      // 3. code ownership
+    } catch (error) {
+      // this._prTrackerService.updatePrInfo(
+      //   `${data.repository.name}-${data.number}`,
+      //   PrTrackerStatus.REJECTED,
+      // );
+      // console.log(error.message);
       throw new BadRequestException(error.message);
     }
   }
@@ -454,7 +875,7 @@ export class WebhooksService {
 
       // Update file ownership
       commit.files.forEach((file) => {
-        const fileName = file.filename;
+        const fileName = file.filename || file;
 
         if (!fileOwnership.has(fileName)) {
           fileOwnership.set(fileName, new Map());
@@ -504,7 +925,6 @@ export class WebhooksService {
         (a, b) => b.contributors[0].commitCount - a.contributors[0].commitCount,
       ); // Sort by top contributor's commit count (descending)
 
-    // Step 5: Return the results in JSON format
     return {
       contributors: {
         list: contributors,
@@ -568,6 +988,137 @@ export class WebhooksService {
         files: codeChurn,
       },
     };
+  }
+
+  async bitbucketDiffFunctionality(prInfo: any) {
+    try {
+      let files = await fetchBitbucketDiff({
+        token: prInfo.token,
+        diffUrl: prInfo.links.diffstat.href,
+      });
+
+      files = files.filter((file) => shouldAnalyze(file.fileName));
+      let filesContent = [];
+
+      files.forEach((data) => {
+        const lines = data.content.split('\n');
+        const withLineNumbers = lines
+          .map((line, index) => `${index + 1}: ${line}`)
+          .join('\n');
+        filesContent.push({ file: data.fileName, content: withLineNumbers });
+      });
+      // let { duplicateIdenticalCodeIssue } =
+      //   await this.detectDuplicateAndIdenticalCode(filesContent);
+
+      let { repositorySettings } =
+        await this._prismaService.repository.findFirst({
+          where: { id: prInfo.repositoryId },
+          include: {
+            repositorySettings: true,
+          },
+        });
+      let deepSeekWrapper = new DeepSeek();
+
+      // let allIssues = duplicateIdenticalCodeIssue;
+      let allIssues = [];
+
+      let allSummaries = [];
+      let prompt = transformPrompts(repositorySettings);
+      for (let i = 0; i < filesContent.length; i++) {
+        let changes = filesContent[i];
+        const AiResponse = await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(
+          changes,
+          prompt,
+        );
+        allIssues = [...allIssues, ...AiResponse.codeIssues];
+        allSummaries.push({ prSummary: AiResponse.prSummary });
+      }
+
+      const combinedSummary = allSummaries;
+
+      let filteredIssues = filterHighPriorityComments(allIssues);
+
+      let commentsMapping = filteredIssues.map((data) =>
+        commentBitbucketPr({
+          token: prInfo.token,
+          commentUrl: prInfo.links.comments.href,
+          body: {
+            content: {
+              raw: `${data.issue} - Priority: ${data.priority} \n ${data.reason}`,
+            },
+            inline: {
+              to: parseInt(data.line),
+              path: data.file,
+            },
+          },
+        }),
+      );
+
+      let comments = await Promise.allSettled(commentsMapping);
+      let createCommentsMapping = filteredIssues
+        .map((data, index) => {
+          // @ts-ignore
+          let payload = {
+            repositoryId: prInfo.id,
+            prId: prInfo.prId,
+            content: data.content,
+            line: parseInt(data.line),
+            file: data.file,
+            issue: data.issue,
+            issueCategory: data.category,
+            severity: data.priority,
+            type: CommentType.PULL_REQUEST, // Since it's a PR comment, set the type as PULL_REQUEST
+          };
+
+          // Only create the comment if it's a PR-related comment
+          return this._commentService.createComment(payload);
+
+          // If it's not a PR comment, return undefined (or you can filter out these)
+          return undefined;
+        })
+        .filter((comment) => comment !== undefined);
+
+      let analyzeCombineSummary =
+        await deepSeekWrapper.analyzeCombineSummary(combinedSummary);
+
+      await this._pullRequestService.updatePullRequest(prInfo.prId, {
+        summary: analyzeCombineSummary.prSummary,
+      });
+      await commentPrSummary(prInfo, {
+        issue: analyzeCombineSummary.prSummary,
+      });
+      await Promise.allSettled(createCommentsMapping);
+      // TODO: email
+
+      let payload = {
+        accountId: prInfo.accountId,
+        authorName: prInfo.owner,
+        repositoryInfo: {
+          repositoryName: prInfo.repo,
+          repositoryId: prInfo.repositoryId,
+        },
+        organizationId: prInfo.organizationId,
+      };
+      await this.sendPrCreateNotification(payload);
+      this._prTrackerService.updatePrInfo(
+        `${prInfo.repo}-${prInfo.prNumber}`,
+        PrTrackerStatus.APPROVED,
+      );
+      return {
+        // fileChanges,
+        AiResponse: {
+          codeIssues: allIssues,
+          prSummary: analyzeCombineSummary.prSummary,
+        },
+      };
+    } catch (error) {
+      this._prTrackerService.updatePrInfo(
+        `${prInfo.repo}-${prInfo.prNumber}`,
+        PrTrackerStatus.REJECTED,
+      );
+      console.log(error.message);
+      throw new BadRequestException(error.message);
+    }
   }
 
   async diffFunctionality3(prInfo: any) {
@@ -693,7 +1244,7 @@ export class WebhooksService {
         `${prInfo.repo}-${prInfo.prNumber}`,
         PrTrackerStatus.REJECTED,
       );
-      console.log(error.message);
+      // console.log(error.message);
       throw new BadRequestException(error.message);
     }
   }
@@ -817,7 +1368,7 @@ export class WebhooksService {
         },
       };
     } catch (error) {
-      console.log(error.message);
+      // console.log(error.message);
       throw new BadRequestException(error.message);
     }
   }
