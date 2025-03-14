@@ -1,14 +1,81 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { CommentStatus } from '@prisma/client';
+import { CommentCategory } from 'src/config/constants/comment.type.constant';
 import { PrismaService } from 'src/prisma/prisma.service';
 import {
+  CommentRequestType,
   CreateCommentRequestDto,
   GetCommentRequestDto,
+  RegisterDuplicateCodeRequestDto,
 } from './dto/comment.request.dto';
 
 @Injectable()
 export class CommentService {
   constructor(private _prismaService: PrismaService) {}
+
+  async registerDuplicateCode(data: RegisterDuplicateCodeRequestDto[]) {
+    try {
+      console.log('data: ', JSON.stringify(data, null, 2));
+      let dataMapping = data.map((duplicateCode) =>
+        this._prismaService.duplicatedCode.create({ data: duplicateCode }),
+      );
+      await Promise.all(dataMapping);
+    } catch (error) {
+      console.log(error);
+      throw new Error('Failed to register duplicate code');
+    }
+  }
+
+  async fetchRepositoryDuplicateCode(
+    accountId: string,
+    data: GetCommentRequestDto,
+  ) {
+    try {
+      let whereParams = {
+        repositoryId: data.repositoryId,
+      };
+      let accountRepository =
+        await this._prismaService.accountRepository.findFirst({
+          where: whereParams,
+          include: {
+            repository: true,
+          },
+        });
+      if (!accountRepository)
+        throw new BadRequestException('Repository not found');
+      let repositoryGithubId = accountRepository.repository.repositoryId;
+      let pullRequests = null;
+      if (data.prId) {
+        pullRequests = await this._prismaService.pullRequest.findFirst({
+          where: {
+            repositoryId: repositoryGithubId,
+            prNumber: parseInt(data.prId),
+          },
+        });
+      }
+      let comments = await this._prismaService.duplicatedCode.findMany({
+        where: {
+          repositoryId: accountRepository.repository.id,
+          ...(data.prId && { prId: data.prId }),
+        },
+        skip: (parseInt(data.currentPage) - 1) * parseInt(data.pageSize),
+        take: parseInt(data.pageSize),
+        orderBy: { createdAt: 'desc' },
+      });
+
+      let commentCount = await this._prismaService.duplicatedCode.count({
+        where: {
+          repositoryId: accountRepository.repository.id,
+          ...(data.prId && { prId: data.prId }),
+        },
+      });
+
+      return { comments: comments, commentCount: commentCount };
+    } catch (error) {
+      console.log(error.message);
+      throw new BadRequestException(error.message);
+    }
+  }
 
   async createComment(data: CreateCommentRequestDto): Promise<any> {
     try {
@@ -50,6 +117,12 @@ export class CommentService {
         where: {
           repositoryId: repositoryGithubId,
           ...(data.prId && { prId: pullRequests.id }),
+          ...(data.category && {
+            issueCategory:
+              data.category == CommentRequestType.CODE_ISSUES
+                ? { not: CommentCategory.SecurityConcerns }
+                : CommentCategory.SecurityConcerns,
+          }),
         },
         skip: (parseInt(data.currentPage) - 1) * parseInt(data.pageSize),
         take: parseInt(data.pageSize),
@@ -60,6 +133,12 @@ export class CommentService {
         where: {
           repositoryId: repositoryGithubId,
           ...(data.prId && { prId: pullRequests.id }),
+          ...(data.category && {
+            issueCategory:
+              data.category == CommentRequestType.CODE_ISSUES
+                ? { not: CommentCategory.SecurityConcerns }
+                : CommentCategory.SecurityConcerns,
+          }),
         },
       });
 

@@ -49,87 +49,111 @@ export function getAuthToken(
 }
 
 export const fetchBitbucketRepositories = async (data: {
-  // sharedSecret: string;
-  // baseUrl: string;
-  // clientKey: string;
   workspace: string;
   token: string;
 }) => {
   try {
     let method = 'GET';
-    let resource = `/2.0/repositories/${data.workspace}`; // Include /2.0 in the resource for QSH
-    // let token = getAuthToken(data, method, resource);
-    // // console.log`${data.baseUrl}${resource}`, token);
-    const response = await axios.get(`https://api.bitbucket.org${resource}`, {
-      headers: {
-        Authorization: `${data.token}`, // Correct header name
-      },
-    });
+    let resource = `/2.0/repositories/${data.workspace}?pagelen=100`;
+    let allRepositories: any[] = [];
+    let hasNextPage = true;
+    let nextPageUrl = `https://api.bitbucket.org${resource}`; // Initial URL
 
-    // console.log'response: ', JSON.stringify(response.data, null, 2));
-    return response.data.values;
+    while (hasNextPage) {
+      const response = await axios.get(nextPageUrl, {
+        headers: {
+          Authorization: `${data.token}`, // Correct header name
+        },
+      });
+
+      // Extract the current page's repositories
+      const currentPageRepositories = response.data.values;
+      allRepositories = allRepositories.concat(currentPageRepositories);
+
+      // Check if there is a next page
+      if (response.data.next) {
+        nextPageUrl = response.data.next; // Update the URL for the next request
+      } else {
+        hasNextPage = false; // No more pages, exit the loop
+      }
+    }
+    return allRepositories; // Return the complete list of repositories
   } catch (error) {
-    // console.logerror);
-    // throw error; // It's better to throw the actual error for debugging
+    console.error('Error fetching repositories:', error);
+    throw error; // Re-throw the error for further handling
   }
 };
 
 export const fetchBitbucketRepositoryBranches = async (data: {
-  // sharedSecret: string;
-  // baseUrl: string;
-  // clientKey: string;
   token: string;
   workspace: string;
   repoSlug: string;
 }) => {
   try {
-    let method = 'POST';
-    // let resource = `/2.0/repositories/${data.workspace}/hiksflow-test-repo/pullrequests/2/comments`; // Include /2.0 in the resource for QSH
+    let allBranches: any[] = []; // Array to store all branches
+    let hasNextPage = true; // Flag to control pagination loop
+    let nextPageUrl = `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repoSlug}/refs/branches?pagelen=100`; // Initial URL
 
-    let resource = `/2.0/repositories/${data.workspace}/${data.repoSlug}/refs/branches`; // Include /2.0 in the resource for QSH
-    // let token = getAuthToken(data, method, resource);
-    // // console.log`${data.baseUrl}${resource}`, token);
-    const response: any = await axios.get(
-      `https://api.bitbucket.org${resource}`,
-      {
+    while (hasNextPage) {
+      const response = await axios.get(nextPageUrl, {
         headers: {
           Authorization: `${data.token}`, // Correct header name
         },
-      },
-    );
+      });
 
-    // console.log'response: ', response);
+      // Extract the current page's branches
+      const currentPageBranches = response.data.values;
+      allBranches = allBranches.concat(currentPageBranches);
 
-    return response.data.values;
+      // Check if there is a next page
+      if (response.data.next) {
+        nextPageUrl = response.data.next; // Update the URL for the next request
+      } else {
+        hasNextPage = false; // No more pages, exit the loop
+      }
+    }
+
+    return allBranches; // Return the complete list of branches
   } catch (error) {
-    // console.logerror);
-    // throw error; // It's better to throw the actual error for debugging
+    console.error('Error fetching branches:', error);
+    throw error; // Re-throw the error for further handling
   }
 };
 
 export const fetchBitbucketPrCommits = async (data: {
-  // sharedSecret: string;
-  // baseUrl: string;
-  // clientKey: string;
   token: string;
   workspace: string;
   repoSlug: string;
   prNumber: number;
 }) => {
   try {
-    let method = 'GET';
-    let resource = `/2.0/repositories/${data.workspace}/${data.repoSlug}/pullrequests/${data.prNumber}/commits`;
+    let allCommits: any[] = []; // Array to store all commits
+    let hasNextPage = true; // Flag to control pagination loop
+    let nextPageUrl = `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repoSlug}/pullrequests/${data.prNumber}/commits?pagelen=100`; // Initial URL
 
-    const response = await axios.get(`https://api.bitbucket.org${resource}`, {
-      headers: {
-        Authorization: `${data.token}`,
-      },
-    });
+    while (hasNextPage) {
+      const response = await axios.get(nextPageUrl, {
+        headers: {
+          Authorization: `${data.token}`, // Correct header name
+        },
+      });
 
-    return response.data.values;
+      // Extract the current page's commits
+      const currentPageCommits = response.data.values;
+      allCommits = allCommits.concat(currentPageCommits);
+
+      // Check if there is a next page
+      if (response.data.next) {
+        nextPageUrl = response.data.next; // Update the URL for the next request
+      } else {
+        hasNextPage = false; // No more pages, exit the loop
+      }
+    }
+
+    return allCommits; // Return the complete list of commits
   } catch (error) {
-    console.log(error);
-    throw error; // It's better to throw the actual error for debugging
+    console.error('Error fetching PR commits:', error);
+    throw error; // Re-throw the error for further handling
   }
 };
 
@@ -166,47 +190,58 @@ export const fetchBitbucketDiff = async (data: {
   diffUrl: string;
 }) => {
   try {
-    // let method = 'GET';
-    // let resource = data.diffUrl.replace(`https://`, '');
-    // let token = getAuthToken(data, method, resource);
-    // // console.log`data.diffUrl: ${data.diffUrl}`, token);
-    const response = await axios.get(`${data.diffUrl}`, {
-      headers: {
-        Authorization: `${data.token}`,
-      },
-    });
+    let allDiffs: any[] = []; // Array to store all diffs
+    let hasNextPage = true; // Flag to control pagination loop
+    let nextPageUrl = `${data.diffUrl}?pagelen=100`; // Initial URL with pagination size
 
-    // console.logdata.token);
-
-    // console.log'response: ', JSON.stringify(response.data.values, null, 2));
-    let fileChangesMapping = response.data.values.map(
-      (data) => data.new.links.self.href,
-    );
-
-    // console.log'fileChangesMapping: ', fileChangesMapping);
-
-    let changes = [];
-    for (let i = 0; i < fileChangesMapping.length; i++) {
-      let fileData = await axios.get(fileChangesMapping[i], {
+    // Fetch all diffs with pagination
+    while (hasNextPage) {
+      const response = await axios.get(nextPageUrl, {
         headers: {
           Authorization: `${data.token}`,
         },
       });
-      changes.push(fileData.data);
-      // console.logfileData.data);
-    }
-    // console.log'fileChanges: ', JSON.stringify(changes, null, 2));
 
-    let files = response.data.values.map((data, index) => ({
-      fileName: data.new.path, // need to check this path with proper repository like is it entire path
-      content: changes[index],
+      // Extract the current page's diffs
+      const currentPageDiffs = response.data.values;
+      allDiffs = allDiffs.concat(currentPageDiffs);
+
+      // Check if there is a next page
+      if (response.data.next) {
+        nextPageUrl = response.data.next; // Update the URL for the next request
+      } else {
+        hasNextPage = false; // No more pages, exit the loop
+      }
+    }
+
+    // Process all diffs to extract file changes and their content
+    const fileChangesMapping = allDiffs.map(
+      (diff) => diff.new?.links?.self?.href,
+    );
+
+    // Fetch file contents concurrently
+    const fileContents = await Promise.all(
+      fileChangesMapping.map(async (fileUrl) => {
+        if (!fileUrl) return null; // Skip invalid URLs
+        const fileResponse = await axios.get(fileUrl, {
+          headers: {
+            Authorization: `${data.token}`,
+          },
+        });
+        return fileResponse.data;
+      }),
+    );
+
+    // Map file names and their content
+    const files = allDiffs.map((diff, index) => ({
+      fileName: diff.new?.path || 'unknown', // Use 'unknown' as fallback if path is missing
+      content: fileContents[index] || null, // Use null as fallback if content is missing
     }));
 
-    // console.log'response: ', JSON.stringify(files, null, 2));
     return files;
   } catch (error) {
-    // console.logerror.message);
-    // throw error; // It's better to throw the actual error for debugging
+    console.error('Error fetching diffs:', error);
+    throw error; // Re-throw the error for further handling
   }
 };
 
@@ -274,8 +309,6 @@ export async function commitInfoBitbucket(
       Authorization: `${data.token}`,
     },
   });
-
-  console.log('diffData: ', response.data);
 
   if (diff) {
     return response.data;
@@ -484,7 +517,6 @@ export function extractChangesFromPatch(rawDiff) {
 }
 
 export function parseGitDiff(rawDiff) {
-  console.log('rawDiff: ', rawDiff);
   const fileChanges = [];
   const files = rawDiff.split(/diff --git a\//).slice(1);
 
@@ -550,4 +582,21 @@ export function parseGitDiffByFile(files, patch) {
   });
 
   return patchesByFile;
+}
+
+export function changesMapping(fileChanges) {
+  const hashmap = {};
+
+  fileChanges.forEach((file) => {
+    file.changes.forEach((change) => {
+      if (change.type === 'addition') {
+        change.lines.forEach((line, index) => {
+          // Create a key using the filename and line number
+          const key = `${file.filename}-${change.startLine + index}`;
+          hashmap[key] = 1; // You can set the value to any fixed value like 1
+        });
+      }
+    });
+  });
+  return hashmap;
 }

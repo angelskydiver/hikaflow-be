@@ -10,6 +10,7 @@ import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
 import { filterHighPriorityComments } from 'src/config/helpers/comment.helper';
 import { transformPrompts } from 'src/config/helpers/prompt.transformer.helper';
 import {
+  changesMapping,
   commentBitbucketPr,
   commitInfoBitbucket,
   extractChangesFromPatch,
@@ -253,7 +254,7 @@ export class WebhooksService {
 
       let prInfo = {
         id: data.repository.uuid,
-        owner: data.repository.owner.display_name,
+        owner: data.actor.display_name,
         prNumber: data.pullrequest.id,
         repo: data.repository.name,
         lastCommit: lastPrCommit.hash,
@@ -479,7 +480,7 @@ export class WebhooksService {
 
       let prInfo = {
         id: data.repository.id.toString(),
-        owner: data.repository.owner.login, // what is this?
+        owner: data.actor.display_name,
         prNumber: data.pullrequest.id,
         repo: data.repository.name,
         lastCommit: lastPrCommit,
@@ -704,7 +705,7 @@ export class WebhooksService {
       let lastPrCommit = prCommits[prCommits.length - 1].hash;
 
       let prInfo = {
-        owner: data.repository.owner.display_name,
+        owner: data.actor.display_name,
         prNumber: data.repository.id,
         repo: data.repository.name,
         lastCommit: lastPrCommit,
@@ -997,6 +998,11 @@ export class WebhooksService {
         diffUrl: prInfo.links.diffstat.href,
       });
 
+      let filePatch = await fetchBitbucketPrPatch({
+        token: prInfo.token,
+        diffUrl: prInfo.links.diff.href,
+      });
+
       files = files.filter((file) => shouldAnalyze(file.fileName));
       let filesContent = [];
 
@@ -1007,8 +1013,11 @@ export class WebhooksService {
           .join('\n');
         filesContent.push({ file: data.fileName, content: withLineNumbers });
       });
-      // let { duplicateIdenticalCodeIssue } =
-      //   await this.detectDuplicateAndIdenticalCode(filesContent);
+
+      let { duplicateIdenticalCodeIssue, duplicateCodes, identicalCodes } =
+        await this.detectDuplicateAndIdenticalCode(filePatch);
+
+      let PrPatches = changesMapping(filePatch);
 
       let { repositorySettings } =
         await this._prismaService.repository.findFirst({
@@ -1019,8 +1028,7 @@ export class WebhooksService {
         });
       let deepSeekWrapper = new DeepSeek();
 
-      // let allIssues = duplicateIdenticalCodeIssue;
-      let allIssues = [];
+      let allIssues = duplicateIdenticalCodeIssue;
 
       let allSummaries = [];
       let prompt = transformPrompts(repositorySettings);
@@ -1067,7 +1075,9 @@ export class WebhooksService {
             issue: data.issue,
             issueCategory: data.category,
             severity: data.priority,
-            type: CommentType.PULL_REQUEST, // Since it's a PR comment, set the type as PULL_REQUEST
+            type: PrPatches[`${data.file}-${data.line}`]
+              ? CommentType.PULL_REQUEST
+              : CommentType.ISSUE, // Since it's a PR comment, set the type as PULL_REQUEST
           };
 
           // Only create the comment if it's a PR-related comment
@@ -1084,9 +1094,19 @@ export class WebhooksService {
       await this._pullRequestService.updatePullRequest(prInfo.prId, {
         summary: analyzeCombineSummary.prSummary,
       });
-      await commentPrSummary(prInfo, {
-        issue: analyzeCombineSummary.prSummary,
-      });
+      // TODO add summary on Bitbucket
+      // await commentPrSummary(prInfo, {
+      //   issue: analyzeCombineSummary.prSummary,
+      // });
+
+      await this._commentService.registerDuplicateCode(
+        duplicateCodes.map((data) => ({
+          ...data,
+          repositoryId: prInfo.repositoryId,
+          prId: prInfo.prNumber.toString(),
+        })),
+      );
+
       await Promise.allSettled(createCommentsMapping);
       // TODO: email
 
@@ -1146,7 +1166,7 @@ export class WebhooksService {
         filesContent.push({ file: data.fileName, content: withLineNumbers });
       });
       // return;
-      let { duplicateIdenticalCodeIssue } =
+      let { duplicateIdenticalCodeIssue, duplicateCodes } =
         await this.detectDuplicateAndIdenticalCode(fileChanges);
 
       let { repositorySettings } =
@@ -1216,6 +1236,14 @@ export class WebhooksService {
         issue: analyzeCombineSummary.prSummary,
       });
       await Promise.allSettled(createCommentsMapping);
+
+      await this._commentService.registerDuplicateCode(
+        duplicateCodes.map((data) => ({
+          ...data,
+          repositoryId: prInfo.repositoryId,
+          prId: prInfo.prNumber.toString(),
+        })),
+      );
       // TODO: email
 
       let payload = {
@@ -1396,7 +1424,7 @@ export class WebhooksService {
           const lines = change.lines.map((line, i) => ({
             lineNumber: change.startLine + i,
             content: line,
-            fileName: file.file,
+            fileName: file.file || file.filename,
           }));
 
           for (const line of lines) {
@@ -1455,9 +1483,9 @@ export class WebhooksService {
       }
 
       return {
-        duplicateIdenticalCodeIssue: allIssues,
-        duplicateCodes,
-        identicalCodes,
+        duplicateIdenticalCodeIssue: allIssues.filter((data) => data.content),
+        duplicateCodes: duplicateCodes.filter((data) => data.content),
+        identicalCodes: identicalCodes.filter((data) => data.content),
       };
     } catch (error) {
       console.error(error.message);

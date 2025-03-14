@@ -52,6 +52,11 @@ enum OrganizationalAccountRole {
   ADMIN   @map("ADMIN")
 }
 
+enum DuplicateCode {
+  DUPLICATE      @map("DUPLICATE")
+  IDENTICAL_CODE @map("IDENTICAL_CODE")
+}
+
 model User {
   id        String        @id @default(uuid())
   firstName String
@@ -163,6 +168,7 @@ model Repository {
   updatedAt          DateTime             @updatedAt
   repositorySettings RepositorySettings[]
   commitSummary      commitSummary[]
+  duplicatedCode     DuplicatedCode[]
 }
 
 model AccountRepository {
@@ -311,4 +317,19 @@ model OrganizationInvitation {
   updatedAt DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id])
+}
+
+model DuplicatedCode {
+  id           String        @id @default(uuid())
+  repositoryId String
+  file         String
+  content      String
+  line         Int
+  duplicateOf  Json          @default("{}")
+  prId         String
+  type         DuplicateCode @default(DUPLICATE)
+  repository   Repository    @relation(fields: [repositoryId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt()
 }
