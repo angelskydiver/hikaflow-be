@@ -20,7 +20,4 @@ export class RegisterBitbucketAccountCredentialRequestDto {
 export class RetrieveAccountCredentialsRequestDto {
   @ApiProperty({ example: 'accountId' })
   accountId: string;
-
-  @ApiProperty({ enum: AccountCredentialsType })
-  type: AccountCredentialsType;
 }

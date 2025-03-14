@@ -19,4 +19,16 @@ export class CommentController {
       payload,
     );
   }
+
+  @ApiBearerAuth()
+  @Get('getDuplicatedCode')
+  async FetchRepositoryDuplicateCode(
+    @Query() payload: GetCommentRequestDto,
+    @Request() req: any,
+  ) {
+    return await this._commentService.fetchRepositoryDuplicateCode(
+      req.user.accountId,
+      payload,
+    );
+  }
 }
