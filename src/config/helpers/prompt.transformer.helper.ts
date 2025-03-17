@@ -102,7 +102,7 @@ export const repositorySettingsTemp = [
     key: 'Use of Hardcoded Secrets',
     description: 'Hardcoded secrets in code.',
     prompt:
-      'Flag hardcoded secrets (e.g., API keys, passwords). Ignore secrets loaded from environment variables or config files.',
+      "Detect hardcoded secrets (e.g., API keys, passwords, tokens) that are directly embedded as literal strings in code. Ignore values loaded dynamically from secure sources (environment variables, config files, or vaults). Flag only cases where sensitive values are: Assigned as raw strings (e.g., apiKey = 'abcd1234', password = 'secret'). Used directly in code (e.g., Authorization: Bearer abcd1234). Not retrieved via process.env, config.get(), or similar secure methods. Examples to Flag: const apiKey = 'abcd1234'; auth: 'Bearer xyz_token' password: 'mysecretpwd' Examples to Ignore: const secret = process.env.JWT_SECRET; apiKey: config.get('API_KEY') Bearer ${token} (interpolated variables)",
     priority: 'High',
     active: true,
     category: 'Security',

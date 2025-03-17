@@ -14,6 +14,7 @@ import {
   GithubRepository,
   GithubRepositoryBranches,
   RegisterRepositoryRequestDto,
+  UpdateRepositorySettingsPromptRequestDto,
 } from './dto/repository.request.dto';
 import { RepositoryService } from './repository.service';
 
@@ -88,6 +89,14 @@ export class RepositoryController {
     let response =
       await this._repositoryService.fetchRepositorySettings(repositoryId);
     return response;
+  }
+
+  @Public()
+  @Put('/updateRepositorySetting')
+  async UpdateRepositorySettingsPrompt(
+    @Body() data: UpdateRepositorySettingsPromptRequestDto,
+  ) {
+    return await this._repositoryService.updateRepositorySettingsPrompt(data);
   }
 
   @ApiBearerAuth()

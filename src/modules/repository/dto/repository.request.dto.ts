@@ -47,3 +47,8 @@ export class UpdateRepositoryRequestDto {
   @ApiProperty({ example: 'main', required: false })
   baseBranch: string;
 }
+export class UpdateRepositorySettingsPromptRequestDto {
+  key: string;
+  @ApiProperty({ example: 'optional', required: false })
+  prompt: string;
+}
