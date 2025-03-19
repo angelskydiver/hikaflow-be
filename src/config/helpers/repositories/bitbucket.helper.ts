@@ -92,7 +92,7 @@ export const fetchBitbucketRepositoryBranches = async (data: {
   try {
     let allBranches: any[] = []; // Array to store all branches
     let hasNextPage = true; // Flag to control pagination loop
-    let nextPageUrl = `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repoSlug}/refs/branches?pagelen=100`; // Initial URL
+    let nextPageUrl = `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repoSlug.replace(' ', '-')}/refs/branches?pagelen=100`; // Initial URL
 
     while (hasNextPage) {
       const response = await axios.get(nextPageUrl, {
@@ -129,7 +129,7 @@ export const fetchBitbucketPrCommits = async (data: {
   try {
     let allCommits: any[] = []; // Array to store all commits
     let hasNextPage = true; // Flag to control pagination loop
-    let nextPageUrl = `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repoSlug}/pullrequests/${data.prNumber}/commits?pagelen=100`; // Initial URL
+    let nextPageUrl = `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repoSlug.replace(' ', '-')}/pullrequests/${data.prNumber}/commits?pagelen=100`; // Initial URL
 
     while (hasNextPage) {
       const response = await axios.get(nextPageUrl, {
@@ -168,7 +168,7 @@ export const fetchBitbucketPr = async (data: {
 }) => {
   try {
     let method = 'GET';
-    let resource = `/2.0/repositories/${data.workspace}/${data.repoSlug}/pullrequests/${data.prNumber}`; // Include /2.0 in the resource for QSH
+    let resource = `/2.0/repositories/${data.workspace}/${data.repoSlug.replace(' ', '-')}/pullrequests/${data.prNumber}`; // Include /2.0 in the resource for QSH
     // let token = getAuthToken(data, method, resource);
     const response = await axios.get(`https://api.bitbucket.org${resource}`, {
       headers: {
