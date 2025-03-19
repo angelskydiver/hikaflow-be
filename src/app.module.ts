@@ -18,6 +18,7 @@ import { OrganizationModule } from './modules/organization/organization.module';
 import { PrTrackerModule } from './modules/prTracker/prTracker.module';
 import { PullRequestModule } from './modules/pullRequest/pullRequest.module';
 import { RepositoryModule } from './modules/repository/repository.module';
+import { RepositoryScanModule } from './modules/repositoryScan/repositoryScan.module';
 import { UsersModule } from './modules/user/user.module';
 import { VerificationCodeModule } from './modules/verificationCode/verificationCode.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
@@ -59,6 +60,7 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
     CodeOverviewModule,
     PrTrackerModule,
     CommitSummaryModule,
+    RepositoryScanModule,
   ],
   controllers: [AppController],
   providers: [
