@@ -205,6 +205,7 @@ export class WebhooksService {
           issue: data.issue,
           issueCategory: data.category,
           severity: data.priority.split(' ')[0],
+          reason: data.reason,
           type: CommentType.PULL_REQUEST,
         };
         return this._commentService.createComment(payload);
@@ -352,6 +353,7 @@ export class WebhooksService {
           issue: data.issue,
           issueCategory: data.category,
           severity: data.priority.split(' ')[0],
+          reason: data.reason,
           type: CommentType.PULL_REQUEST,
         };
         return this._commentService.createComment(payload);
@@ -1075,6 +1077,7 @@ export class WebhooksService {
             issue: data.issue,
             issueCategory: data.category,
             severity: data.priority,
+            reason: data.reason,
             type: PrPatches[`${data.file}-${data.line}`]
               ? CommentType.PULL_REQUEST
               : CommentType.ISSUE, // Since it's a PR comment, set the type as PULL_REQUEST
@@ -1214,6 +1217,7 @@ export class WebhooksService {
               issue: data.issue,
               issueCategory: data.category,
               severity: data.priority,
+              reason: data.reason,
               type: CommentType.PULL_REQUEST, // Since it's a PR comment, set the type as PULL_REQUEST
             };
 

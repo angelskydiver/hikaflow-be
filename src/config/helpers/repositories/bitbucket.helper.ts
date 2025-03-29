@@ -1,6 +1,10 @@
 import * as atlassianJwt from 'atlassian-jwt';
 import axios from 'axios';
 import * as moment from 'moment';
+import {
+  ignoredExtensionsForFileScan,
+  ignoredFilesForFileScan,
+} from 'src/config/constants/unnecessary.files.constant';
 export function getAuthToken(
   data: { sharedSecret: string; baseUrl: string; clientKey: string },
   method,
@@ -599,4 +603,48 @@ export function changesMapping(fileChanges) {
     });
   });
   return hashmap;
+}
+
+export async function bitbucketRepositoryAccess(data: {
+  workspace: string;
+  repo: string;
+  branch: string;
+  token: string;
+}) {
+  try {
+    const response = await axios.get(
+      `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repo}/src/${data.branch}/`,
+      {
+        headers: {
+          Authorization: data.token,
+        },
+      },
+    );
+
+    if (!response.data.values) {
+      throw new Error('Invalid repository structure.');
+    }
+
+    const files = response.data.values;
+
+    return files
+      .filter(
+        (fileData: { type: string; path: string }) =>
+          fileData.type === 'commit_file' &&
+          !ignoredFilesForFileScan.includes(
+            fileData.path.split('/').pop() || '',
+          ) &&
+          !ignoredExtensionsForFileScan.some((ext) =>
+            fileData.path.endsWith(ext),
+          ),
+      )
+      .map((fileData: { path: string } | any) => ({
+        name: fileData.path.split('/').pop(), // Extract filename
+        filePath: `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repo}/src/${fileData.commit.hash}/${fileData.path}`,
+        fileRelativePath: fileData.path,
+      }));
+  } catch (error) {
+    // console.error(error);
+    throw new Error(error.message);
+  }
 }
