@@ -98,7 +98,12 @@ export class PullRequestService {
           skip:
             (parseInt(payload?.pageNumber) - 1) * parseInt(payload.pageSize),
         }),
-        include: { comments: true },
+      });
+
+      let comments = await this._prismaService.comment.findMany({
+        where: {
+          prId: pullRequests.id,
+        },
       });
 
       let prReportMapping = pullRequests.map((data) =>
@@ -112,7 +117,7 @@ export class PullRequestService {
       pullRequests.forEach((pullRequest, index) => {
         pullRequest.repositoryTitle =
           repositoryIdToTitleMap[pullRequest.repositoryId];
-        pullRequest.commentCount = pullRequest.comments.length;
+        pullRequest.commentCount = comments.length;
         pullRequest.report = prReport[index];
       });
 

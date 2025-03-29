@@ -15,7 +15,7 @@ export class RegisterDuplicateCodeRequestDto {
 }
 export class CreateCommentRequestDto {
   repositoryId: string;
-  prId: string;
+  prId?: string;
   content: string;
   line: number;
   file: string;

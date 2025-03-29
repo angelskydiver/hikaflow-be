@@ -58,29 +58,30 @@ enum DuplicateCode {
 }
 
 enum FileType {
-  CONTROLLER // API endpoints
-  SERVICE // Business logic layer
-  SCHEMA // DB structures
-  MIGRATION // DB changes
-  REPOSITORY // Data access layer
-  CONFIG // Project settings, ENV files
-  CONSTANTS // Project settings
-  MIDDLEWARE // Authentication, validation, logging
-  UTILITY // Helper functions, shared logic
-  JOB // Background tasks, workers
-  MODULE // Feature-specific logic
-  ASSETS // Static files (images, CSS, etc.)
-  DOCUMENTATION // README, markdown docs, internal docs
-  TEST // Unit tests, integration tests
-  EVENT_HANDLER // Pub/Sub, WebSockets, message queues
-  LOGGING // System logs, error tracking
+  PROJECT_SETUP
+  CONTROLLER
+  SERVICE
+  SCHEMA
+  MIGRATION
+  REPOSITORY
+  CONFIG
+  CONSTANTS
+  MIDDLEWARE
+  UTILITY
+  JOB
+  MODULE
+  ASSETS
+  DOCUMENTATION
+  TEST
+  EVENT_HANDLER
+  LOGGING
 }
 
 enum ScanStatus {
-  PENDING
-  IN_PROGRESS
-  COMPLETED
-  FAILED
+  PENDING     @map("PENDING")
+  IN_PROGRESS @map("IN_PROGRESS")
+  COMPLETED   @map("COMPLETED")
+  FAILED      @map("FAILED")
 }
 
 model User {
@@ -241,13 +242,13 @@ model PullRequest {
   updatedAt DateTime @updatedAt
 
   // repository Repository @relation(fields: [repositoryId], references: [repositoryId])
-  comments Comment[]
+  // comments Comment[]
 }
 
 model Comment {
   id            String        @id @default(uuid())
   repositoryId  String
-  prId          String
+  prId          String?       @default("")
   content       String
   line          Int
   file          String
@@ -256,12 +257,11 @@ model Comment {
   issueCategory String        @default("CodeSmells")
   status        CommentStatus @default(NOT_TRACKED)
   severity      String        @default("LOW")
+  reason        String        @default("")
 
-  repository Repository  @relation(fields: [repositoryId], references: [repositoryId])
-  pr         PullRequest @relation(fields: [prId], references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  repository Repository @relation(fields: [repositoryId], references: [repositoryId])
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
 }
 
 model ExecutiveReport {
@@ -364,19 +364,22 @@ model DuplicatedCode {
 }
 
 model FileDocumentation {
-  id           String     @id @default(uuid())
-  name         String // File name
-  fullPath     String // Full file path
-  imports      String[] // List of imported files
-  exports      String[] // List of exported files
-  functions    Json // Hierarchical function structure
-  classes      Json // Hierarchical class structure
-  fileType     FileType[] // Enum-based file classification
-  summary      String // AI-generated file summary
-  repositoryId String // Link to the repository
-  repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  id               String         @id @default(uuid())
+  name             String // File name
+  fullPath         String // Full file path
+  imports          String[] // List of imported files
+  exports          String[] // List of exported files
+  functions        Json // Hierarchical function structure
+  classes          Json // Hierarchical class structure
+  components       Json           @default("[]") // Hierarchical function structure
+  fileType         String[] // Enum-based file classification
+  summary          String // AI-generated file summary
+  repositoryId     String // Link to the repository
+  repositoryScanId String // Link to the repository scan
+  repositoryScan   RepositoryScan @relation(fields: [repositoryScanId], references: [id], onDelete: Cascade)
+  repository       Repository     @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 }
 
 model RepositoryScan {
@@ -393,6 +396,7 @@ model RepositoryScan {
   account    Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
   repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  fileDocumentation FileDocumentation[]
 }

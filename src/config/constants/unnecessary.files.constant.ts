@@ -29,3 +29,33 @@ export const shouldAnalyze = (fileName) => {
     fileName.toLowerCase().endsWith(ext),
   );
 };
+
+export const ignoredFilesForFileScan = [
+  'package-lock.json',
+  '.gitignore',
+  'yarn.lock',
+  'pnpm-lock.yaml',
+];
+export const ignoredExtensionsForFileScan = [
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.mp4',
+  '.mkv',
+  '.avi',
+  '.mp3',
+  '.wav',
+  '.zip',
+  '.tar',
+  '.rar',
+  '.ico',
+  '.svg',
+  '.webp',
+  '.pdf',
+  '.doc',
+  '.xls',
+  '.ppt',
+  '.exe',
+  '.dll',
+];
