@@ -41,7 +41,7 @@ const repositoryScanWorker = new Worker(
   {
     connection: {
       host: '127.0.0.1',
-      port: 6380, // Ensure it's using the correct Redis instance
+      port: parseInt(process.env.REDIS_PORT),
     },
     concurrency: 2, // Maximum parallel jobs
   },
