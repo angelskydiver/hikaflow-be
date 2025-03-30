@@ -29,19 +29,19 @@ export class RepositoryScanService {
   /**
    * Queues a repository scan job.
    */
-  async queueRepositoryScan(repositoryName: string, accountId: string) {
+  async queueRepositoryScan(repositoryId: string, accountId: string) {
     try {
       const accountCredentials =
         await this.accountCredentialService.getAccountToken({ accountId });
 
       const repository = await this.prisma.repository.findFirst({
-        where: { name: repositoryName },
+        where: { id: repositoryId },
       });
 
       if (!repository)
-        throw new Error(`Repository "${repositoryName}" not found.`);
+        throw new Error(`Repository "${repositoryId}" not found.`);
 
-      // Register scan as PENDING
+      // return;
       const repositoryScan = await this.prisma.repositoryScan.create({
         data: {
           repositoryId: repository.id,
@@ -52,7 +52,7 @@ export class RepositoryScanService {
 
       // Add job to BullMQ queue
       await repositoryScanQueue.add('scan-repo', {
-        repositoryName,
+        repositoryName: repository.name,
         accountId,
         repositoryScanId: repositoryScan.id,
       });

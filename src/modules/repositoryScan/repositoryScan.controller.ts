@@ -6,15 +6,15 @@ import { RepositoryScanService } from './repositoryScan.service';
 export class RepositoryScanController {
   constructor(private _repositoryScanService: RepositoryScanService) {}
 
-  @Post('/:repositoryName')
+  @Post('/:repositoryId')
   @ApiBearerAuth()
   async QueueRepositoryScan(
-    @Param('repositoryName') name: string,
+    @Param('repositoryId') id: string,
     @Request() req: any,
   ) {
     try {
       return await this._repositoryScanService.queueRepositoryScan(
-        name,
+        id,
         req.user.accountId,
       );
     } catch (error) {
