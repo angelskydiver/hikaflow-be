@@ -84,6 +84,7 @@ export class RepositoryScanService {
         include: {
           repositorySettings: true,
         },
+        orderBy: { createdAt: 'desc' },
       });
       if (!repository)
         throw new Error(`Repository "${repositoryName}" not found.`);
