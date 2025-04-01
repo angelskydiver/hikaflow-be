@@ -110,8 +110,22 @@ export class RepositoryScanService {
       }
 
       // Analyze all files in parallel
-      const analyzedFiles = await Promise.allSettled(
-        repositoryStructure.map((data) =>
+      // const analyzedFiles = await Promise.allSettled(
+      //   repositoryStructure.map((data) =>
+      //     this.analyzeFiles(
+      //       data,
+      //       accountCredentials.decryptedToken,
+      //       repository.id,
+      //       repositoryScanId,
+      //       repository,
+      //     ),
+      //   ),
+      // );
+
+      const analyzedFiles = await this._processInBatches(
+        repositoryStructure,
+        50, // Batch size
+        (data) =>
           this.analyzeFiles(
             data,
             accountCredentials.decryptedToken,
@@ -119,7 +133,6 @@ export class RepositoryScanService {
             repositoryScanId,
             repository,
           ),
-        ),
       );
 
       // Update scan status as COMPLETED
@@ -158,10 +171,22 @@ export class RepositoryScanService {
       //   repository.repositorySettings,
       // );
       const deepseekAI = new DeepSeek();
-      const fileContent = await fetchFileByUrl(fileChanges.filePath, token);
+      let fileContent = await fetchFileByUrl(fileChanges.filePath, token);
+      let lines;
+      if (typeof fileContent !== 'string') {
+        fileContent = JSON.stringify(fileContent);
+      }
+      try {
+        lines = fileContent.toString().split('\n');
+      } catch (error) {
+        console.error(
+          '❌ **fileContent**: ',
+          typeof fileContent,
+          fileChanges.filePath,
+          fileContent,
+        );
+      }
 
-      // console.log('**fileContent**: ', typeof fileContent, fileContent);
-      const lines = fileContent.split('\n');
       // console.log('lines: ', lines);
 
       const analysisResult = await deepseekAI.analyzeFile({
@@ -169,21 +194,25 @@ export class RepositoryScanService {
         content: fileContent,
       });
 
-      await this.prisma.fileDocumentation.create({
-        data: {
-          name: fileChanges.fileRelativePath,
-          fullPath: fileChanges.fileRelativePath,
-          imports: analysisResult.relations.imports || [],
-          exports: analysisResult.relations.exports || [],
-          functions: analysisResult.functions || [],
-          classes: analysisResult.classes || [],
-          components: analysisResult.components || [],
-          fileType: analysisResult.tags,
-          summary: analysisResult.summary,
-          repositoryId,
-          repositoryScanId,
-        },
-      });
+      try {
+        await this.prisma.fileDocumentation.create({
+          data: {
+            name: fileChanges.fileRelativePath,
+            fullPath: fileChanges.fileRelativePath,
+            imports: analysisResult.relations.imports || [],
+            exports: analysisResult.relations.exports || [],
+            functions: analysisResult.functions || [],
+            classes: analysisResult.classes || [],
+            components: analysisResult.components || [],
+            fileType: analysisResult.tags,
+            summary: analysisResult.summary,
+            repositoryId,
+            repositoryScanId,
+          },
+        });
+      } catch (error) {
+        console.log('error: ', error);
+      }
 
       const withLineNumbers = lines
         .map((line, index) => `${index + 1}: ${line}`)
@@ -193,6 +222,10 @@ export class RepositoryScanService {
         { file: fileChanges.name, content: withLineNumbers },
         repository.repositorySettings,
       );
+
+      codeIssues = (
+        await deepseekAI.deepAnalyzeCodeFilesForIssuesReliability(codeIssues)
+      )?.codeIssues;
       let allowedIssues = {};
 
       repository.repositorySettings.forEach((element) => {
@@ -202,10 +235,14 @@ export class RepositoryScanService {
       // codeIssues = codeIssues.filter(
       //   (issue) => allowedIssues[issue.issue] === 1,
       // );
-
-      let filteredIssues = filterHighPriorityComments(
-        codeIssues.filter((data) => data.content !== ''),
-      );
+      let filteredIssues;
+      try {
+        filteredIssues = filterHighPriorityComments(
+          codeIssues.filter((data) => data.content !== ''),
+        );
+      } catch (error) {
+        console.log(filteredIssues);
+      }
 
       let createCommentsMapping = filteredIssues
         .map((data, index) => {
@@ -328,5 +365,21 @@ export class RepositoryScanService {
       console.log(error.message);
       throw new BadRequestException(error.message);
     }
+  }
+
+  private async _processInBatches<T>(
+    items: T[],
+    batchSize: number,
+    callback: (item: T) => Promise<any>,
+  ) {
+    console.log(`Processing ${items.length} items in batches of ${batchSize}`);
+    const results = [];
+    for (let i = 0; i < items.length; i += batchSize) {
+      console.log(`current batch: ${i} - ${i + batchSize}`);
+      const batch = items.slice(i, i + batchSize);
+      const batchResults = await Promise.allSettled(batch.map(callback));
+      results.push(...batchResults);
+    }
+    return results;
   }
 }

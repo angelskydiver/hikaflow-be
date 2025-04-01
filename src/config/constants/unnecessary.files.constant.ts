@@ -35,8 +35,11 @@ export const ignoredFilesForFileScan = [
   '.gitignore',
   'yarn.lock',
   'pnpm-lock.yaml',
+  'README.md',
 ];
 export const ignoredExtensionsForFileScan = [
+  '.sql',
+  '.md',
   '.png',
   '.jpg',
   '.jpeg',
