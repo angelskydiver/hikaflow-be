@@ -91,6 +91,7 @@ model User {
   email     String        @unique
   password  String
   verified  Boolean       @default(false)
+  sendEmail Boolean       @default(true)
   loginType UserLoginType @default(CUSTOM)
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
