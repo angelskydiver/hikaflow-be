@@ -8,7 +8,6 @@ import { CommentType, PrTrackerStatus } from '@prisma/client';
 import { shouldAnalyze } from 'src/config/constants/unnecessary.files.constant';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
 import { filterHighPriorityComments } from 'src/config/helpers/comment.helper';
-import { transformPrompts } from 'src/config/helpers/prompt.transformer.helper';
 import {
   changesMapping,
   commentBitbucketPr,
@@ -1033,16 +1032,22 @@ export class WebhooksService {
       let allIssues = duplicateIdenticalCodeIssue;
 
       let allSummaries = [];
-      let prompt = transformPrompts(repositorySettings);
+      // let prompt = transformPrompts(repositorySettings);
       for (let i = 0; i < filesContent.length; i++) {
         let changes = filesContent[i];
         const AiResponse = await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(
           changes,
-          prompt,
+          repositorySettings,
         );
         allIssues = [...allIssues, ...AiResponse.codeIssues];
         allSummaries.push({ prSummary: AiResponse.prSummary });
       }
+
+      allIssues = (
+        await deepSeekWrapper.deepAnalyzeCodeFilesForIssuesReliability(
+          allIssues,
+        )
+      )?.codeIssues;
 
       const combinedSummary = allSummaries;
 
@@ -1183,18 +1188,22 @@ export class WebhooksService {
 
       let allIssues = duplicateIdenticalCodeIssue;
       let allSummaries = [];
-      let prompt = transformPrompts(repositorySettings);
+      // let prompt = transformPrompts(repositorySettings);
       for (let i = 0; i < filesContent.length; i++) {
         let changes = filesContent[i];
         const AiResponse = await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(
           changes,
-          prompt,
+          repositorySettings,
         );
         allIssues = [...allIssues, ...AiResponse.codeIssues];
         allSummaries.push({ prSummary: AiResponse.prSummary });
       }
 
-      // return;
+      allIssues = (
+        await deepSeekWrapper.deepAnalyzeCodeFilesForIssuesReliability(
+          allIssues,
+        )
+      )?.codeIssues;
 
       // Step 3: Combine summaries into a single PR summary
       const combinedSummary = allSummaries;
