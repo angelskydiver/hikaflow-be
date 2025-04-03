@@ -100,11 +100,15 @@ export class PullRequestService {
         }),
       });
 
-      let comments = await this._prismaService.comment.findMany({
-        where: {
-          prId: pullRequests.id,
-        },
-      });
+      let commentsCount = await Promise.all(
+        pullRequests.map((pr) =>
+          this._prismaService.comment.count({
+            where: {
+              prId: pr.id,
+            },
+          }),
+        ),
+      );
 
       let prReportMapping = pullRequests.map((data) =>
         this._prismaService.executiveReport.findFirst({
@@ -117,7 +121,7 @@ export class PullRequestService {
       pullRequests.forEach((pullRequest, index) => {
         pullRequest.repositoryTitle =
           repositoryIdToTitleMap[pullRequest.repositoryId];
-        pullRequest.commentCount = comments.length;
+        pullRequest.commentCount = commentsCount[index];
         pullRequest.report = prReport[index];
       });
 
