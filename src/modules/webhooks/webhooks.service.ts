@@ -1542,16 +1542,18 @@ export class WebhooksService {
         },
       });
 
-      let emailMapping = accounts.map((account) => {
-        let payload = {
-          email: account.user.email,
-          adminName: account.user.firstName,
-          repositoryName: data.repositoryInfo.repositoryName,
-          authorName: data.authorName,
-          prUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/${data.repositoryInfo.repositoryId}/${data.organizationId}`,
-        };
-        return this._mailService.prCreatedNotification(payload);
-      });
+      let emailMapping = accounts
+        .filter((account) => account.user.sendEmail)
+        .map((account) => {
+          let payload = {
+            email: account.user.email,
+            adminName: account.user.firstName,
+            repositoryName: data.repositoryInfo.repositoryName,
+            authorName: data.authorName,
+            prUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/${data.repositoryInfo.repositoryId}/${data.organizationId}`,
+          };
+          return this._mailService.prCreatedNotification(payload);
+        });
 
       await Promise.all(emailMapping);
       return {
@@ -1599,16 +1601,18 @@ export class WebhooksService {
         },
       });
 
-      let emailMapping = accounts.map((account) => {
-        let payload = {
-          email: account.user.email,
-          adminName: account.user.firstName,
-          repositoryName: data.repositoryInfo.repositoryName,
-          authorName: data.authorName,
-          reportUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/report/${data.reportId}`,
-        };
-        this._mailService.prClosedNotification(payload);
-      });
+      let emailMapping = accounts
+        .filter((account) => account.user.sendEmail)
+        .map((account) => {
+          let payload = {
+            email: account.user.email,
+            adminName: account.user.firstName,
+            repositoryName: data.repositoryInfo.repositoryName,
+            authorName: data.authorName,
+            reportUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/report/${data.reportId}`,
+          };
+          this._mailService.prClosedNotification(payload);
+        });
 
       await Promise.all(emailMapping);
 
