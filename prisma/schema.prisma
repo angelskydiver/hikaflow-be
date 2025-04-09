@@ -115,6 +115,7 @@ model Account {
   accountCredentials  AccountCredentials[]
   accountOrganization OrganizationAccounts[]
   scan                RepositoryScan[]
+  AssistedQuestions   AssistedQuestions[]
 }
 
 model Organization {
@@ -200,6 +201,7 @@ model Repository {
   duplicatedCode     DuplicatedCode[]
   file               FileDocumentation[]
   scan               RepositoryScan[]
+  AssistedQuestions  AssistedQuestions[]
 }
 
 model AccountRepository {
@@ -365,22 +367,23 @@ model DuplicatedCode {
 }
 
 model FileDocumentation {
-  id               String         @id @default(uuid())
+  id               String                      @id @default(uuid())
   name             String // File name
   fullPath         String // Full file path
   imports          String[] // List of imported files
   exports          String[] // List of exported files
   functions        Json // Hierarchical function structure
   classes          Json // Hierarchical class structure
-  components       Json           @default("[]") // Hierarchical function structure
+  components       Json                        @default("[]") // Hierarchical function structure
   fileType         String[] // Enum-based file classification
   summary          String // AI-generated file summary
   repositoryId     String // Link to the repository
   repositoryScanId String // Link to the repository scan
-  repositoryScan   RepositoryScan @relation(fields: [repositoryScanId], references: [id], onDelete: Cascade)
-  repository       Repository     @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  summaryEmbedding Unsupported("vector(768)")?
+  repositoryScan   RepositoryScan              @relation(fields: [repositoryScanId], references: [id], onDelete: Cascade)
+  repository       Repository                  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  createdAt        DateTime                    @default(now())
+  updatedAt        DateTime                    @updatedAt
 }
 
 model RepositoryScan {
@@ -400,4 +403,23 @@ model RepositoryScan {
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
   fileDocumentation FileDocumentation[]
+  AssistedQuestions AssistedQuestions[]
+}
+
+model AssistedQuestions {
+  id            String  @id @default(uuid())
+  question      String
+  answer        Json    @default("{}")
+  repositoryId  String
+  scanId        String
+  tokenUtilized Int     @default(0)
+  saved         Boolean @default(false)
+  accountId     String
+
+  account    Account        @relation(fields: [accountId], references: [id])
+  repository Repository     @relation(fields: [repositoryId], references: [id])
+  scan       RepositoryScan @relation(fields: [scanId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
