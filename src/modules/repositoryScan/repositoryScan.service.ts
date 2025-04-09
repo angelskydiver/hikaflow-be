@@ -1,10 +1,16 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   AccountCredentialsType,
   CommentType,
   ScanStatus,
 } from '@prisma/client';
+import axios from 'axios';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
+import { Gemini } from 'src/config/helpers/ai/gemini.ai.hepler';
 import { filterHighPriorityComments } from 'src/config/helpers/comment.helper';
 import { bitbucketRepositoryAccess } from 'src/config/helpers/repositories/bitbucket.helper';
 import {
@@ -134,6 +140,9 @@ export class RepositoryScanService {
             repository,
           ),
       );
+
+      // scanning started
+      await this.embedRepositoryById(repositoryScanId);
 
       // Update scan status as COMPLETED
       await this.prisma.repositoryScan.update({
@@ -381,5 +390,312 @@ export class RepositoryScanService {
       results.push(...batchResults);
     }
     return results;
+  }
+
+  async embedRepositoryById(scanId: string) {
+    try {
+      const repositoryScans = await this.prisma.fileDocumentation.findMany({
+        where: {
+          repositoryScanId: scanId,
+        },
+      });
+
+      const gemini = new Gemini();
+
+      const batchSize = 10;
+      for (let i = 0; i < repositoryScans.length; i += batchSize) {
+        const batch = repositoryScans.slice(i, i + batchSize);
+        await Promise.all(
+          batch.map(async (scan) => {
+            if (!scan.summary) return;
+
+            const embedding = await gemini.getEmbeddings(scan.summary);
+
+            await this.prisma.$executeRaw`
+              UPDATE "FileDocumentation"
+              SET "summaryEmbedding" = ${embedding}::vector
+              WHERE id = ${scan.id}
+            `;
+          }),
+        );
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.log(error.message);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  async testAnalyzeAssistance(
+    repositoryId: string,
+    query: string,
+    accountId: string,
+  ) {
+    try {
+      let repositoryScan = await this.prisma.repositoryScan.findFirst({
+        where: {
+          repositoryId: repositoryId,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
+
+      let repositoryScanId = repositoryScan.id;
+
+      const documentedFile = await this.prisma.fileDocumentation.findMany({
+        where: {
+          repositoryScanId: repositoryScanId,
+        },
+        include: {
+          repository: true,
+        },
+      });
+
+      const uniqueTags = await this.prisma.$queryRawUnsafe<{ tag: string }[]>(
+        `
+        SELECT DISTINCT unnest("fileType") AS tag
+        FROM "FileDocumentation"
+        WHERE "repositoryScanId" = $1
+      `,
+        repositoryScanId,
+      );
+
+      let usedTags = uniqueTags.map((data) => data.tag).join(', ');
+
+      const gemini = new Gemini();
+
+      const embedding = await gemini.getEmbeddings(query);
+      const vectorQuery = `[${embedding.join(',')}]`;
+
+      let projectContext = await gemini.getQueryContext(query, usedTags);
+      if (!projectContext.output.context) {
+        let result = (await this.prisma.$queryRaw`
+          SELECT
+            name as fileName,
+            summary,
+            "fullPath" as filePath,
+            imports,
+            exports,
+            functions,
+            classes,
+            components,
+            1 - ("summaryEmbedding" <=> ${vectorQuery}::vector) as similarity
+          FROM "FileDocumentation"
+          WHERE 1 - ("summaryEmbedding" <=> ${vectorQuery}::vector) > 0.6
+            AND "repositoryScanId" = ${repositoryScanId}
+          ORDER BY similarity DESC
+          LIMIT 10;
+        `) as { fileName: string; filepath: string; summary: string }[];
+
+        let sourceCodeMapping = result.map((data) => {
+          return axios.get(
+            `https://raw.githubusercontent.com/${documentedFile[0].repository.owner}/${documentedFile[0].repository.name}/${documentedFile[0].repository.baseBranch}/${data.filepath}`,
+          );
+        });
+
+        let sourceCodeResponses = await Promise.all(sourceCodeMapping);
+        result = sourceCodeResponses.map((res, index) => ({
+          ...result[index],
+          sourceCode: res.data,
+        }));
+
+        let queryResponse = await gemini.generateAnswer(query, result);
+
+        let assistedQuestionPayload = {
+          question: query,
+          answer: {
+            response:
+              queryResponse.output.response.candidates[0].content.parts[0].text,
+            filteredFiles: queryResponse.filesReferenced.map((data) => ({
+              name: data.fileName,
+              content:
+                typeof data.sourceCode === 'string'
+                  ? data.sourceCode
+                  : JSON.stringify(data.sourceCode),
+            })),
+          },
+          repositoryId: repositoryId,
+          scanId: repositoryScanId,
+          tokenUtilized:
+            queryResponse.output.response.usageMetadata.totalTokenCount,
+          accountId,
+        };
+
+        console.log(
+          'queryResponse: ',
+          JSON.stringify(queryResponse.output.response, null, 2),
+        );
+
+        let assistedQuestions = await this.prisma.assistedQuestions.create({
+          data: assistedQuestionPayload,
+        });
+        return {
+          id: assistedQuestions.id,
+          response:
+            queryResponse.output.response.candidates[0].content.parts[0].text,
+          filteredFiles: queryResponse.filesReferenced.map((data) => ({
+            name: data.fileName,
+            content:
+              typeof data.sourceCode === 'string'
+                ? data.sourceCode
+                : JSON.stringify(data.sourceCode, null, 2),
+          })),
+        };
+      } else {
+        // all unique Tags used in project documentation
+        let result: any = await this.prisma.fileDocumentation.findMany({
+          where: {
+            repositoryScanId,
+            fileType: {
+              hasSome: [
+                ...projectContext.output.relatedTags,
+                projectContext.output.tag,
+              ],
+            },
+          },
+        });
+        let fileQuickInfo = result.map((data) => ({
+          fileName: data.name,
+          filePath: data.fullPath,
+          fileSummary: data.summary,
+          fileTags: data.tags,
+        }));
+
+        // TODO: need to work here
+        console.log('initial file length: ', result.length);
+        let filteredFiles = await gemini.filterRelevantFiles(
+          query,
+          fileQuickInfo,
+        );
+        console.log('filtered file length: ', filteredFiles.output.length);
+
+        result = result.filter((data) =>
+          filteredFiles.output.some((file) => file.fileName === data.name),
+        );
+
+        console.log('filtered result: ', result);
+
+        let sourceCodeMapping = result.map((data) => {
+          return axios.get(
+            `https://raw.githubusercontent.com/${documentedFile[0].repository.owner}/${documentedFile[0].repository.name}/${documentedFile[0].repository.baseBranch}/${data.fullPath}`,
+          );
+        });
+
+        let sourceCodeResponses = await Promise.all(sourceCodeMapping);
+        result = sourceCodeResponses.map((res, index) => ({
+          ...result[index],
+          sourceCode: res.data,
+        }));
+
+        result = result.map((data) => ({
+          summary: data.summary,
+          fileName: data.name,
+          sourceCode: data.sourceCode,
+        }));
+
+        let queryResponse = await gemini.generateAnswer(query, result);
+        console.log(
+          'queryResponse: ',
+          JSON.stringify(queryResponse.output.response, null, 2),
+        );
+
+        let assistedQuestionPayload = {
+          question: query,
+          answer: {
+            response:
+              queryResponse.output.response.candidates[0].content.parts[0].text,
+            filteredFiles: queryResponse.filesReferenced.map((data) => ({
+              name: data.fileName,
+              content:
+                typeof data.sourceCode === 'string'
+                  ? data.sourceCode
+                  : JSON.stringify(data.sourceCode),
+            })),
+          },
+          repositoryId: repositoryId,
+          scanId: repositoryScanId,
+          tokenUtilized:
+            queryResponse.output.response.usageMetadata.totalTokenCount,
+          accountId,
+        };
+
+        let assistedQuestions = await this.prisma.assistedQuestions.create({
+          data: assistedQuestionPayload,
+        });
+
+        return {
+          id: assistedQuestions.id,
+          response:
+            queryResponse.output.response.candidates[0].content.parts[0].text,
+          filteredFiles: queryResponse.filesReferenced.map((data) => ({
+            name: data.fileName,
+            content:
+              typeof data.sourceCode === 'string'
+                ? data.sourceCode
+                : JSON.stringify(data.sourceCode, null, 2),
+          })), // Assuming you want to return the file name and content
+        };
+      }
+    } catch (error) {
+      console.log(error);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  async fetchedSavedQuestions(repositoryId: string) {
+    try {
+      let repository = await this.prisma.repository.findUnique({
+        where: {
+          id: repositoryId,
+        },
+      });
+
+      if (!repository) throw new BadRequestException();
+
+      let questions = await this.prisma.assistedQuestions.findMany({
+        where: {
+          repositoryId,
+          // saved: true,
+        },
+      });
+
+      return questions
+        .map((question: any) => ({
+          id: question.id,
+          question: question.question,
+          answer: question.answer.response,
+          relatedFiles: question.answer.filteredFiles,
+          timestamp: question.createdAt,
+          isStarred: question.saved,
+        }))
+        .filter((data) => data.relatedFiles.length);
+    } catch (error) {
+      console.log(error.message);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  async markQuestionSaved(questionId: string) {
+    try {
+      let question = await this.prisma.assistedQuestions.findUnique({
+        where: {
+          id: questionId,
+        },
+      });
+      if (!question) throw new NotFoundException('question not found');
+      await this.prisma.assistedQuestions.update({
+        where: {
+          id: questionId,
+        },
+        data: {
+          saved: !question.saved,
+        },
+      });
+    } catch (error) {
+      console.log(error.message);
+      throw new BadRequestException(error.message);
+    }
   }
 }
