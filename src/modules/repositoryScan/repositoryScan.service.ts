@@ -433,6 +433,15 @@ export class RepositoryScanService {
     accountId: string,
   ) {
     try {
+      const repository = await this.prisma.repository.findUnique({
+        where: { id: repositoryId },
+      });
+
+      if (!repository) throw new NotFoundException();
+
+      const accountCredentials =
+        await this.accountCredentialService.getAccountToken({ accountId });
+
       let repositoryScan = await this.prisma.repositoryScan.findFirst({
         where: {
           repositoryId: repositoryId,
@@ -462,6 +471,8 @@ export class RepositoryScanService {
         repositoryScanId,
       );
 
+      console.log('uniqueTags: ', uniqueTags);
+
       let usedTags = uniqueTags.map((data) => data.tag).join(', ');
 
       const gemini = new Gemini();
@@ -470,6 +481,7 @@ export class RepositoryScanService {
       const vectorQuery = `[${embedding.join(',')}]`;
 
       let projectContext = await gemini.getQueryContext(query, usedTags);
+      console.log('projectContext: ', projectContext);
       if (!projectContext.output.context) {
         let result = (await this.prisma.$queryRaw`
           SELECT
@@ -489,9 +501,16 @@ export class RepositoryScanService {
           LIMIT 10;
         `) as { fileName: string; filepath: string; summary: string }[];
 
+        console.log('if block : result', result.length);
+
         let sourceCodeMapping = result.map((data) => {
           return axios.get(
             `https://raw.githubusercontent.com/${documentedFile[0].repository.owner}/${documentedFile[0].repository.name}/${documentedFile[0].repository.baseBranch}/${data.filepath}`,
+            {
+              headers: {
+                Authorization: `Bearer ${accountCredentials.decryptedToken}`,
+              },
+            },
           );
         });
 
@@ -556,6 +575,7 @@ export class RepositoryScanService {
             },
           },
         });
+        console.log(`else block: result: `, result);
         let fileQuickInfo = result.map((data) => ({
           fileName: data.name,
           filePath: data.fullPath,
@@ -565,11 +585,12 @@ export class RepositoryScanService {
 
         // TODO: need to work here
         console.log('initial file length: ', result.length);
+
         let filteredFiles = await gemini.filterRelevantFiles(
           query,
           fileQuickInfo,
         );
-        console.log('filtered file length: ', filteredFiles.output.length);
+        console.log('filtered file length: ', filteredFiles.output);
 
         result = result.filter((data) =>
           filteredFiles.output.some((file) => file.fileName === data.name),
@@ -580,6 +601,11 @@ export class RepositoryScanService {
         let sourceCodeMapping = result.map((data) => {
           return axios.get(
             `https://raw.githubusercontent.com/${documentedFile[0].repository.owner}/${documentedFile[0].repository.name}/${documentedFile[0].repository.baseBranch}/${data.fullPath}`,
+            {
+              headers: {
+                Authorization: `Bearer ${accountCredentials.decryptedToken}`,
+              },
+            },
           );
         });
 
@@ -589,6 +615,8 @@ export class RepositoryScanService {
           sourceCode: res.data,
         }));
 
+        console.log('else block cp:02: result: ', result.length);
+
         result = result.map((data) => ({
           summary: data.summary,
           fileName: data.name,
@@ -596,10 +624,10 @@ export class RepositoryScanService {
         }));
 
         let queryResponse = await gemini.generateAnswer(query, result);
-        console.log(
-          'queryResponse: ',
-          JSON.stringify(queryResponse.output.response, null, 2),
-        );
+        // console.log(
+        //   'queryResponse: ',
+        //   JSON.stringify(queryResponse.output.response, null, 2),
+        // );
 
         let assistedQuestionPayload = {
           question: query,
