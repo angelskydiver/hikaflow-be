@@ -481,7 +481,6 @@ export class RepositoryScanService {
       const vectorQuery = `[${embedding.join(',')}]`;
 
       let projectContext = await gemini.getQueryContext(query, usedTags);
-      console.log('projectContext: ', projectContext);
       if (!projectContext.output.context) {
         let result = (await this.prisma.$queryRaw`
           SELECT
@@ -500,8 +499,6 @@ export class RepositoryScanService {
           ORDER BY similarity DESC
           LIMIT 10;
         `) as { fileName: string; filepath: string; summary: string }[];
-
-        console.log('if block : result', result.length);
 
         let sourceCodeMapping = result.map((data) => {
           return axios.get(
@@ -542,11 +539,6 @@ export class RepositoryScanService {
           accountId,
         };
 
-        console.log(
-          'queryResponse: ',
-          JSON.stringify(queryResponse.output.response, null, 2),
-        );
-
         let assistedQuestions = await this.prisma.assistedQuestions.create({
           data: assistedQuestionPayload,
         });
@@ -575,7 +567,6 @@ export class RepositoryScanService {
             },
           },
         });
-        console.log(`else block: result: `, result);
         let fileQuickInfo = result.map((data) => ({
           fileName: data.name,
           filePath: data.fullPath,
@@ -584,19 +575,15 @@ export class RepositoryScanService {
         }));
 
         // TODO: need to work here
-        console.log('initial file length: ', result.length);
 
         let filteredFiles = await gemini.filterRelevantFiles(
           query,
           fileQuickInfo,
         );
-        console.log('filtered file length: ', filteredFiles.output);
 
         result = result.filter((data) =>
           filteredFiles.output.some((file) => file.fileName === data.name),
         );
-
-        console.log('filtered result: ', result);
 
         let sourceCodeMapping = result.map((data) => {
           return axios.get(
@@ -614,8 +601,6 @@ export class RepositoryScanService {
           ...result[index],
           sourceCode: res.data,
         }));
-
-        console.log('else block cp:02: result: ', result.length);
 
         result = result.map((data) => ({
           summary: data.summary,

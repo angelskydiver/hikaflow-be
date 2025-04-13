@@ -9,6 +9,6 @@ export class PrTrackerCronService {
   async trackPrs() {
     console.log('Cron job is running every 5 minute!');
     // Your custom logic here
-    await this._prTrackerService.trackPrs();
+    // await this._prTrackerService.trackPrs();
   }
 }

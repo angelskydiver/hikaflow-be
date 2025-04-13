@@ -81,7 +81,7 @@ export class Gemini {
       }
 
       const prompt = `
-  You are an AI code assistant helping a technical intern understand a codebase.
+  You are an AI code assistant helping a technical intern in understanding, debugging and assisting them in their tasks in the context of a codebase.
   
   Traits: Expert, helpful, kind, inspiring, detailed, and articulate.
   

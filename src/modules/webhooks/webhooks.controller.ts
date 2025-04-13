@@ -29,6 +29,7 @@ export class WebhooksController {
   @Public()
   @Post('/bitbucket') // The route is /webhooks/ping
   async handleBitbucketWebhooks(@Body() body: any) {
+    return;
     if (body.event.includes('pullrequest')) {
       if (body.event == 'pullrequest:created') {
         return await this._webhooksService.bitbucketCreateRequest(body.data);
