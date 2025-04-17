@@ -165,4 +165,36 @@ export class Gemini {
       throw new Error('Invalid JSON format from Gemini');
     }
   }
+
+  async summarizer(answer: string) {
+    const prompt = `
+      You are a world-class senior software engineer and technical writer. Your task is to distill the entire conversation context and render it into a concise, yet comprehensive summary. This summary must capture all vital points, decisions, clarifications, and technical insights from the provided answer. It will later be used to maintain continuity in future discussions, so ensure that every nuance is preserved.
+
+      Please follow these guidelines:
+      - **Clarity & Precision:** Ensure that the summary covers the core discussion points, highlighting the key technical requirements, challenges, and decisions.
+      - **Detailed & Articulate:** Expand on aspects that are critical for understanding the overall context of the discussion while using clear, simple language.
+      - **Inspiration & Professionalism:** Your tone should be encouraging and authoritative, providing a sense of confidence to the reader.
+      - **Markdown Format:** Structure your output in Markdown. Use headers, bullet points, and code blocks where appropriate for better readability.
+      - **Context Awareness:** The summary should reflect a deep understanding of the complete conversation, integrating all crucial insights cohesively.
+      - **Summarize the conversation:** Ensure that the summary captures the essence of the discussion, highlighting the key points, decisions, and challenges. Keep it under 300 words
+
+      Below is the conversation you need to analyze:
+
+      \`\`\`
+      ${answer}
+      \`\`\`
+
+      Respond with the final summary in **Markdown** format.
+      `;
+
+    // Traits to guide the model’s output: Expert, helpful, kind, inspiring, detailed, and articulate.
+    let resp: any = await model.generateContent([prompt]);
+    // resp = this.extractCleanJSON(
+    //   resp.response.candidates[0].content.parts[0].text,
+    // );
+
+    return {
+      output: resp,
+    };
+  }
 }

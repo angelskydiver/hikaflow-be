@@ -116,6 +116,8 @@ model Account {
   accountOrganization OrganizationAccounts[]
   scan                RepositoryScan[]
   AssistedQuestions   AssistedQuestions[]
+  Researcher          Researcher[]
+  ResearchAssistant   ResearchAssistant[]
 }
 
 model Organization {
@@ -128,8 +130,10 @@ model Organization {
   AccountRepository      AccountRepository[] // Many-to-many relationship
   OrganizationInvitation OrganizationInvitation[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  Researcher        Researcher[]
+  ResearchAssistant ResearchAssistant[]
 }
 
 model OrganizationAccounts {
@@ -202,6 +206,7 @@ model Repository {
   file               FileDocumentation[]
   scan               RepositoryScan[]
   AssistedQuestions  AssistedQuestions[]
+  Researcher         Researcher[]
 }
 
 model AccountRepository {
@@ -407,18 +412,59 @@ model RepositoryScan {
 }
 
 model AssistedQuestions {
-  id            String  @id @default(uuid())
-  question      String
-  answer        Json    @default("{}")
-  repositoryId  String
-  scanId        String
-  tokenUtilized Int     @default(0)
-  saved         Boolean @default(false)
-  accountId     String
+  id             String  @id @default(uuid())
+  question       String
+  answer         Json    @default("{}")
+  repositoryId   String
+  scanId         String
+  tokenUtilized  Int     @default(0)
+  saved          Boolean @default(false)
+  accountId      String
+  organizationId String  @default("")
 
   account    Account        @relation(fields: [accountId], references: [id])
   repository Repository     @relation(fields: [repositoryId], references: [id])
   scan       RepositoryScan @relation(fields: [scanId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Researcher {
+  id             String  @id @default(uuid())
+  topic          String
+  description    String
+  isStarred      Boolean @default(false)
+  isDeleted      Boolean @default(false)
+  accountId      String
+  organizationId String
+  repositoryId   String
+
+  repository   Repository   @relation(fields: [repositoryId], references: [id])
+  account      Account      @relation(fields: [accountId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  ResearchAssistant ResearchAssistant[]
+}
+
+model ResearchAssistant {
+  id          String  @id @default(uuid())
+  question    String
+  answer      String
+  summary     String? @default("")
+  model       String
+  inputToken  BigInt
+  outputToken BigInt
+
+  accountId      String
+  organizationId String
+  researcherId   String
+
+  researcher   Researcher   @relation(fields: [researcherId], references: [id])
+  account      Account      @relation(fields: [accountId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

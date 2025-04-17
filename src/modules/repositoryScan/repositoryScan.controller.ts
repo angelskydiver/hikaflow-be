@@ -11,11 +11,23 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { Public } from 'src/decorators/public';
+import { hikaflowQuestionnaireRequestDto } from './dto/repositoryScan.request.dto';
 import { RepositoryScanService } from './repositoryScan.service';
 
 @Controller('repositoryScan')
 export class RepositoryScanController {
   constructor(private _repositoryScanService: RepositoryScanService) {}
+
+  @Public()
+  @Post('/hikaflowQuestionnaire')
+  async hikaflowQuestionnaire(@Body() body: hikaflowQuestionnaireRequestDto) {
+    try {
+      return await this._repositoryScanService.hikaflowQuestionnaire(body);
+    } catch (error) {
+      console.log(error);
+      throw new BadRequestException(error.message);
+    }
+  }
 
   @Post('/:repositoryId')
   @ApiBearerAuth()

@@ -23,6 +23,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { repositoryScanQueue } from 'src/queue/repository.scan.queue';
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
 import { CommentService } from '../comment/comment.service';
+import { hikaflowQuestionnaireRequestDto } from './dto/repositoryScan.request.dto';
 
 @Injectable()
 export class RepositoryScanService {
@@ -708,6 +709,132 @@ export class RepositoryScanService {
       });
     } catch (error) {
       console.log(error.message);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  async hikaflowQuestionnaire(data: hikaflowQuestionnaireRequestDto) {
+    try {
+      let repository = await this.prisma.repository.findUnique({
+        where: { id: data.repositoryId },
+      });
+      // if (!repository) throw new NotFoundException();
+      let deepseekAi = new DeepSeek();
+      let deepseekResponse = await deepseekAi.planner(data.question);
+      let geminiAi = new Gemini();
+
+      let geminiResponse = await geminiAi.summarizer(
+        deepseekResponse.choices[deepseekResponse.choices.length - 1].message
+          .content,
+      );
+
+      let questionnairePayload = {
+        topic: data.topic,
+        description: data.question,
+        accountId: data.accountId,
+        organizationId: repository.organizationId,
+        repositoryId: data.repositoryId,
+      };
+      let questionnaire = await this.prisma.researcher.create({
+        data: questionnairePayload,
+      });
+
+      let researchAssistant = {
+        question: data.question,
+        answer:
+          deepseekResponse.choices[deepseekResponse.choices.length - 1].message
+            .content,
+        summary:
+          geminiResponse.output.response.candidates[0].content.parts[0].text,
+        model: deepseekResponse.model,
+        inputToken:
+          deepseekResponse.usage.prompt_tokens +
+          geminiResponse.output.response.usageMetadata.promptTokenCount,
+        outputToken:
+          deepseekResponse.usage.completion_tokens +
+          geminiResponse.output.response.usageMetadata.candidatesTokenCount,
+        accountId: data.accountId,
+        organizationId: repository.organizationId,
+        researcherId: questionnaire.id,
+      };
+      await this.prisma.researchAssistant.create({
+        data: researchAssistant,
+      });
+
+      return {
+        deepseekResponse,
+        geminiResponse,
+      };
+
+      // let question = await this.prisma.assistedQuestions.create({})
+    } catch (error) {
+      console.log(error);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  async researcherWithPreviousContext(data: {
+    questionnaireId: string;
+    accountId: string;
+    question: string;
+  }) {
+    try {
+      let questionnaire = await this.prisma.researcher.findUnique({
+        where: { id: data.questionnaireId },
+      });
+
+      if (!questionnaire) throw new NotFoundException();
+
+      let researchAssistant = await this.prisma.researchAssistant.findMany({
+        where: {
+          researcherId: questionnaire.id,
+        },
+        orderBy: {
+          createdAt: 'asc',
+        },
+      });
+
+      let contextHistory = [];
+      researchAssistant.forEach((data) => {
+        contextHistory.push({ role: 'user', content: data.question });
+        contextHistory.push({ role: 'assistant', content: data.summary });
+      });
+
+      contextHistory.push({ role: 'user', content: data.question });
+
+      let deepseekAi = new DeepSeek();
+      let deepseekResponse =
+        await deepseekAi.researcherWithPreviousContext(contextHistory);
+      let geminiAi = new Gemini();
+
+      let geminiResponse = await geminiAi.summarizer(
+        deepseekResponse.choices[deepseekResponse.choices.length - 1].message
+          .content,
+      );
+
+      let researchAssistantPayload = {
+        question: data.question,
+        answer:
+          deepseekResponse.choices[deepseekResponse.choices.length - 1].message
+            .content,
+        summary:
+          geminiResponse.output.response.candidates[0].content.parts[0].text,
+        model: deepseekResponse.model,
+        inputToken:
+          deepseekResponse.usage.prompt_tokens +
+          geminiResponse.output.response.usageMetadata.promptTokenCount,
+        outputToken:
+          deepseekResponse.usage.completion_tokens +
+          geminiResponse.output.response.usageMetadata.candidatesTokenCount,
+        accountId: data.accountId,
+        organizationId: questionnaire.organizationId,
+        researcherId: questionnaire.id,
+      };
+      await this.prisma.researchAssistant.create({
+        data: researchAssistantPayload,
+      });
+    } catch (error) {
+      console.log(error);
       throw new BadRequestException(error.message);
     }
   }
