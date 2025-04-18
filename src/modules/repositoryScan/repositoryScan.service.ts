@@ -435,9 +435,13 @@ export class RepositoryScanService {
     try {
       const repository = await this.prisma.repository.findUnique({
         where: { id: repositoryId },
+        include: {
+          repositorySettings: true,
+        },
       });
 
-      if (!repository) throw new NotFoundException();
+      if (!repository)
+        throw new Error(`Repository "${repositoryId}" not found.`);
 
       const accountCredentials =
         await this.accountCredentialService.getAccountToken({ accountId });
@@ -519,16 +523,39 @@ export class RepositoryScanService {
           filteredFiles.output.some((file) => file.fileName === data.filename),
         );
 
-        let sourceCodeMapping = result.map((data) => {
-          return axios.get(
-            `https://raw.githubusercontent.com/${documentedFile[0].repository.owner}/${documentedFile[0].repository.name}/${documentedFile[0].repository.baseBranch}/${data.filepath}`,
-            {
-              headers: {
-                Authorization: `Bearer ${accountCredentials.decryptedToken}`,
+        let sourceCodeMapping;
+
+        if (
+          accountCredentials.accountType === AccountCredentialsType.GITHUB_TOKEN
+        ) {
+          sourceCodeMapping = result.map((data) => {
+            return axios.get(
+              `https://raw.githubusercontent.com/${documentedFile[0].repository.owner}/${documentedFile[0].repository.name}/${documentedFile[0].repository.baseBranch}/${data.filepath}`,
+              {
+                headers: {
+                  Authorization: `Bearer ${accountCredentials.decryptedToken}`,
+                },
               },
-            },
-          );
-        });
+            );
+          });
+        } else {
+          sourceCodeMapping = result.map((data) => {
+            let payload = {
+              workspace: accountCredentials.payload.workspace.replace(' ', '-'),
+              repo: repository.name.replace(' ', '-'),
+              branch: repository.baseBranch.replace(' ', '-'),
+              token: accountCredentials.decryptedToken,
+            };
+            return axios.get(
+              `https://api.bitbucket.org/2.0/repositories/${payload.workspace}/${payload.repo}/src/${payload.branch}/${data.filepath}`,
+              {
+                headers: {
+                  Authorization: `${accountCredentials.decryptedToken}`,
+                },
+              },
+            );
+          });
+        }
 
         let sourceCodeResponses = await Promise.all(sourceCodeMapping);
         result = sourceCodeResponses.map((res, index) => ({
@@ -604,16 +631,39 @@ export class RepositoryScanService {
           filteredFiles.output.some((file) => file.fileName === data.name),
         );
 
-        let sourceCodeMapping = result.map((data) => {
-          return axios.get(
-            `https://raw.githubusercontent.com/${documentedFile[0].repository.owner}/${documentedFile[0].repository.name}/${documentedFile[0].repository.baseBranch}/${data.fullPath}`,
-            {
-              headers: {
-                Authorization: `Bearer ${accountCredentials.decryptedToken}`,
+        let sourceCodeMapping;
+
+        if (
+          accountCredentials.accountType === AccountCredentialsType.GITHUB_TOKEN
+        ) {
+          sourceCodeMapping = result.map((data) => {
+            return axios.get(
+              `https://raw.githubusercontent.com/${documentedFile[0].repository.owner}/${documentedFile[0].repository.name}/${documentedFile[0].repository.baseBranch}/${data.fullPath}`,
+              {
+                headers: {
+                  Authorization: `Bearer ${accountCredentials.decryptedToken}`,
+                },
               },
-            },
-          );
-        });
+            );
+          });
+        } else {
+          sourceCodeMapping = result.map((data) => {
+            let payload = {
+              workspace: accountCredentials.payload.workspace.replace(' ', '-'),
+              repo: repository.name.replace(' ', '-'),
+              branch: repository.baseBranch.replace(' ', '-'),
+              token: accountCredentials.decryptedToken,
+            };
+            return axios.get(
+              `https://api.bitbucket.org/2.0/repositories/${payload.workspace}/${payload.repo}/src/${payload.branch}/${data.fullPath}`,
+              {
+                headers: {
+                  Authorization: `Bearer ${accountCredentials.decryptedToken}`,
+                },
+              },
+            );
+          });
+        }
 
         let sourceCodeResponses = await Promise.all(sourceCodeMapping);
         result = sourceCodeResponses.map((res, index) => ({
