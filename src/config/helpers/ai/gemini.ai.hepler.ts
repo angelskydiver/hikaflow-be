@@ -27,38 +27,76 @@ export class Gemini {
 
   async getQueryContext(query: string, suggestedTags: string) {
     try {
+      //     const prompt = `
+      // You are an AI code assistant helping a technical intern understand a codebase.
+      // For this you need to understand the context of the query, weather the query is related to any specific feature of the component or belongs to the overall functionality of the codebase.
+      // If the query is related to a specific feature or component, then return {context: null}.
+      // If the query is related to the overall functionality of the codebase, the Identify the Tag the Query is about, Related Tags, must be any of them.
+
+      // Incase User ask about project impact, project Summary, project Purpose, it means to understand the overall functionality of the codebase, which is more likely identify by code files.
+      // Incase User ask about project design, project architecture, it means to understand the overall functionality of the codebase.
+      // Incase User ask about project structure, project architecture, it means to understand the overall functionality of the codebase.
+      // ** for the Frontend project you might check routes/router or related tag that show of routes management file
+      // ** for the Backend project you might check tags that refer DB model
+
+      // ${suggestedTags}
+
+      // Provide a response strictly in the following JSON format with no extra text, and should pass JSON.parse():
+
+      //   {
+      //     "context": "<project context identified> like User is asking about DB design, Project summary",
+      //     "tag": "tag",
+      //     "relatedTags": ["tag1", "tag2"]
+      //   }
+
+      //   Query: ${query}
+
+      //   I want exact JSON response No '''json  '''.
+      //   `;
+
       const prompt = `
-  You are an AI code assistant helping a technical intern understand a codebase.  
-  For this you need to understand the context of the query, weather the query is related to any specific feature of the component or belongs to the overall functionality of the codebase.
-  If the query is related to a specific feature or component, then return {context: null}.
-  If the query is related to the overall functionality of the codebase, the Identify the Tag the Query is about, Related Tags, must be any of them.
-  ${suggestedTags}
+          You are an AI code assistant helping a technical intern understand a codebase.
 
-  Provide a response strictly in the following JSON format with no extra text, and should pass JSON.parse():
-  
-    {
-      "context": "<project context identified> like User is asking about DB design, Project summary",
-      "tag": "tag",
-      "relatedTags": ["tag1", "tag2"]
-    }
+          Your primary task is to analyze the intern's query and determine if it pertains to a specific feature or the overall functionality of the codebase.
 
-    Query: ${query}
+          **Context Determination:**
+          - If the query relates to a particular feature, component, or specific code section, return:
+            \`\`\`json
+            {
+              "context": null
+            }
+            \`\`\`
+          - If the query pertains to the overall functionality, identify the most relevant tag representing the user's inquiry and suggest related tags from the provided list.
 
+          **Identifying Overall Functionality Queries:**
+          - Questions about the project's impact, summary, purpose, or business outcomes indicate an interest in the overall functionality.
+          - Questions about the project's design, architecture, or structure also indicate an interest in the overall functionality.
 
-    I want exact JSON response No '''json  '''.
-    `;
+          **Tagging Guidelines:**
+          - Identify the single most appropriate tag that directly addresses the user's query about the overall functionality.
+          - Suggest up to two additional related tags that could provide further helpful context.
+          - **Frontend Projects:** Consider tags related to routing (e.g., "UI Routes", "Navigation Flow") if the query seems related to user journeys or application structure.
+          - **Backend Projects:** Consider tags related to data models (e.g., "Data Models", "Database Schema") if the query touches upon data or relationships.
+
+          **Provided Tags:**
+          ${suggestedTags}
+
+          **Query Analysis:**
+          Query: ${query}
+
+          **Response Format:**
+          Return a JSON object strictly adhering to the following format (no extra text or markdown outside the JSON):
+          \`\`\`json
+          {
+            "context": "<brief description of the overall functionality aspect the user is asking about, e.g., 'User is asking about the project's purpose', 'User is asking about the high-level structure of the application'>",
+            "tag": "<most relevant tag from the provided list>",
+            "relatedTags": ["<related tag 1>", "<related tag 2>"]
+          }
+          \`\`\`
+        `;
 
       // Traits: Expert, helpful, kind, inspiring, detailed, and articulate.
       let resp: any = await model.generateContent([prompt]);
-      console.log(
-        'Gemini response:',
-        resp.response.candidates[0].content.parts[0].text,
-        JSON.stringify(
-          resp.response.candidates[0].content.parts[0].text,
-          null,
-          2,
-        ),
-      );
       resp = this.extractCleanJSON(
         resp.response.candidates[0].content.parts[0].text,
       );

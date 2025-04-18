@@ -481,8 +481,8 @@ export class RepositoryScanService {
       const vectorQuery = `[${embedding.join(',')}]`;
 
       let projectContext = await gemini.getQueryContext(query, usedTags);
-      if (!projectContext.output.context) {
-        let result = (await this.prisma.$queryRaw`
+      if (!projectContext.output.context || !projectContext.output.tag) {
+        let result: any[] = await this.prisma.$queryRaw`
           SELECT
             name as fileName,
             summary,
@@ -492,13 +492,32 @@ export class RepositoryScanService {
             functions,
             classes,
             components,
+            "fileType" as fileType,
             1 - ("summaryEmbedding" <=> ${vectorQuery}::vector) as similarity
           FROM "FileDocumentation"
-          WHERE 1 - ("summaryEmbedding" <=> ${vectorQuery}::vector) > 0.6
+          WHERE 1 - ("summaryEmbedding" <=> ${vectorQuery}::vector) > 0.4
             AND "repositoryScanId" = ${repositoryScanId}
           ORDER BY similarity DESC
           LIMIT 10;
-        `) as { fileName: string; filepath: string; summary: string }[];
+        `;
+
+        let fileQuickInfo = result.map((data) => ({
+          ...data,
+          fileName: data.fileName,
+          filePath: data.filepath,
+          fileSummary: data.summary,
+        }));
+
+        // TODO: need to work here
+
+        let filteredFiles = await gemini.filterRelevantFiles(
+          query,
+          fileQuickInfo,
+        );
+
+        result = result.filter((data) =>
+          filteredFiles.output.some((file) => file.fileName === data.filename),
+        );
 
         let sourceCodeMapping = result.map((data) => {
           return axios.get(
