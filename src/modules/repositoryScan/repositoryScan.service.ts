@@ -803,28 +803,26 @@ export class RepositoryScanService {
       contextHistory.push({ role: 'user', content: data.question });
 
       let deepseekAi = new DeepSeek();
-      let deepseekResponse =
-        await deepseekAi.researcherWithPreviousContext(contextHistory);
       let geminiAi = new Gemini();
+      let deepseekResponse =
+        await geminiAi.researcherWithPreviousContext(contextHistory);
 
       let geminiResponse = await geminiAi.summarizer(
-        deepseekResponse.choices[deepseekResponse.choices.length - 1].message
-          .content,
+        deepseekResponse.output.response.candidates[0].content.parts[0].text,
       );
 
       let researchAssistantPayload = {
         question: data.question,
         answer:
-          deepseekResponse.choices[deepseekResponse.choices.length - 1].message
-            .content,
+          deepseekResponse.output.response.candidates[0].content.parts[0].text,
         summary:
           geminiResponse.output.response.candidates[0].content.parts[0].text,
-        model: deepseekResponse.model,
+        model: 'gemini-1.5-flash',
         inputToken:
-          deepseekResponse.usage.prompt_tokens +
+          deepseekResponse.output.response.usageMetadata.promptTokenCount +
           geminiResponse.output.response.usageMetadata.promptTokenCount,
         outputToken:
-          deepseekResponse.usage.completion_tokens +
+          deepseekResponse.output.response.usageMetadata.candidatesTokenCount +
           geminiResponse.output.response.usageMetadata.candidatesTokenCount,
         accountId: data.accountId,
         organizationId: questionnaire.organizationId,
@@ -833,6 +831,8 @@ export class RepositoryScanService {
       await this.prisma.researchAssistant.create({
         data: researchAssistantPayload,
       });
+      return deepseekResponse.output.response.candidates[0].content.parts[0]
+        .text;
     } catch (error) {
       console.log(error);
       throw new BadRequestException(error.message);

@@ -29,6 +29,26 @@ export class RepositoryScanController {
     }
   }
 
+  @Public()
+  @Post('/researcherWithPreviousContext')
+  async ResearcherWithPreviousContext(
+    @Body()
+    body: {
+      questionnaireId: string;
+      accountId: string;
+      question: string;
+    },
+  ) {
+    try {
+      return await this._repositoryScanService.researcherWithPreviousContext(
+        body,
+      );
+    } catch (error) {
+      console.log(error);
+      throw new BadRequestException(error.message);
+    }
+  }
+
   @Post('/:repositoryId')
   @ApiBearerAuth()
   async QueueRepositoryScan(

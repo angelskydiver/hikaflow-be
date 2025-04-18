@@ -197,4 +197,43 @@ export class Gemini {
       output: resp,
     };
   }
+
+  async researcherWithPreviousContext(
+    conversation: { role: string; content: string }[],
+  ) {
+    const systemMessage = `
+    Your task is to assist user in researching a topic by providing relevant information and context.
+    You will be provided with a conversation history, and your task is to extend the conversation and assist user based on the conversation history.   
+    
+    The conversation history is in the following format:
+    [
+      {
+        "role": "user",
+        "content": "....."
+      },
+      {
+        "role": "assistant",
+        "content": "..."
+      }
+    ]
+
+     Below is the conversation you need to analyze:
+
+      \`\`\`
+      ${JSON.stringify(conversation, null, 2)}
+      \`\`\`
+
+      Respond with the answer in **Markdown** format.
+
+  `;
+
+    let resp: any = await model.generateContent([systemMessage]);
+    return {
+      output: resp,
+    };
+  }
+  catch(error) {
+    console.error('Refiner Error:', error);
+    throw new Error('Failed to summarize conversation context.');
+  }
 }
