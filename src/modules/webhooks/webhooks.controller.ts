@@ -29,14 +29,22 @@ export class WebhooksController {
   @Public()
   @Post('/bitbucket') // The route is /webhooks/ping
   async handleBitbucketWebhooks(@Body() body: any) {
-    return;
     if (body.event.includes('pullrequest')) {
       if (body.event == 'pullrequest:created') {
-        return await this._webhooksService.bitbucketCreateRequest(body.data);
+        return await this._webhooksService.bitbucketCreateRequest({
+          ...body.data,
+          event: body.event,
+        });
       } else if (body.event == 'pullrequest:fulfilled') {
-        return await this._webhooksService.generateBitbucketPrReport(body.data);
+        return await this._webhooksService.generateBitbucketPrReport({
+          ...body.data,
+          event: body.event,
+        });
       } else if (body.event == 'pullrequest:updated') {
-        return await this._webhooksService.syncBitbucketPR(body.data);
+        return await this._webhooksService.syncBitbucketPR({
+          ...body.data,
+          event: body.event,
+        });
       }
     }
     return {

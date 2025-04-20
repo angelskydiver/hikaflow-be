@@ -382,12 +382,13 @@ export class WebhooksService {
       }
 
       let prTrackerPayload = {
-        prId: `${data.repository.name}-${data.number}`,
+        prId: `${data.repository.name}-${data.number}-${data.action}`,
         status: PrTrackerStatus.PENDING,
         response: data,
       };
 
-      this._prTrackerService.trackPr(prTrackerPayload);
+      let { success } = await this._prTrackerService.trackPr(prTrackerPayload);
+      if (!success) return;
       let { decryptedToken, accountId } =
         await this._accountCredentialByRepository(data);
       let prCommits = await fetchPrCommits(
@@ -407,6 +408,7 @@ export class WebhooksService {
         repositoryId: isBaseBranchMatch.id,
         organizationId: isBaseBranchMatch.organizationId,
         accountId,
+        action: data.action,
       };
 
       let repository = await this._repositoryService.getRepository(
@@ -451,13 +453,13 @@ export class WebhooksService {
       }
 
       let prTrackerPayload = {
-        prId: `${data.repository.name}-${data.pullrequest.id}`,
+        prId: `${data.repository.name}-${data.pullrequest.id}-${data.event}`,
         status: PrTrackerStatus.PENDING,
         response: data,
       };
 
-      this._prTrackerService.trackPr(prTrackerPayload);
-
+      let { success } = await this._prTrackerService.trackPr(prTrackerPayload);
+      if (!success) return;
       data = {
         ...data,
         repository: {
@@ -490,6 +492,7 @@ export class WebhooksService {
         organizationId: isBaseBranchMatch.organizationId,
         accountId,
         links: data.pullrequest.links,
+        action: data.event,
       };
 
       let repository = await this._repositoryService.getRepository(
@@ -534,12 +537,13 @@ export class WebhooksService {
       }
 
       let prTrackerPayload = {
-        prId: `${data.repository.name}-${data.number}`,
+        prId: `${data.repository.name}-${data.number}-${data.action}`,
         status: PrTrackerStatus.PENDING,
         response: data,
       };
 
-      this._prTrackerService.trackPr(prTrackerPayload);
+      let { success } = await this._prTrackerService.trackPr(prTrackerPayload);
+      if (!success) return;
 
       let { decryptedToken, accountId } =
         await this._accountCredentialByRepository(data);
@@ -641,7 +645,7 @@ export class WebhooksService {
       );
       await this.sendPrCloseNotification(payload);
       this._prTrackerService.updatePrInfo(
-        `${prInfo.repo}-${prInfo.prNumber}`,
+        `${data.repository.name}-${data.number}-${data.action}`,
         PrTrackerStatus.APPROVED,
       );
       return {
@@ -662,7 +666,7 @@ export class WebhooksService {
       // 3. code ownership
     } catch (error) {
       this._prTrackerService.updatePrInfo(
-        `${data.repository.name}-${data.number}`,
+        `${data.repository.name}-${data.number}-${data.action}`,
         PrTrackerStatus.REJECTED,
       );
       // console.log(error.message);
@@ -683,12 +687,13 @@ export class WebhooksService {
       }
 
       let prTrackerPayload = {
-        prId: `${data.repository.name}-${data.pullrequest.id}`,
+        prId: `${data.repository.name}-${data.pullrequest.id}-${data.event}`,
         status: PrTrackerStatus.PENDING,
         response: data,
       };
 
-      this._prTrackerService.trackPr(prTrackerPayload);
+      let { success } = await this._prTrackerService.trackPr(prTrackerPayload);
+      if (!success) return;
 
       let { decryptedToken, accountId } =
         await this._accountCredentialByRepository({
@@ -826,7 +831,7 @@ export class WebhooksService {
       );
       await this.sendPrCloseNotification(payload);
       this._prTrackerService.updatePrInfo(
-        `${data.repository.name}-${data.pullrequest.id}`,
+        `${data.repository.name}-${data.pullrequest.id}-${data.event}`,
         PrTrackerStatus.APPROVED,
       );
       return {
@@ -846,10 +851,10 @@ export class WebhooksService {
       // 2. Review and comments
       // 3. code ownership
     } catch (error) {
-      // this._prTrackerService.updatePrInfo(
-      //   `${data.repository.name}-${data.number}`,
-      //   PrTrackerStatus.REJECTED,
-      // );
+      this._prTrackerService.updatePrInfo(
+        `${data.repository.name}-${data.pullrequest.id}-${data.event}`,
+        PrTrackerStatus.REJECTED,
+      );
       // console.log(error.message);
       throw new BadRequestException(error.message);
     }
@@ -1090,9 +1095,6 @@ export class WebhooksService {
 
           // Only create the comment if it's a PR-related comment
           return this._commentService.createComment(payload);
-
-          // If it's not a PR comment, return undefined (or you can filter out these)
-          return undefined;
         })
         .filter((comment) => comment !== undefined);
 
@@ -1102,10 +1104,6 @@ export class WebhooksService {
       await this._pullRequestService.updatePullRequest(prInfo.prId, {
         summary: analyzeCombineSummary.prSummary,
       });
-      // TODO add summary on Bitbucket
-      // await commentPrSummary(prInfo, {
-      //   issue: analyzeCombineSummary.prSummary,
-      // });
 
       await this._commentService.registerDuplicateCode(
         duplicateCodes.map((data) => ({
@@ -1129,7 +1127,7 @@ export class WebhooksService {
       };
       await this.sendPrCreateNotification(payload);
       this._prTrackerService.updatePrInfo(
-        `${prInfo.repo}-${prInfo.prNumber}`,
+        `${prInfo.repo}-${prInfo.prNumber}-${prInfo.action}`,
         PrTrackerStatus.APPROVED,
       );
       return {
@@ -1141,7 +1139,7 @@ export class WebhooksService {
       };
     } catch (error) {
       this._prTrackerService.updatePrInfo(
-        `${prInfo.repo}-${prInfo.prNumber}`,
+        `${prInfo.repo}-${prInfo.prNumber}-${prInfo.action}`,
         PrTrackerStatus.REJECTED,
       );
       console.log(error.message);
@@ -1270,7 +1268,7 @@ export class WebhooksService {
       };
       await this.sendPrCreateNotification(payload);
       this._prTrackerService.updatePrInfo(
-        `${prInfo.repo}-${prInfo.prNumber}`,
+        `${prInfo.repo}-${prInfo.prNumber}-${prInfo.action}`,
         PrTrackerStatus.APPROVED,
       );
       return {
@@ -1282,133 +1280,9 @@ export class WebhooksService {
       };
     } catch (error) {
       this._prTrackerService.updatePrInfo(
-        `${prInfo.repo}-${prInfo.prNumber}`,
+        `${prInfo.repo}-${prInfo.prNumber}-${prInfo.action}`,
         PrTrackerStatus.REJECTED,
       );
-      // console.log(error.message);
-      throw new BadRequestException(error.message);
-    }
-  }
-
-  async diffFunctionality2(prInfo: any) {
-    try {
-      let fileChanges = await fetchPrFiles(prInfo);
-      let { duplicateIdenticalCodeIssue } =
-        await this.detectDuplicateAndIdenticalCode(fileChanges);
-      let deepSeekWrapper = new DeepSeek();
-
-      // Step 1: Group changes by file
-      const changesByFile = new Map<string, any[]>();
-
-      fileChanges.forEach((file) => {
-        const fileChanges = file.changes
-          .filter((change) => change.type === 'addition')
-          .map((change) =>
-            change.lines.map((eachline, i) => ({
-              lineNumber: change.startLine + i,
-              content: eachline,
-              fileName: file.file,
-            })),
-          )
-          .flat();
-
-        if (changesByFile.has(file.file)) {
-          changesByFile.get(file.file).push(...fileChanges);
-        } else {
-          changesByFile.set(file.file, fileChanges);
-        }
-      });
-
-      let allIssues = duplicateIdenticalCodeIssue;
-      let allSummaries = [];
-
-      for (const [fileName, changes] of changesByFile.entries()) {
-        const tokenizer = require('gpt-3-encoder'); // Use a tokenizer library
-
-        let tokenCount = tokenizer.encode(JSON.stringify(changes)).length;
-
-        if (tokenCount > MAX_TOKENS) {
-          // If the file's changes exceed the token limit, split into smaller chunks
-          let chunks = [];
-          let currentChunk = [];
-          let currentTokenCount = 0;
-
-          for (const change of changes) {
-            const changeTokens = tokenizer.encode(
-              JSON.stringify(change),
-            ).length;
-
-            if (currentTokenCount + changeTokens > MAX_TOKENS) {
-              chunks.push(currentChunk);
-              currentChunk = [change];
-              currentTokenCount = changeTokens;
-            } else {
-              currentChunk.push(change);
-              currentTokenCount += changeTokens;
-            }
-          }
-
-          if (currentChunk.length > 0) {
-            chunks.push(currentChunk);
-          }
-
-          // Analyze each chunk
-          for (const chunk of chunks) {
-            const AiResponse =
-              await deepSeekWrapper.analyzeCodeFilesForIssues(chunk);
-            allIssues.push(...AiResponse.codeIssues);
-            allSummaries.push(AiResponse.prSummary);
-          }
-        } else {
-          // If the file's changes are within the token limit, analyze as a single chunk
-          const AiResponse =
-            await deepSeekWrapper.analyzeCodeFilesForIssues(changes);
-          allIssues.push(...AiResponse.codeIssues);
-          allSummaries.push({ prSummary: AiResponse.prSummary });
-        }
-      }
-
-      // Step 3: Combine summaries into a single PR summary
-      const combinedSummary = allSummaries;
-
-      // Step 4: Create comments and update PR
-      let commentsMapping = allIssues.map((data) => commentPr(data, prInfo));
-
-      let createCommentsMapping = allIssues.map((data) => {
-        let payload = {
-          repositoryId: prInfo.id,
-          prId: prInfo.prId,
-          content: data.content,
-          line: parseInt(data.line),
-          file: data.file,
-          issue: data.issue,
-          issueCategory: data.category,
-          severity: data.priority.split(' ')[0],
-          type: CommentType.PULL_REQUEST,
-        };
-        return this._commentService.createComment(payload);
-      });
-
-      let analyzeCombineSummary =
-        await deepSeekWrapper.analyzeCombineSummary(combinedSummary);
-
-      await this._pullRequestService.updatePullRequest(prInfo.prId, {
-        summary: analyzeCombineSummary.prSummary,
-      });
-      await commentPrSummary(prInfo, {
-        issue: analyzeCombineSummary.prSummary,
-      });
-      await Promise.allSettled(commentsMapping);
-      await Promise.allSettled(createCommentsMapping);
-
-      return {
-        fileChanges,
-        AiResponse: {
-          codeIssues: allIssues,
-          prSummary: analyzeCombineSummary.prSummary,
-        },
-      };
-    } catch (error) {
       // console.log(error.message);
       throw new BadRequestException(error.message);
     }
@@ -1490,8 +1364,12 @@ export class WebhooksService {
           JSON.stringify(identicalCodes),
         );
 
-        duplicateCodes.push(...AiResponse.duplicateCodes);
-        identicalCodes.push(...AiResponse.identicalCodes);
+        if (AiResponse?.duplicateCodes) {
+          duplicateCodes.push(...AiResponse.duplicateCodes);
+        }
+        if (AiResponse?.identicalCodes) {
+          identicalCodes.push(...AiResponse.identicalCodes);
+        }
         allIssues.push(...AiResponse.codeIssues);
       }
 
