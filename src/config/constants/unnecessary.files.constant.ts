@@ -8,13 +8,34 @@ export const unnecessaryFiles = [
 ];
 
 export const excludedExtensions = [
-  '.png',
-  '.jpeg',
-  '.jpg',
-  '.gif',
-  '.webp',
-  '.bmp',
+  '.ttf',
+  'woff',
   '.sql',
+  '.md',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.mp4',
+  '.mov',
+  '.webm',
+  '.mkv',
+  '.avi',
+  '.mp3',
+  '.wav',
+  '.zip',
+  '.tar',
+  '.rar',
+  '.ico',
+  '.svg',
+  '.webp',
+  '.pdf',
+  '.doc',
+  '.xls',
+  '.ppt',
+  '.exe',
+  '.dll',
+  '.exe',
 ];
 
 export const shouldAnalyze = (fileName) => {
@@ -38,6 +59,8 @@ export const ignoredFilesForFileScan = [
   'README.md',
 ];
 export const ignoredExtensionsForFileScan = [
+  '.ttf',
+  'woff',
   '.sql',
   '.md',
   '.png',
@@ -45,6 +68,8 @@ export const ignoredExtensionsForFileScan = [
   '.jpeg',
   '.gif',
   '.mp4',
+  '.mov',
+  '.webm',
   '.mkv',
   '.avi',
   '.mp3',

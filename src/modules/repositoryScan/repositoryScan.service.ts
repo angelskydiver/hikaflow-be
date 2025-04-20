@@ -130,7 +130,7 @@ export class RepositoryScanService {
 
       const analyzedFiles = await this._processInBatches(
         repositoryStructure,
-        50, // Batch size
+        15, // Batch size
         (data) =>
           this.analyzeFiles(
             data,

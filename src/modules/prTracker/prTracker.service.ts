@@ -18,7 +18,7 @@ export class PrTrackerService {
         where: { prId: data.prId },
       });
       if (prTracker.length + 1 > 3) {
-        return;
+        return { success: false };
       }
       if (prTracker.length) {
         await this._prismaService.prTracker.update({

@@ -169,15 +169,6 @@ export class Gemini {
 
       // Traits: Expert, helpful, kind, inspiring, detailed, and articulate.
       let resp: any = await model.generateContent([prompt]);
-      console.log(
-        'Gemini response:',
-        resp.response.candidates[0].content.parts[0].text,
-        JSON.stringify(
-          resp.response.candidates[0].content.parts[0].text,
-          null,
-          2,
-        ),
-      );
       resp = this.extractCleanJSON(
         resp.response.candidates[0].content.parts[0].text,
       );
@@ -201,6 +192,133 @@ export class Gemini {
     } catch (e) {
       console.error('Failed to parse JSON:', jsonString);
       throw new Error('Invalid JSON format from Gemini');
+    }
+  }
+
+  async analyzeFile(file: { name: string; content: string }) {
+    const prompt = `You are an AI specializing in **deeply structured file analysis**. Your task is to analyze a given file and generate documentation in **JSON format**, maintaining a **nested structure** for classes, functions, React/Vue components, and their internal details.
+
+        ## **Schema:**
+        {
+          "summary": "**Detailed markdown-formatted string explanation** of the file, including:
+            - 📌 **Purpose**: Why this file exists and what problem it solves.
+            - 🔗 **Where is this used?**: Mention direct dependencies & where it's referenced.
+            - 💡 **Key Insights**: Best practices, optimizations, and internal logic.
+            - ⚠ **Common Gotchas**: Mistakes to avoid & debugging hints.
+            - 🚀 **Potential Enhancements**: How this file can be improved.
+          ",
+          "functions": [
+            {
+              "name": "FunctionName",
+              "description": "Detailed explanation of what this function does.",
+              "parameters": [
+                {
+                  "name": "param1",
+                  "type": "Type",
+                  "description": "Explanation of this parameter."
+                }
+              ],
+              "returnType": "Type",
+              "relatedFunctions": ["Other related functions"],
+              "invokedIn": ["List of places where this function is used"]
+            }
+          ],
+          "classes": [
+            {
+              "name": "ClassName",
+              "description": "Purpose of this class and its role in the project.",
+              "properties": [
+                {
+                  "name": "PropertyName",
+                  "type": "Type",
+                  "description": "What this property stores."
+                }
+              ],
+              "methods": [
+                {
+                  "name": "MethodName",
+                  "description": "What this method does.",
+                  "parameters": [
+                    {
+                      "name": "param1",
+                      "type": "Type",
+                      "description": "Explanation of this parameter."
+                    }
+                  ],
+                  "returnType": "Type",
+                  "calls": ["Other functions/methods this method calls"],
+                  "invokedIn": ["Places where this method is used"]
+                }
+              ],
+              "extends": "ParentClass (if applicable)"
+            }
+          ],
+          "components": [
+            {
+              "name": "ComponentName",
+              "description": "Purpose of this React/Vue component.",
+              "props": [
+                {
+                  "name": "PropName",
+                  "type": "Type",
+                  "description": "What this prop does."
+                }
+              ],
+              "state": [
+                {
+                  "name": "StateVariable",
+                  "type": "Type",
+                  "description": "Explanation of this state."
+                }
+              ],
+              "hooks": [
+                {
+                  "name": "HookName",
+                  "description": "What this hook is used for."
+                }
+              ],
+              "eventHandlers": [
+                {
+                  "name": "handleEvent",
+                  "description": "What this handler does."
+                }
+              ],
+              "renders": ["List of other components this component renders"]
+            }
+          ],
+          "relations": {
+            "imports": ["List of imported modules/files"],
+            "exports": ["List of exported modules/functions/classes/components"],
+            "dependencies": ["External libraries or internal files it depends on"]
+          },
+          "tags": ["CONTROLLER" | "SERVICE" | "SCHEMA" | "MIGRATION" | "REPOSITORY" | "CONFIG" | "CONSTANTS" | "MIDDLEWARE" | "UTILITY" | "JOB" | "MODULE" | "ASSETS" | "DOCUMENTATION" | "TEST" | "EVENT_HANDLER" | "LOGGING" | "PROJECT_SETUP"] // max 3 tags, Most relevant tag should be First
+        }
+
+        ***I want exact JSON response No '''json  '''.*** 
+        \\\
+          File: ${file.name}\nContent:\n${file.content}
+        \\\
+      `;
+
+    let output;
+    try {
+      // @ts-ignore
+      let resp: any = await model.generateContent([prompt]);
+      resp = this.extractCleanJSON(
+        resp.response.candidates[0].content.parts[0].text,
+      );
+
+      // Return the parsed JSON response
+      return resp;
+    } catch (error) {
+      console.error(
+        `Error processing the code files(analyzeFile): 
+        error: ${error}
+        output: ${output}`,
+      );
+      throw new Error(
+        `Error while generating code review. ${error}, file.name ${file.name} object: ${output}`,
+      );
     }
   }
 }
