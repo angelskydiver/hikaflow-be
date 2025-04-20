@@ -80,7 +80,7 @@ export class CommentService {
   async createComment(data: CreateCommentRequestDto): Promise<any> {
     try {
       await this._prismaService.comment.create({
-        data: { ...data, status: CommentStatus.OPEN },
+        data: { ...data, status: CommentStatus.OPEN, reason: '' },
       });
       return {
         Success: true,

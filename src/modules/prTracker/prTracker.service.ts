@@ -61,7 +61,11 @@ export class PrTrackerService {
   async trackPrs() {
     try {
       let prs = await this._prismaService.prTracker.findMany({
-        where: { status: PrTrackerStatus.REJECTED, try: { lt: 3 } },
+        where: {
+          status: PrTrackerStatus.REJECTED,
+          try: { lt: 3 },
+          createdAt: { lte: new Date(Date.now() - 1000 * 60 * 15) },
+        },
       });
       if (!prs.length) return;
       console.log('Total Number of in complete PRs: ', prs.length);
