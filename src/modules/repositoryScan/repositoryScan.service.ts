@@ -128,9 +128,16 @@ export class RepositoryScanService {
       //   ),
       // );
 
+      await this.prisma.repositoryScan.update({
+        where: { id: repositoryScanId },
+        data: {
+          totalFiles: repositoryStructure.length,
+        },
+      });
+
       const analyzedFiles = await this._processInBatches(
         repositoryStructure,
-        15, // Batch size
+        25, // Batch size
         (data) =>
           this.analyzeFiles(
             data,
@@ -367,8 +374,17 @@ export class RepositoryScanService {
           repository: true,
         },
       });
+
+      const totalFiles = await this.prisma.fileDocumentation.count({
+        where: {
+          repositoryScanId: scan.id,
+        },
+      });
+
       return {
         status: scan?.status || 'NOT_FOUND',
+        totalFiles: scan?.totalFiles || 0,
+        totalFilesScanned: totalFiles || 0,
       };
     } catch (error) {
       console.log(error.message);
