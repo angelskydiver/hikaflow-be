@@ -392,6 +392,7 @@ model RepositoryScan {
   accountId         String // Links to the Account that initiated the scan
   status            ScanStatus @default(PENDING) // Status of the scan (Pending, In Progress, Completed, Failed)
   tokenUsed         Int        @default(0) // Tokens utilized in this scan
+  totalFiles        Int        @default(0) // Total number of files need to be analyzed
   totalFilesScanned Int        @default(0) // Total number of files analyzed
   startedAt         DateTime? // When the scan started
   completedAt       DateTime? // When the scan finished
