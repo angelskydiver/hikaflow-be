@@ -443,6 +443,9 @@ export class RepositoryScanService {
     }
   }
 
+  /**
+   * Analyzes repository to answer user questions.
+   */
   async testAnalyzeAssistance(
     repositoryId: string,
     query: string,
@@ -458,6 +461,12 @@ export class RepositoryScanService {
 
       if (!repository)
         throw new Error(`Repository "${repositoryId}" not found.`);
+
+      // Enhanced check for project-level/domain-level questions with more patterns
+      const isProjectLevelQuestion =
+        /project|purpose|domain|target|user|customer|unique|feature|high[ -]level|overview|goal|aim|objective|what|why|how|main|core|key|primary|functionality|architecture|structure|design|pattern|flow|process/i.test(
+          query,
+        );
 
       const accountCredentials =
         await this.accountCredentialService.getAccountToken({ accountId });
@@ -491,8 +500,6 @@ export class RepositoryScanService {
         repositoryScanId,
       );
 
-      console.log('uniqueTags: ', uniqueTags);
-
       let usedTags = uniqueTags.map((data) => data.tag).join(', ');
 
       const gemini = new Gemini();
@@ -500,7 +507,184 @@ export class RepositoryScanService {
       const embedding = await gemini.getEmbeddings(query);
       const vectorQuery = `[${embedding.join(',')}]`;
 
-      let projectContext = await gemini.getQueryContext(query, usedTags);
+      // For project-level questions, we'll focus on key files based on tags first
+      let projectContext;
+
+      if (isProjectLevelQuestion) {
+        // Define broader set of tags for project-level understanding
+        projectContext = {
+          output: {
+            context: 'User is asking about project purpose or domain',
+            tag: 'CONFIG',
+            relatedTags: [
+              'PROJECT_SETUP',
+              'SERVICE',
+              'API',
+              'CONTROLLER',
+              'ROUTER',
+              'MAIN',
+              'INDEX',
+              'APP',
+              'SERVER',
+              'DOCUMENTATION',
+              'UTILITY',
+              'MODEL',
+              'SCHEMA',
+            ],
+          },
+        };
+
+        // Start with the tag-based approach instead of README files
+        let tagBasedFiles = await this.prisma.fileDocumentation.findMany({
+          where: {
+            repositoryScanId,
+            fileType: {
+              hasSome: [
+                ...projectContext.output.relatedTags,
+                projectContext.output.tag,
+              ],
+            },
+          },
+        });
+
+        if (tagBasedFiles.length > 0) {
+          // Process files based on tags
+          let fileQuickInfo = tagBasedFiles.map((data) => ({
+            fileName: data.name,
+            filePath: data.fullPath,
+            fileSummary: data.summary,
+            fileTags: data.fileType,
+          }));
+
+          let filteredFiles = await gemini.filterRelevantFiles(
+            query,
+            fileQuickInfo,
+          );
+
+          tagBasedFiles = tagBasedFiles.filter((data) =>
+            filteredFiles.output.some((file) => file.fileName === data.name),
+          );
+
+          // Only if we don't find enough tag-based files, look at README files
+          if (tagBasedFiles.length < 3) {
+            const readmeFiles = await this.prisma.fileDocumentation.findMany({
+              where: {
+                repositoryScanId,
+                OR: [
+                  { name: { contains: 'README', mode: 'insensitive' } },
+                  { name: { contains: 'package.json', mode: 'insensitive' } },
+                  { name: { contains: 'config', mode: 'insensitive' } },
+                  { fullPath: { contains: 'README', mode: 'insensitive' } },
+                ],
+              },
+            });
+
+            // Add README files to the result set if they exist
+            if (readmeFiles.length > 0) {
+              tagBasedFiles = [...tagBasedFiles, ...readmeFiles];
+            }
+          }
+
+          // Get source code for the files
+          let sourceCodeMapping;
+          if (
+            accountCredentials.accountType ===
+            AccountCredentialsType.GITHUB_TOKEN
+          ) {
+            sourceCodeMapping = tagBasedFiles.map((data) => {
+              return axios.get(
+                `https://raw.githubusercontent.com/${documentedFile[0].repository.owner}/${documentedFile[0].repository.name}/${documentedFile[0].repository.baseBranch}/${data.fullPath}`,
+                {
+                  headers: {
+                    Authorization: `Bearer ${accountCredentials.decryptedToken}`,
+                  },
+                },
+              );
+            });
+          } else {
+            sourceCodeMapping = tagBasedFiles.map((data) => {
+              let payload = {
+                workspace: accountCredentials.payload.workspace.replace(
+                  ' ',
+                  '-',
+                ),
+                repo: repository.name.replace(' ', '-'),
+                branch: repository.baseBranch.replace(' ', '-'),
+                token: accountCredentials.decryptedToken,
+              };
+              return axios.get(
+                `https://api.bitbucket.org/2.0/repositories/${payload.workspace}/${payload.repo}/src/${payload.branch}/${data.fullPath}`,
+                {
+                  headers: {
+                    Authorization: `Bearer ${accountCredentials.decryptedToken}`,
+                  },
+                },
+              );
+            });
+          }
+
+          try {
+            const sourceCodeResponses = await Promise.all(sourceCodeMapping);
+            const filesWithCode = sourceCodeResponses.map((res, index) => ({
+              summary: tagBasedFiles[index].summary,
+              fileName: tagBasedFiles[index].name,
+              sourceCode: res.data,
+            }));
+
+            const queryResponse = await gemini.generateAnswer(
+              query,
+              filesWithCode,
+            );
+
+            let assistedQuestionPayload = {
+              question: query,
+              answer: {
+                response:
+                  queryResponse.output.response.candidates[0].content.parts[0]
+                    .text,
+                filteredFiles: queryResponse.filesReferenced.map((data) => ({
+                  name: data.fileName,
+                  content:
+                    typeof data.sourceCode === 'string'
+                      ? data.sourceCode
+                      : JSON.stringify(data.sourceCode),
+                })),
+              },
+              repositoryId: repositoryId,
+              scanId: repositoryScanId,
+              tokenUtilized:
+                queryResponse.output.response.usageMetadata.totalTokenCount,
+              accountId,
+            };
+
+            let assistedQuestions = await this.prisma.assistedQuestions.create({
+              data: assistedQuestionPayload,
+            });
+
+            return {
+              id: assistedQuestions.id,
+              response:
+                queryResponse.output.response.candidates[0].content.parts[0]
+                  .text,
+              filteredFiles: queryResponse.filesReferenced.map((data) => ({
+                name: data.fileName,
+                content:
+                  typeof data.sourceCode === 'string'
+                    ? data.sourceCode
+                    : JSON.stringify(data.sourceCode, null, 2),
+              })),
+            };
+          } catch (error) {
+            console.log('Error processing tag-based files:', error);
+            // Continue with normal processing if tag-based file handling fails
+          }
+        }
+
+        // Fallback to existing README approach if tag-based approach fails
+      } else {
+        projectContext = await gemini.getQueryContext(query, usedTags);
+      }
+
       if (!projectContext.output.context || !projectContext.output.tag) {
         let result: any[] = await this.prisma.$queryRaw`
           SELECT
@@ -515,10 +699,10 @@ export class RepositoryScanService {
             "fileType" as fileType,
             1 - ("summaryEmbedding" <=> ${vectorQuery}::vector) as similarity
           FROM "FileDocumentation"
-          WHERE 1 - ("summaryEmbedding" <=> ${vectorQuery}::vector) > 0.4
+          WHERE 1 - ("summaryEmbedding" <=> ${vectorQuery}::vector) > 0.3
             AND "repositoryScanId" = ${repositoryScanId}
           ORDER BY similarity DESC
-          LIMIT 10;
+          LIMIT 15;
         `;
 
         let fileQuickInfo = result.map((data) => ({
