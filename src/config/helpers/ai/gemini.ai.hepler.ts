@@ -27,37 +27,10 @@ export class Gemini {
 
   async getQueryContext(query: string, suggestedTags: string) {
     try {
-      //     const prompt = `
-      // You are an AI code assistant helping a technical intern understand a codebase.
-      // For this you need to understand the context of the query, weather the query is related to any specific feature of the component or belongs to the overall functionality of the codebase.
-      // If the query is related to a specific feature or component, then return {context: null}.
-      // If the query is related to the overall functionality of the codebase, the Identify the Tag the Query is about, Related Tags, must be any of them.
-
-      // Incase User ask about project impact, project Summary, project Purpose, it means to understand the overall functionality of the codebase, which is more likely identify by code files.
-      // Incase User ask about project design, project architecture, it means to understand the overall functionality of the codebase.
-      // Incase User ask about project structure, project architecture, it means to understand the overall functionality of the codebase.
-      // ** for the Frontend project you might check routes/router or related tag that show of routes management file
-      // ** for the Backend project you might check tags that refer DB model
-
-      // ${suggestedTags}
-
-      // Provide a response strictly in the following JSON format with no extra text, and should pass JSON.parse():
-
-      //   {
-      //     "context": "<project context identified> like User is asking about DB design, Project summary",
-      //     "tag": "tag",
-      //     "relatedTags": ["tag1", "tag2"]
-      //   }
-
-      //   Query: ${query}
-
-      //   I want exact JSON response No '''json  '''.
-      //   `;
-
       const prompt = `
-          You are an AI code assistant helping a technical intern understand a codebase.
+          You are an AI code assistant helping technical team members understand a codebase.
 
-          Your primary task is to analyze the intern's query and determine if it pertains to a specific feature or the overall functionality of the codebase.
+          Your primary task is to analyze the query and determine if it pertains to a specific feature or the overall functionality of the codebase.
 
           **Context Determination:**
           - If the query relates to a particular feature, component, or specific code section, return:
@@ -69,14 +42,15 @@ export class Gemini {
           - If the query pertains to the overall functionality, identify the most relevant tag representing the user's inquiry and suggest related tags from the provided list.
 
           **Identifying Overall Functionality Queries:**
-          - Questions about the project's impact, summary, purpose, or business outcomes indicate an interest in the overall functionality.
-          - Questions about the project's design, architecture, or structure also indicate an interest in the overall functionality.
+          - Questions about the project's purpose, business domain, target users, or competitive advantages indicate holistic interest.
+          - Questions about the project's impact, summary, high-level architecture, or business outcomes indicate an interest in the overall functionality.
+          - Questions containing terms like "why was this built", "what problem does it solve", "what makes it unique", "who uses this" signal holistic understanding needs.
 
           **Tagging Guidelines:**
           - Identify the single most appropriate tag that directly addresses the user's query about the overall functionality.
           - Suggest up to two additional related tags that could provide further helpful context.
-          - **Frontend Projects:** Consider tags related to routing (e.g., "UI Routes", "Navigation Flow") if the query seems related to user journeys or application structure.
-          - **Backend Projects:** Consider tags related to data models (e.g., "Data Models", "Database Schema") if the query touches upon data or relationships.
+          - **Frontend Projects:** Consider tags related to routing and UI components if the query seems related to user experience or application structure.
+          - **Backend Projects:** Consider tags related to data models and services if the query touches upon data or business logic.
 
           **Provided Tags:**
           ${suggestedTags}
@@ -88,14 +62,13 @@ export class Gemini {
           Return a JSON object strictly adhering to the following format (no extra text or markdown outside the JSON):
           \`\`\`json
           {
-            "context": "<brief description of the overall functionality aspect the user is asking about, e.g., 'User is asking about the project's purpose', 'User is asking about the high-level structure of the application'>",
+            "context": "<brief description of the overall functionality aspect the user is asking about, e.g., 'User is asking about the project's purpose', 'User is asking about the target users'>",
             "tag": "<most relevant tag from the provided list>",
             "relatedTags": ["<related tag 1>", "<related tag 2>"]
           }
           \`\`\`
         `;
 
-      // Traits: Expert, helpful, kind, inspiring, detailed, and articulate.
       let resp: any = await model.generateContent([prompt]);
       resp = this.extractCleanJSON(
         resp.response.candidates[0].content.parts[0].text,
@@ -119,22 +92,40 @@ export class Gemini {
       }
 
       const prompt = `
-  You are an AI code assistant helping a technical intern in understanding, debugging and assisting them in their tasks in the context of a codebase.
-  
-  Traits: Expert, helpful, kind, inspiring, detailed, and articulate.
-  
-  Only respond based on provided context. If not found, say: "I'm sorry, but I don't know the answer to that question."
-  
-  Answer in **markdown syntax**. Include code snippets if needed. Be as clear and specific as possible.
-  
-  START CONTEXT BLOCK
-  ${context}
-  END OF CONTEXT BLOCK
-  
-  START QUESTION
-  ${input}
-  END OF QUESTION
-  `;
+You are an AI code assistant helping technical team members understand this codebase, debug issues, and complete tasks with high accuracy.
+
+When answering about the project's purpose, focus on:
+1. The specific domain the project serves
+2. Target customers and user personas
+3. Core unique features that differentiate this solution
+4. Business goals and outcomes it aims to achieve
+5. How the various components fit together in the overall architecture
+6. Key technologies and frameworks used in the project
+
+For file-specific questions:
+1. Explain the file's role in the larger system architecture
+2. Describe key classes, functions, and their relationships
+3. Highlight important patterns and design decisions
+4. Connect to other related files and how they interact
+
+For technical assistance:
+1. Prioritize practical, working solutions over theoretical explanations
+2. Provide precise code snippets that follow the codebase patterns
+3. Reference specific files, functions, and components that are relevant
+4. Consider performance and best practices in your suggestions
+
+IMPORTANT: For questions about project purpose or overview, extract information from README files, package configs, and service definitions to provide a comprehensive answer. If the information in the context is limited, synthesize the best answer from what's available rather than saying there's not enough information.
+
+Answer in **markdown syntax**. Be comprehensive yet concise, focusing on the most relevant information to the question.
+
+START CONTEXT BLOCK
+${context}
+END OF CONTEXT BLOCK
+
+START QUESTION
+${input}
+END OF QUESTION
+`;
 
       let resp = await model.generateContent([prompt]);
 
@@ -151,23 +142,34 @@ export class Gemini {
   async filterRelevantFiles(query: string, files: any[]) {
     try {
       const prompt = `
-      You are an AI code assistant helping a technical intern understand a codebase.  
-      For this you need to understand the context of the query, based on the query you have to filter the unnecessary files to make the context strong for future queries.
-      You will receive a query and a list of files, each file have {fileName, filePath, tags, summary} so you can take better decision you have to filter the files based on the query.
-    
-      Provide a response strictly in the following JSON format with no extra text, and should pass JSON.parse():
+      You are an AI code assistant helping technical team members understand a codebase.  
       
-         [{
-          "fileName": "<project context identified> file name that you think is valid for the query analysis",
-        }]
+      Your task is to analyze the query and filter the file list to only include the most relevant files that would best answer the question.
+      
+      Query types to consider:
+      1. For project purpose, domain, or target users questions: Prioritize README files, configuration files, and core service definitions
+      2. For technical implementation questions: Select files directly related to the specific feature mentioned
+      3. For bug/task assistance: Prioritize files that implement the functionality related to the issue
+      4. For questions about specific services or modules: Include both the implementation file and related models/interfaces
+      5. For file-specific questions: Ensure you include that file and its most closely related dependencies
+      
+      File selection criteria:
+      - Return at least 1 and at most 5 files
+      - For questions about project architecture, consider including multiple key service files
+      - For specific feature questions, focus on the primary file implementing that feature
+      - Exclude test files unless the query is specifically about testing
+      - For each file, assess its relevance based on file name, path structure, file type tags, and summary
     
-        Query: ${query}
-        Files: ${JSON.stringify(files)}
-    
-        I want exact JSON response No '''json  '''.
-        `;
+      Provide a response in the following JSON format with no extra text:
+      
+      [{
+        "fileName": "<file name that is most relevant to answering the query>",
+      }]
+      I want exact JSON response No '''json  '''.
+      Query: ${query}
+      Files: ${JSON.stringify(files)}
+      `;
 
-      // Traits: Expert, helpful, kind, inspiring, detailed, and articulate.
       let resp: any = await model.generateContent([prompt]);
       resp = this.extractCleanJSON(
         resp.response.candidates[0].content.parts[0].text,
@@ -194,6 +196,8 @@ export class Gemini {
       throw new Error('Invalid JSON format from Gemini');
     }
   }
+
+  //
 
   async analyzeFile(file: { name: string; content: string }) {
     const prompt = `You are an AI specializing in **deeply structured file analysis**. Your task is to analyze a given file and generate documentation in **JSON format**, maintaining a **nested structure** for classes, functions, React/Vue components, and their internal details.
