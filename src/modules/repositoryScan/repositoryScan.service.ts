@@ -12,9 +12,11 @@ import axios from 'axios';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
 import { Gemini } from 'src/config/helpers/ai/gemini.ai.hepler';
 import { filterHighPriorityComments } from 'src/config/helpers/comment.helper';
-import { bitbucketRepositoryAccess } from 'src/config/helpers/repositories/bitbucket.helper';
 import {
+  bitbucketRepositoryAccess,
   bitbucketRepositoryStructure,
+} from 'src/config/helpers/repositories/bitbucket.helper';
+import {
   fetchFileByUrl,
   githubRepositoryAccess,
   githubRepositoryStructure,
@@ -178,14 +180,6 @@ export class RepositoryScanService {
     repository: any,
   ) {
     try {
-      // console.log(
-      //   'cp 02: fileChanges, token, repositoryId, repositoryScanId: ',
-      //   fileChanges,
-      //   token,
-      //   repositoryId,
-      //   repositoryScanId,
-      //   repository.repositorySettings,
-      // );
       const deepseekAI = new DeepSeek();
       let fileContent = await fetchFileByUrl(fileChanges.filePath, token);
       let lines;
@@ -616,7 +610,7 @@ export class RepositoryScanService {
                 `https://api.bitbucket.org/2.0/repositories/${payload.workspace}/${payload.repo}/src/${payload.branch}/${data.fullPath}`,
                 {
                   headers: {
-                    Authorization: `Bearer ${accountCredentials.decryptedToken}`,
+                    Authorization: `${accountCredentials.decryptedToken}`,
                   },
                 },
               );
@@ -858,7 +852,7 @@ export class RepositoryScanService {
               `https://api.bitbucket.org/2.0/repositories/${payload.workspace}/${payload.repo}/src/${payload.branch}/${data.fullPath}`,
               {
                 headers: {
-                  Authorization: `Bearer ${accountCredentials.decryptedToken}`,
+                  Authorization: `${accountCredentials.decryptedToken}`,
                 },
               },
             );

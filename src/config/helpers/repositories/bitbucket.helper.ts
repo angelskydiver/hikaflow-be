@@ -83,7 +83,10 @@ export const fetchBitbucketRepositories = async (data: {
     }
     return allRepositories; // Return the complete list of repositories
   } catch (error) {
-    console.error('Error fetching repositories:', error);
+    console.error(
+      'Error fetching repositories:',
+      JSON.stringify(error, null, 2),
+    );
     throw error; // Re-throw the error for further handling
   }
 };
@@ -612,39 +615,173 @@ export async function bitbucketRepositoryAccess(data: {
   token: string;
 }) {
   try {
-    const response = await axios.get(
-      `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repo}/src/${data.branch}/`,
-      {
+    // BitBucket doesn't have a recursive parameter like GitHub
+    // Need to recursively fetch all directories and files
+    const allFiles: any[] = [];
+
+    // Function to fetch directory contents
+    async function fetchDirectoryContents(path: string = '') {
+      const url = `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repo}/src/${data.branch}/${path}`;
+
+      const response = await axios.get(url, {
         headers: {
           Authorization: data.token,
         },
-      },
-    );
+      });
 
-    if (!response.data.values) {
-      throw new Error('Invalid repository structure.');
+      if (!response.data || !response.data.values) {
+        throw new Error('Invalid repository structure.');
+      }
+
+      const contents = response.data.values;
+
+      // Process all items
+      for (const item of contents) {
+        if (item.type === 'commit_file') {
+          // Add file to the results if it's not ignored
+          if (
+            !ignoredFilesForFileScan.includes(
+              item.path.split('/').pop() || '',
+            ) &&
+            !ignoredExtensionsForFileScan.some((ext) => item.path.endsWith(ext))
+          ) {
+            allFiles.push({
+              name: item.path.split('/').pop(), // Extract filename
+              filePath: `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repo}/src/${item.commit.hash}/${item.path}`,
+              fileRelativePath: item.path,
+            });
+          }
+        } else {
+          // It's a directory, recursively fetch its contents
+          await fetchDirectoryContents(item.path);
+        }
+      }
     }
 
-    const files = response.data.values;
+    // Start the recursive traversal from the root
+    await fetchDirectoryContents();
 
-    return files
-      .filter(
-        (fileData: { type: string; path: string }) =>
-          fileData.type === 'commit_file' &&
-          !ignoredFilesForFileScan.includes(
-            fileData.path.split('/').pop() || '',
-          ) &&
-          !ignoredExtensionsForFileScan.some((ext) =>
-            fileData.path.endsWith(ext),
-          ),
-      )
-      .map((fileData: { path: string } | any) => ({
-        name: fileData.path.split('/').pop(), // Extract filename
-        filePath: `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repo}/src/${fileData.commit.hash}/${fileData.path}`,
-        fileRelativePath: fileData.path,
-      }));
+    return allFiles;
   } catch (error) {
-    // console.error(error);
+    console.error('Error fetching repository structure:', error);
+    throw new Error(error.message);
+  }
+}
+
+export async function bitbucketRepositoryStructure(data: {
+  workspace: string;
+  repo: string;
+  branch: string;
+  token: string;
+  path?: string;
+}) {
+  try {
+    // BitBucket doesn't offer a recursive option like GitHub, so we need to
+    // manually build the tree by making multiple API calls
+    async function fetchDirectoryContents(dirPath: string = '') {
+      const url = `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repo}/src/${data.branch}/${dirPath}`;
+
+      const response = await axios.get(url, {
+        headers: {
+          Authorization: data.token,
+        },
+      });
+
+      if (!response.data || !response.data.values) {
+        throw new Error('Invalid repository structure.');
+      }
+
+      return response.data.values;
+    }
+
+    // Start with the root directory
+    const rootFiles = await fetchDirectoryContents(data.path || '');
+
+    // For flat structure (compatibility with old code)
+    const flatStructure = rootFiles.map((file: any) => {
+      const isDirectory = file.type !== 'commit_file';
+      const path = file.path;
+
+      return {
+        name: path.split('/').pop(),
+        path: path,
+        type: isDirectory ? 'folder' : 'file',
+        ...(isDirectory
+          ? { children: [] }
+          : {
+              sha: file.commit?.hash || '',
+              url: `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repo}/src/${file.commit?.hash || data.branch}/${path}`,
+              download_url: `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repo}/src/${file.commit?.hash || data.branch}/${path}`,
+            }),
+      };
+    });
+
+    // Recursively fetch subdirectories for each directory
+    async function fetchSubdirectories(structure: any[]) {
+      for (const item of structure) {
+        if (item.type === 'folder') {
+          // Fetch contents of this directory
+          try {
+            const subdirContents = await fetchDirectoryContents(item.path);
+
+            // Process all subdirectory items
+            item.children = subdirContents.map((file: any) => {
+              const isDirectory = file.type !== 'commit_file';
+              const path = file.path;
+
+              return {
+                name: path.split('/').pop(),
+                path: path,
+                type: isDirectory ? 'folder' : 'file',
+                ...(isDirectory
+                  ? { children: [] }
+                  : {
+                      sha: file.commit?.hash || '',
+                      url: `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repo}/src/${file.commit?.hash || data.branch}/${path}`,
+                      download_url: `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repo}/src/${file.commit?.hash || data.branch}/${path}`,
+                    }),
+              };
+            });
+
+            // Recursively fetch for subdirectories
+            await fetchSubdirectories(item.children);
+          } catch (error) {
+            console.error(`Error fetching subdirectory ${item.path}:`, error);
+            // If we can't fetch a subdirectory, just leave it empty
+            item.children = [];
+          }
+        }
+      }
+      return structure;
+    }
+
+    // Build the full recursive structure
+    const result = await fetchSubdirectories(flatStructure);
+
+    // Sort the result (folders first, then files alphabetically)
+    function sortTree(nodes: any[]) {
+      // First separate folders and files
+      const folders = nodes.filter((node) => node.type === 'folder');
+      const files = nodes.filter((node) => node.type === 'file');
+
+      // Sort folders and files alphabetically
+      folders.sort((a, b) => a.name.localeCompare(b.name));
+      files.sort((a, b) => a.name.localeCompare(b.name));
+
+      // Recursively sort children of folders
+      folders.forEach((folder) => {
+        if (folder.children) {
+          folder.children = sortTree(folder.children);
+        }
+      });
+
+      // Return folders first, then files
+      return [...folders, ...files];
+    }
+
+    return sortTree(result);
+  } catch (error) {
+    console.error('Error fetching repository structure:', error);
     throw new Error(error.message);
   }
 }
