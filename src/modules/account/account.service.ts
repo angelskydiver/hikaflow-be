@@ -17,7 +17,7 @@ export class AccountService {
 
   async updateAccount(id: string, data: any) {
     try {
-      let Account = await this._prismaService.account.findFirst({
+      const Account = await this._prismaService.account.findFirst({
         where: { id },
       });
       if (!Account) throw new BadRequestException('Account not found');

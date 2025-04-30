@@ -8,7 +8,7 @@ export class ExecutiveReportService {
 
   async createExecutiveReport(data: ExecutiveReportRequestDto): Promise<any> {
     try {
-      let report = await this._prismaService.executiveReport.create({
+      const report = await this._prismaService.executiveReport.create({
         data,
       });
       return {
@@ -23,7 +23,7 @@ export class ExecutiveReportService {
 
   async getExecutiveReportById(id) {
     try {
-      let report = await this._prismaService.executiveReport.findUnique({
+      const report = await this._prismaService.executiveReport.findUnique({
         where: { id },
         include: { repository: true, codeOverview: true, commitSummary: true },
       });

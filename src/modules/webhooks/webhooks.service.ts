@@ -29,6 +29,7 @@ import {
 import { filterFiles } from 'src/config/helpers/unnecessary.files.helper';
 import { MailService } from 'src/mail/mail.service';
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
+import { BillingService } from '../billing/billing.service';
 import { CodeOverviewService } from '../codeOverview/codeOverview.service';
 import { CommentService } from '../comment/comment.service';
 import { CommitSummaryService } from '../commitSummary/commitSummary.service';
@@ -56,24 +57,25 @@ export class WebhooksService {
     private _codeOverviewService: CodeOverviewService,
     private _mailService: MailService,
     private _commitSummaryService: CommitSummaryService,
+    private _billingService: BillingService,
     @Inject(forwardRef(() => PrTrackerService))
     private _prTrackerService: PrTrackerService,
   ) {}
 
   private _accountCredentialByRepository = async (data) => {
-    let repository = await this._prismaService.repository.findUnique({
+    const repository = await this._prismaService.repository.findUnique({
       where: {
         repositoryId: data.repository.id.toString(),
       },
     });
 
-    let organization = await this._prismaService.organization.findFirst({
+    const organization = await this._prismaService.organization.findFirst({
       where: {
         id: repository.organizationId,
       },
     });
 
-    let organizationAccount =
+    const organizationAccount =
       await this._prismaService.organizationAccounts.findFirst({
         where: {
           organizationId: organization.id,
@@ -81,11 +83,11 @@ export class WebhooksService {
         },
       });
 
-    let credentialPayload = {
+    const credentialPayload = {
       accountId: organizationAccount.accountId,
       // type: AccountCredentialsType.GITHUB_TOKEN,
     };
-    let remoteAccountCredentials =
+    const remoteAccountCredentials =
       await this._accountCredentialService.getAccountToken(credentialPayload);
 
     return {
@@ -96,28 +98,31 @@ export class WebhooksService {
 
   async syncPR(data: any) {
     try {
-      let isBaseBranchMatch = await this._prismaService.repository.findUnique({
-        where: {
-          repositoryId: data.repository.id.toString(),
-          baseBranch: data.pull_request.base.ref,
+      const isBaseBranchMatch = await this._prismaService.repository.findUnique(
+        {
+          where: {
+            repositoryId: data.repository.id.toString(),
+            baseBranch: data.pull_request.base.ref,
+          },
         },
-      });
+      );
       if (!isBaseBranchMatch) {
         return;
       }
 
-      let { decryptedToken } = await this._accountCredentialByRepository(data);
+      const { decryptedToken } =
+        await this._accountCredentialByRepository(data);
 
       // , accountGithubCredentials.decryptedToken
-      let prCommits = await fetchPrCommits(
+      const prCommits = await fetchPrCommits(
         data.pull_request.commits_url,
         decryptedToken,
       ); // we need to use Codedeno github token here.
-      let lastPrCommit = prCommits[prCommits.length - 1].sha;
+      const lastPrCommit = prCommits[prCommits.length - 1].sha;
       // // commitInfo()
 
       // // data.pull_request.patch_url
-      let prInfo = {
+      const prInfo = {
         id: data.repository.id.toString(),
         owner: data.repository.owner.login,
         prNumber: data.number,
@@ -126,26 +131,26 @@ export class WebhooksService {
         token: decryptedToken,
       };
 
-      let resp = await commitInfo({
+      const resp = await commitInfo({
         owner: prInfo.owner,
         repo: prInfo.repo,
         commitSha: lastPrCommit,
         token: decryptedToken,
       });
-      let fileChanges = parseGitHubPatchResponse(resp.files);
+      const fileChanges = parseGitHubPatchResponse(resp.files);
 
-      let pullRequest = await this._prismaService.pullRequest.findFirst({
+      const pullRequest = await this._prismaService.pullRequest.findFirst({
         where: { prUrl: data.pull_request.url },
       });
 
-      let currentComments = await this._prismaService.comment.findMany({
+      const currentComments = await this._prismaService.comment.findMany({
         where: {
           prId: pullRequest.id,
           file: { in: fileChanges.map((data) => data.file) },
         },
       });
 
-      let currentChangesMap = {};
+      const currentChangesMap = {};
 
       currentComments.forEach((data) => {
         currentChangesMap[`${data.file}-${data.line}`] = data;
@@ -170,7 +175,7 @@ export class WebhooksService {
         ];
       });
 
-      let outdatedComments = [];
+      const outdatedComments = [];
       changes.forEach((data) => {
         if (currentChangesMap[`${data.fileName}-${data.lineNumber}`]?.id) {
           outdatedComments.push(
@@ -181,21 +186,21 @@ export class WebhooksService {
 
       this._commentService.updateComments(outdatedComments);
 
-      let deepSeekWrapper = new DeepSeek();
-      let AiResponse = await deepSeekWrapper.analyzeCodeFilesForIssues(
+      const deepSeekWrapper = new DeepSeek();
+      const AiResponse = await deepSeekWrapper.analyzeCodeFilesForIssues(
         changes.filter((data) => data.type === 'addition'),
       );
 
       // lastCommit should need to send.
-      let commentsMapping = AiResponse.codeIssues.map((data) =>
+      const commentsMapping = AiResponse.codeIssues.map((data) =>
         commentPr(data, prInfo),
       );
 
       // await this._pullRequestService.registerPullRequest(pullRequestPayload);
       prInfo['prId'] = pullRequest.id;
 
-      let createCommentsMapping = AiResponse.codeIssues.map((data) => {
-        let payload = {
+      const createCommentsMapping = AiResponse.codeIssues.map((data) => {
+        const payload = {
           repositoryId: prInfo.id,
           prId: pullRequest.id,
           content: data.content,
@@ -213,6 +218,25 @@ export class WebhooksService {
       await Promise.allSettled(commentsMapping);
       await Promise.allSettled(createCommentsMapping);
 
+      // Log PR evaluation usage for billing
+      try {
+        // Find the repository to get its ID and organization ID
+        const repository = await this._prismaService.repository.findUnique({
+          where: { repositoryId: data.repository.id.toString() },
+        });
+
+        if (repository) {
+          await this._billingService.createUsageLog({
+            organizationId: repository.organizationId,
+            repositoryId: repository.id,
+            type: 'PR_ANALYSIS',
+            description: `PR Analysis: #${data.number} in ${data.repository.name}`,
+          });
+        }
+      } catch (logError) {
+        console.error('Error logging PR analysis usage:', logError);
+      }
+
       return changes;
     } catch (error) {
       // console.log(error.message);
@@ -222,12 +246,14 @@ export class WebhooksService {
 
   async syncBitbucketPR(data: any) {
     try {
-      let isBaseBranchMatch = await this._prismaService.repository.findUnique({
-        where: {
-          repositoryId: data.repository.uuid,
-          baseBranch: data.pullrequest.destination.branch.name,
+      const isBaseBranchMatch = await this._prismaService.repository.findUnique(
+        {
+          where: {
+            repositoryId: data.repository.uuid,
+            baseBranch: data.pullrequest.destination.branch.name,
+          },
         },
-      });
+      );
       if (!isBaseBranchMatch) {
         return;
       }
@@ -240,19 +266,20 @@ export class WebhooksService {
         },
       };
 
-      let { decryptedToken } = await this._accountCredentialByRepository(data);
+      const { decryptedToken } =
+        await this._accountCredentialByRepository(data);
 
       // , accountGithubCredentials.decryptedToken
-      let prCommits = await fetchBitbucketPrCommits({
+      const prCommits = await fetchBitbucketPrCommits({
         token: decryptedToken,
         workspace: data.repository.workspace.slug,
         repoSlug: data.repository.name,
         prNumber: data.pullrequest.id,
       });
 
-      let lastPrCommit = prCommits[prCommits.length - 1];
+      const lastPrCommit = prCommits[prCommits.length - 1];
 
-      let prInfo = {
+      const prInfo = {
         id: data.repository.uuid,
         owner: data.actor.display_name,
         prNumber: data.pullrequest.id,
@@ -277,18 +304,18 @@ export class WebhooksService {
         patch: diffChanges.map((commit) => commit.patch),
       };
 
-      let pullRequest = await this._prismaService.pullRequest.findFirst({
+      const pullRequest = await this._prismaService.pullRequest.findFirst({
         where: { prUrl: data.pullrequest.links.html.href },
       });
 
-      let currentComments = await this._prismaService.comment.findMany({
+      const currentComments = await this._prismaService.comment.findMany({
         where: {
           prId: pullRequest.id,
           file: { in: diffChanges.files.map((data) => data) },
         },
       });
 
-      let currentChangesMap = {};
+      const currentChangesMap = {};
 
       currentComments.forEach((data) => {
         currentChangesMap[`${data.file}-${data.line}`] = data;
@@ -309,7 +336,7 @@ export class WebhooksService {
         ];
       });
 
-      let outdatedComments = [];
+      const outdatedComments = [];
       changes.forEach((data) => {
         if (currentChangesMap[`${data.fileName}-${data.lineNumber}`]?.id) {
           outdatedComments.push(
@@ -320,11 +347,12 @@ export class WebhooksService {
 
       this._commentService.updateComments(outdatedComments);
 
-      let deepSeekWrapper = new DeepSeek();
+      const deepSeekWrapper = new DeepSeek();
       // TODO need to use flags from DB
-      let AiResponse = await deepSeekWrapper.analyzeCodeFilesForIssues(changes);
+      const AiResponse =
+        await deepSeekWrapper.analyzeCodeFilesForIssues(changes);
 
-      let commentsMapping = AiResponse.codeIssues.map((issue) =>
+      const commentsMapping = AiResponse.codeIssues.map((issue) =>
         commentBitbucketPr({
           token: prInfo.token,
           commentUrl: data.pullrequest.links.comments.href,
@@ -342,8 +370,8 @@ export class WebhooksService {
 
       prInfo['prId'] = pullRequest.id;
 
-      let createCommentsMapping = AiResponse.codeIssues.map((data) => {
-        let payload = {
+      const createCommentsMapping = AiResponse.codeIssues.map((data) => {
+        const payload = {
           repositoryId: prInfo.id,
           prId: pullRequest.id,
           content: data.content,
@@ -361,6 +389,24 @@ export class WebhooksService {
       await Promise.allSettled(commentsMapping);
       await Promise.allSettled(createCommentsMapping);
 
+      // Log PR evaluation usage for billing
+      try {
+        const repository = await this._prismaService.repository.findUnique({
+          where: { repositoryId: data.repository.uuid },
+        });
+
+        if (repository) {
+          await this._billingService.createUsageLog({
+            organizationId: repository.organizationId,
+            repositoryId: repository.id,
+            type: 'PR_ANALYSIS',
+            description: `PR Analysis: #${data.pullrequest.id} in ${data.repository.name}`,
+          });
+        }
+      } catch (logError) {
+        console.error('Error logging PR analysis usage:', logError);
+      }
+
       return changes;
     } catch (error) {
       // console.log(error.message);
@@ -370,35 +416,38 @@ export class WebhooksService {
 
   async managePRs(data: any) {
     try {
-      let isBaseBranchMatch = await this._prismaService.repository.findUnique({
-        where: {
-          repositoryId: data.repository.id.toString(),
-          baseBranch: data.pull_request.base.ref,
+      const isBaseBranchMatch = await this._prismaService.repository.findUnique(
+        {
+          where: {
+            repositoryId: data.repository.id.toString(),
+            baseBranch: data.pull_request.base.ref,
+          },
         },
-      });
+      );
       if (!isBaseBranchMatch) {
         // console.log('base branch not found');
         return;
       }
 
-      let prTrackerPayload = {
+      const prTrackerPayload = {
         prId: `${data.repository.name}-${data.number}-${data.action}`,
         status: PrTrackerStatus.PENDING,
         response: data,
       };
 
-      let { success } = await this._prTrackerService.trackPr(prTrackerPayload);
+      const { success } =
+        await this._prTrackerService.trackPr(prTrackerPayload);
       if (!success) return;
-      let { decryptedToken, accountId } =
+      const { decryptedToken, accountId } =
         await this._accountCredentialByRepository(data);
-      let prCommits = await fetchPrCommits(
+      const prCommits = await fetchPrCommits(
         data.pull_request.commits_url,
         decryptedToken,
       );
 
-      let lastPrCommit = prCommits[prCommits.length - 1].sha;
+      const lastPrCommit = prCommits[prCommits.length - 1].sha;
 
-      let prInfo = {
+      const prInfo = {
         id: data.repository.id.toString(),
         owner: data.repository.owner.login,
         prNumber: data.number,
@@ -411,14 +460,14 @@ export class WebhooksService {
         action: data.action,
       };
 
-      let repository = await this._repositoryService.getRepository(
+      const repository = await this._repositoryService.getRepository(
         {
           repositoryId: data.repository.id.toString(),
         },
         {},
       );
 
-      let pullRequestPayload = {
+      const pullRequestPayload = {
         repositoryId: repository.repositoryId,
         prUrl: data.pull_request.url,
         prNumber: data.number,
@@ -428,7 +477,7 @@ export class WebhooksService {
         base: data.pull_request.base.ref,
       };
 
-      let pullRequest =
+      const pullRequest =
         await this._pullRequestService.registerPullRequest(pullRequestPayload);
       prInfo['prId'] = pullRequest.id;
       prInfo['head'] = data.pull_request.head.ref;
@@ -441,24 +490,27 @@ export class WebhooksService {
 
   async bitbucketCreateRequest(data: any) {
     try {
-      let isBaseBranchMatch = await this._prismaService.repository.findUnique({
-        where: {
-          repositoryId: data.repository.uuid,
-          baseBranch: data.pullrequest.destination.branch.name,
+      const isBaseBranchMatch = await this._prismaService.repository.findUnique(
+        {
+          where: {
+            repositoryId: data.repository.uuid,
+            baseBranch: data.pullrequest.destination.branch.name,
+          },
         },
-      });
+      );
       if (!isBaseBranchMatch) {
         console.log('base branch not found');
         return;
       }
 
-      let prTrackerPayload = {
+      const prTrackerPayload = {
         prId: `${data.repository.name}-${data.pullrequest.id}-${data.event}`,
         status: PrTrackerStatus.PENDING,
         response: data,
       };
 
-      let { success } = await this._prTrackerService.trackPr(prTrackerPayload);
+      const { success } =
+        await this._prTrackerService.trackPr(prTrackerPayload);
       if (!success) return;
       data = {
         ...data,
@@ -468,20 +520,20 @@ export class WebhooksService {
         },
       };
 
-      let { decryptedToken, accountId } =
+      const { decryptedToken, accountId } =
         await this._accountCredentialByRepository(data);
 
       // need to hit bitbucket api
-      let prCommits = await fetchBitbucketPrCommits({
+      const prCommits = await fetchBitbucketPrCommits({
         token: decryptedToken,
         workspace: data.repository.workspace.slug,
         repoSlug: data.repository.name,
         prNumber: data.pullrequest.id,
       });
 
-      let lastPrCommit = prCommits[prCommits.length - 1].hash;
+      const lastPrCommit = prCommits[prCommits.length - 1].hash;
 
-      let prInfo = {
+      const prInfo = {
         id: data.repository.id.toString(),
         owner: data.actor.display_name,
         prNumber: data.pullrequest.id,
@@ -495,14 +547,14 @@ export class WebhooksService {
         action: data.event,
       };
 
-      let repository = await this._repositoryService.getRepository(
+      const repository = await this._repositoryService.getRepository(
         {
           repositoryId: data.repository.id.toString(),
         },
         {},
       );
 
-      let pullRequestPayload = {
+      const pullRequestPayload = {
         repositoryId: repository.repositoryId,
         prUrl: data.pullrequest.links.html.href,
         prNumber: data.pullrequest.id,
@@ -512,7 +564,7 @@ export class WebhooksService {
         base: data.pullrequest.destination.branch.name,
       };
 
-      let pullRequest =
+      const pullRequest =
         await this._pullRequestService.registerPullRequest(pullRequestPayload);
       prInfo['prId'] = pullRequest.id;
       prInfo['head'] = data.pullrequest.source.branch.name;
@@ -526,37 +578,40 @@ export class WebhooksService {
 
   async generatePrReport(data?: any) {
     try {
-      let isBaseBranchMatch = await this._prismaService.repository.findUnique({
-        where: {
-          repositoryId: data.repository.id.toString(),
-          baseBranch: data.pull_request.base.ref,
+      const isBaseBranchMatch = await this._prismaService.repository.findUnique(
+        {
+          where: {
+            repositoryId: data.repository.id.toString(),
+            baseBranch: data.pull_request.base.ref,
+          },
         },
-      });
+      );
       if (!isBaseBranchMatch) {
         return;
       }
 
-      let prTrackerPayload = {
+      const prTrackerPayload = {
         prId: `${data.repository.name}-${data.number}-${data.action}`,
         status: PrTrackerStatus.PENDING,
         response: data,
       };
 
-      let { success } = await this._prTrackerService.trackPr(prTrackerPayload);
+      const { success } =
+        await this._prTrackerService.trackPr(prTrackerPayload);
       if (!success) return;
 
-      let { decryptedToken, accountId } =
+      const { decryptedToken, accountId } =
         await this._accountCredentialByRepository(data);
 
-      let prCommits = await fetchPrCommits(
+      const prCommits = await fetchPrCommits(
         data.pull_request.commits_url,
         decryptedToken,
       );
       // let prCommits = await fetchPrCommits(
       //   'https://api.github.com/repos/mudassir693/mini-microservices-blog-app/pulls/22/commits',
       // );
-      let lastPrCommit = prCommits[prCommits.length - 1].sha;
-      let prInfo = {
+      const lastPrCommit = prCommits[prCommits.length - 1].sha;
+      const prInfo = {
         owner: data.repository.owner.login,
         prNumber: data.number,
         repo: data.repository.name,
@@ -571,8 +626,8 @@ export class WebhooksService {
       //   // lastCommit: lastPrCommit,
       // };
       // fetch PR files
-      let fileChanges = await fetchPrFiles(prInfo, false);
-      let { modified, added } = this._countChanges(fileChanges);
+      const fileChanges = await fetchPrFiles(prInfo, false);
+      const { modified, added } = this._countChanges(fileChanges);
 
       // remove setup or unnecessary files.
       let filteredFiles = filterFiles(fileChanges);
@@ -581,27 +636,27 @@ export class WebhooksService {
         filename: data.filename,
         patch: data.patch,
       }));
-      let deepSeekAgent = new DeepSeek();
-      let complexityAndDuplication =
+      const deepSeekAgent = new DeepSeek();
+      const complexityAndDuplication =
         await deepSeekAgent.analyzeCodeComplexityAndDuplication(filteredFiles);
 
-      let mapPrCommit = prCommits.map((data) =>
+      const mapPrCommit = prCommits.map((data) =>
         commitInfo({ ...prInfo, commitSha: data.sha }),
       );
 
-      let commits = await Promise.all(mapPrCommit);
+      const commits = await Promise.all(mapPrCommit);
 
-      let codeChurn = await this._analyzeHotSpotsAndCodeChurn(commits);
-      let contributorsAndCodeOwnership =
+      const codeChurn = await this._analyzeHotSpotsAndCodeChurn(commits);
+      const contributorsAndCodeOwnership =
         await this._analyzeContributorsAndCodeOwnership(commits);
 
-      let repository = await this._repositoryService.getRepository(
+      const repository = await this._repositoryService.getRepository(
         {
           repositoryId: data.repository.id.toString(),
         },
         {},
       );
-      let executiveReportPayload = {
+      const executiveReportPayload = {
         repositoryId: repository.repositoryId,
         prNumber: data.number,
         summary: {
@@ -612,11 +667,12 @@ export class WebhooksService {
           contributorsAndCodeOwnership,
         },
       };
-      let { report } = await this._executiveReportService.createExecutiveReport(
-        executiveReportPayload,
-      );
+      const { report } =
+        await this._executiveReportService.createExecutiveReport(
+          executiveReportPayload,
+        );
 
-      let commitSummaryMapping = commits.map((commit, index) =>
+      const commitSummaryMapping = commits.map((commit, index) =>
         this._commitSummaryService.createCommitSummary(
           commit,
           data.repository.id.toString(),
@@ -624,7 +680,7 @@ export class WebhooksService {
         ),
       );
 
-      let payload = {
+      const payload = {
         accountId: prInfo.accountId,
         authorName: prInfo.owner,
         reportId: report.id,
@@ -633,9 +689,9 @@ export class WebhooksService {
         },
       };
 
-      let response = await deepSeekAgent.processCodeFiles(filteredFiles);
+      const response = await deepSeekAgent.processCodeFiles(filteredFiles);
       // TODO: Code Overview
-      let createCodeOverviewPayload = {
+      const createCodeOverviewPayload = {
         summary: response,
         repositoryId: repository.repositoryId,
         reportId: report.id,
@@ -648,6 +704,19 @@ export class WebhooksService {
         `${data.repository.name}-${data.number}-${data.action}`,
         PrTrackerStatus.APPROVED,
       );
+
+      // Log PR evaluation usage for billing
+      try {
+        await this._billingService.createUsageLog({
+          organizationId: isBaseBranchMatch.organizationId,
+          repositoryId: isBaseBranchMatch.id,
+          type: 'PR_ANALYSIS',
+          description: `PR Report: #${data.number} in ${data.repository.name}`,
+        });
+      } catch (logError) {
+        console.error('Error logging PR report usage:', logError);
+      }
+
       return {
         modified,
         added,
@@ -676,41 +745,44 @@ export class WebhooksService {
 
   async generateBitbucketPrReport(data?: any) {
     try {
-      let isBaseBranchMatch = await this._prismaService.repository.findUnique({
-        where: {
-          repositoryId: data.repository.uuid,
-          baseBranch: data.pullrequest.destination.branch.name,
+      const isBaseBranchMatch = await this._prismaService.repository.findUnique(
+        {
+          where: {
+            repositoryId: data.repository.uuid,
+            baseBranch: data.pullrequest.destination.branch.name,
+          },
         },
-      });
+      );
       if (!isBaseBranchMatch) {
         return;
       }
 
-      let prTrackerPayload = {
+      const prTrackerPayload = {
         prId: `${data.repository.name}-${data.pullrequest.id}-${data.event}`,
         status: PrTrackerStatus.PENDING,
         response: data,
       };
 
-      let { success } = await this._prTrackerService.trackPr(prTrackerPayload);
+      const { success } =
+        await this._prTrackerService.trackPr(prTrackerPayload);
       if (!success) return;
 
-      let { decryptedToken, accountId } =
+      const { decryptedToken, accountId } =
         await this._accountCredentialByRepository({
           ...data,
           repository: { ...data.repository, id: data.repository.uuid },
         });
 
-      let prCommits = await fetchBitbucketPrCommits({
+      const prCommits = await fetchBitbucketPrCommits({
         token: decryptedToken,
         workspace: data.repository.workspace.slug,
         repoSlug: data.repository.name,
         prNumber: data.pullrequest.id,
       });
 
-      let lastPrCommit = prCommits[prCommits.length - 1].hash;
+      const lastPrCommit = prCommits[prCommits.length - 1].hash;
 
-      let prInfo = {
+      const prInfo = {
         owner: data.actor.display_name,
         prNumber: data.repository.id,
         repo: data.repository.name,
@@ -720,12 +792,12 @@ export class WebhooksService {
         links: data.pullrequest.links,
       };
 
-      let fileChanges = await fetchBitbucketPrPatch({
+      const fileChanges = await fetchBitbucketPrPatch({
         token: decryptedToken,
         diffUrl: prInfo.links.diff.href,
       }); // after this I want to check each file patch
 
-      let { modified, added } = this._countChanges(fileChanges);
+      const { modified, added } = this._countChanges(fileChanges);
 
       // remove setup or unnecessary files.
       let filteredFiles = filterFiles(fileChanges);
@@ -734,13 +806,13 @@ export class WebhooksService {
         filename: data.filename,
         patch: data.changes.map((data) => data.lines.join()),
       }));
-      let deepSeekAgent = new DeepSeek();
+      const deepSeekAgent = new DeepSeek();
 
       // let complexityAndDuplication = {};
-      let complexityAndDuplication =
+      const complexityAndDuplication =
         await deepSeekAgent.analyzeCodeComplexityAndDuplication(filteredFiles);
 
-      let mapPrCommit = prCommits.map((data, i) => {
+      const mapPrCommit = prCommits.map((data, i) => {
         // console.log('mapPrCommit: ', i + ' ' + JSON.stringify(data, null, 2));
         return commitInfoBitbucket({
           token: decryptedToken,
@@ -761,13 +833,13 @@ export class WebhooksService {
           patch: data.map((commit) => commit.patch),
         };
       });
-      let codeChurn = {};
+      const codeChurn = {};
       // let codeChurn = await this._analyzeHotSpotsAndCodeChurn(commits);
-      let contributorsAndCodeOwnership =
+      const contributorsAndCodeOwnership =
         await this._analyzeContributorsAndCodeOwnership(commits);
       // console.log('Commits;;;', contributorsAndCodeOwnership);
 
-      let repository = await this._repositoryService.getRepository(
+      const repository = await this._repositoryService.getRepository(
         {
           repositoryId: data.repository.uuid.toString(),
         },
@@ -775,7 +847,7 @@ export class WebhooksService {
       );
       // console.log('WOW;;;', repository);
 
-      let executiveReportPayload = {
+      const executiveReportPayload = {
         repositoryId: repository.repositoryId,
         prNumber: data.pullrequest.id,
         summary: {
@@ -786,14 +858,15 @@ export class WebhooksService {
           contributorsAndCodeOwnership,
         },
       };
-      let { report } = await this._executiveReportService.createExecutiveReport(
-        executiveReportPayload,
-      );
+      const { report } =
+        await this._executiveReportService.createExecutiveReport(
+          executiveReportPayload,
+        );
 
       // TODO contibue from here
 
-      let commitSummaryMapping = commits.map((commit, index) => {
-        let stats = extractChangesFromPatch(commit.patch[0]);
+      const commitSummaryMapping = commits.map((commit, index) => {
+        const stats = extractChangesFromPatch(commit.patch[0]);
         return this._commitSummaryService.createCommitSummary(
           {
             ...commit,
@@ -810,7 +883,7 @@ export class WebhooksService {
         );
       });
 
-      let payload = {
+      const payload = {
         accountId: prInfo.accountId,
         authorName: prInfo.owner,
         reportId: report.id,
@@ -819,9 +892,9 @@ export class WebhooksService {
         },
       };
 
-      let response = await deepSeekAgent.processCodeFiles(filteredFiles);
+      const response = await deepSeekAgent.processCodeFiles(filteredFiles);
       // TODO: Code Overview
-      let createCodeOverviewPayload = {
+      const createCodeOverviewPayload = {
         summary: response,
         repositoryId: repository.repositoryId,
         reportId: report.id,
@@ -834,6 +907,19 @@ export class WebhooksService {
         `${data.repository.name}-${data.pullrequest.id}-${data.event}`,
         PrTrackerStatus.APPROVED,
       );
+
+      // Log PR evaluation usage for billing
+      try {
+        await this._billingService.createUsageLog({
+          organizationId: isBaseBranchMatch.organizationId,
+          repositoryId: isBaseBranchMatch.id,
+          type: 'PR_ANALYSIS',
+          description: `PR Report: #${data.pullrequest.id} in ${data.repository.name}`,
+        });
+      } catch (logError) {
+        console.error('Error logging PR report usage:', logError);
+      }
+
       return {
         modified,
         added,
@@ -1004,13 +1090,13 @@ export class WebhooksService {
         diffUrl: prInfo.links.diffstat.href,
       });
 
-      let filePatch = await fetchBitbucketPrPatch({
+      const filePatch = await fetchBitbucketPrPatch({
         token: prInfo.token,
         diffUrl: prInfo.links.diff.href,
       });
 
       files = files.filter((file) => shouldAnalyze(file.fileName));
-      let filesContent = [];
+      const filesContent = [];
 
       files.forEach((data) => {
         const lines = data.content.split('\n');
@@ -1020,26 +1106,26 @@ export class WebhooksService {
         filesContent.push({ file: data.fileName, content: withLineNumbers });
       });
 
-      let { duplicateIdenticalCodeIssue, duplicateCodes, identicalCodes } =
+      const { duplicateIdenticalCodeIssue, duplicateCodes, identicalCodes } =
         await this.detectDuplicateAndIdenticalCode(filePatch);
 
-      let PrPatches = changesMapping(filePatch);
+      const PrPatches = changesMapping(filePatch);
 
-      let { repositorySettings } =
+      const { repositorySettings } =
         await this._prismaService.repository.findFirst({
           where: { id: prInfo.repositoryId },
           include: {
             repositorySettings: true,
           },
         });
-      let deepSeekWrapper = new DeepSeek();
+      const deepSeekWrapper = new DeepSeek();
 
       let allIssues = duplicateIdenticalCodeIssue;
 
-      let allSummaries = [];
+      const allSummaries = [];
       // let prompt = transformPrompts(repositorySettings);
       for (let i = 0; i < filesContent.length; i++) {
-        let changes = filesContent[i];
+        const changes = filesContent[i];
         const AiResponse = await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(
           changes,
           repositorySettings,
@@ -1056,9 +1142,9 @@ export class WebhooksService {
 
       const combinedSummary = allSummaries;
 
-      let filteredIssues = filterHighPriorityComments(allIssues);
+      const filteredIssues = filterHighPriorityComments(allIssues);
 
-      let commentsMapping = filteredIssues.map((data) =>
+      const commentsMapping = filteredIssues.map((data) =>
         commentBitbucketPr({
           token: prInfo.token,
           commentUrl: prInfo.links.comments.href,
@@ -1074,11 +1160,11 @@ export class WebhooksService {
         }),
       );
 
-      let comments = await Promise.allSettled(commentsMapping);
-      let createCommentsMapping = filteredIssues
+      const comments = await Promise.allSettled(commentsMapping);
+      const createCommentsMapping = filteredIssues
         .map((data, index) => {
           // @ts-ignore
-          let payload = {
+          const payload = {
             repositoryId: prInfo.id,
             prId: prInfo.prId,
             content: data.content,
@@ -1098,7 +1184,7 @@ export class WebhooksService {
         })
         .filter((comment) => comment !== undefined);
 
-      let analyzeCombineSummary =
+      const analyzeCombineSummary =
         await deepSeekWrapper.analyzeCombineSummary(combinedSummary);
 
       await this._pullRequestService.updatePullRequest(prInfo.prId, {
@@ -1116,7 +1202,7 @@ export class WebhooksService {
       await Promise.allSettled(createCommentsMapping);
       // TODO: email
 
-      let payload = {
+      const payload = {
         accountId: prInfo.accountId,
         authorName: prInfo.owner,
         repositoryInfo: {
@@ -1130,6 +1216,19 @@ export class WebhooksService {
         `${prInfo.repo}-${prInfo.prNumber}-${prInfo.action}`,
         PrTrackerStatus.APPROVED,
       );
+
+      // Log PR evaluation usage for billing
+      try {
+        await this._billingService.createUsageLog({
+          organizationId: prInfo.organizationId,
+          repositoryId: prInfo.repositoryId,
+          type: 'PR_ANALYSIS',
+          description: `PR Analysis: #${prInfo.prNumber} in ${prInfo.repo}`,
+        });
+      } catch (logError) {
+        console.error('Error logging PR analysis usage:', logError);
+      }
+
       return {
         // fileChanges,
         AiResponse: {
@@ -1149,10 +1248,10 @@ export class WebhooksService {
 
   async diffFunctionality3(prInfo: any) {
     try {
-      let fileChanges = await fetchPrFiles(prInfo);
-      let filePaths = await fileChanges.map((data) => data.file);
+      const fileChanges = await fetchPrFiles(prInfo);
+      const filePaths = await fileChanges.map((data) => data.file);
 
-      let fileMapping = filePaths.map((data) => fetchFiles(prInfo, data));
+      const fileMapping = filePaths.map((data) => fetchFiles(prInfo, data));
       let files = await Promise.all(fileMapping);
       files = files
         .filter((data) => data)
@@ -1162,7 +1261,7 @@ export class WebhooksService {
         }));
 
       files = files.filter((file) => shouldAnalyze(file.fileName));
-      let filesContent = [];
+      const filesContent = [];
 
       files.forEach((data) => {
         const lines = data.content.split('\n');
@@ -1172,23 +1271,23 @@ export class WebhooksService {
         filesContent.push({ file: data.fileName, content: withLineNumbers });
       });
       // return;
-      let { duplicateIdenticalCodeIssue, duplicateCodes } =
+      const { duplicateIdenticalCodeIssue, duplicateCodes } =
         await this.detectDuplicateAndIdenticalCode(fileChanges);
 
-      let { repositorySettings } =
+      const { repositorySettings } =
         await this._prismaService.repository.findFirst({
           where: { id: prInfo.repositoryId },
           include: {
             repositorySettings: true,
           },
         });
-      let deepSeekWrapper = new DeepSeek();
+      const deepSeekWrapper = new DeepSeek();
 
       let allIssues = duplicateIdenticalCodeIssue;
-      let allSummaries = [];
+      const allSummaries = [];
       // let prompt = transformPrompts(repositorySettings);
       for (let i = 0; i < filesContent.length; i++) {
-        let changes = filesContent[i];
+        const changes = filesContent[i];
         const AiResponse = await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(
           changes,
           repositorySettings,
@@ -1207,15 +1306,15 @@ export class WebhooksService {
       const combinedSummary = allSummaries;
 
       // Step 4: Create comments and update PR
-      let commentsMapping = allIssues.map((data) => commentPr(data, prInfo));
+      const commentsMapping = allIssues.map((data) => commentPr(data, prInfo));
 
-      let comments = await Promise.allSettled(commentsMapping);
-      let createCommentsMapping = allIssues
+      const comments = await Promise.allSettled(commentsMapping);
+      const createCommentsMapping = allIssues
         .map((data, index) => {
           // Check if it's a PR comment by checking the 'isPrIssue' flag
           // @ts-ignore
           if (comments[index].value.isPrIssue) {
-            let payload = {
+            const payload = {
               repositoryId: prInfo.id,
               prId: prInfo.prId,
               content: data.content,
@@ -1237,7 +1336,7 @@ export class WebhooksService {
         })
         .filter((comment) => comment !== undefined);
 
-      let analyzeCombineSummary =
+      const analyzeCombineSummary =
         await deepSeekWrapper.analyzeCombineSummary(combinedSummary);
 
       await this._pullRequestService.updatePullRequest(prInfo.prId, {
@@ -1257,7 +1356,7 @@ export class WebhooksService {
       );
       // TODO: email
 
-      let payload = {
+      const payload = {
         accountId: prInfo.accountId,
         authorName: prInfo.owner,
         repositoryInfo: {
@@ -1271,6 +1370,19 @@ export class WebhooksService {
         `${prInfo.repo}-${prInfo.prNumber}-${prInfo.action}`,
         PrTrackerStatus.APPROVED,
       );
+
+      // Log PR evaluation usage for billing
+      try {
+        await this._billingService.createUsageLog({
+          organizationId: prInfo.organizationId,
+          repositoryId: prInfo.repositoryId,
+          type: 'PR_ANALYSIS',
+          description: `PR Analysis: #${prInfo.prNumber} in ${prInfo.repo}`,
+        });
+      } catch (logError) {
+        console.error('Error logging PR analysis usage:', logError);
+      }
+
       return {
         fileChanges,
         AiResponse: {
@@ -1290,7 +1402,7 @@ export class WebhooksService {
 
   async detectDuplicateAndIdenticalCode(fileChanges: any) {
     try {
-      let deepSeekWrapper = new DeepSeek();
+      const deepSeekWrapper = new DeepSeek();
       const tokenizer = require('gpt-3-encoder'); // Tokenizer library
 
       // Helper function to calculate token count for a block of changes
@@ -1298,12 +1410,12 @@ export class WebhooksService {
         return tokenizer.encode(JSON.stringify(block)).length;
       };
 
-      let chunks = [];
+      const chunks = [];
       let currentChunk = [];
       let currentTokenCount = 0;
 
       for (const file of fileChanges) {
-        let fileBlock = [];
+        const fileBlock = [];
 
         for (const change of file.changes.filter(
           (c) => c.type === 'addition',
@@ -1353,9 +1465,9 @@ export class WebhooksService {
       }
 
       // Analyze each chunk with DeepSeek
-      let duplicateCodes = [];
-      let identicalCodes = [];
-      let allIssues = [];
+      const duplicateCodes = [];
+      const identicalCodes = [];
+      const allIssues = [];
 
       for (const chunk of chunks) {
         const AiResponse = await deepSeekWrapper.analyzeDuplicateIdenticalCode(
@@ -1410,17 +1522,19 @@ export class WebhooksService {
     repositoryInfo: { repositoryName: string; repositoryId: string };
   }) {
     try {
-      let orgAdmins = await this._prismaService.organizationAccounts.findMany({
-        where: {
-          organizationId: data.organizationId,
-          role: { not: 'MEMBER' },
+      const orgAdmins = await this._prismaService.organizationAccounts.findMany(
+        {
+          where: {
+            organizationId: data.organizationId,
+            role: { not: 'MEMBER' },
+          },
+          include: {
+            account: true,
+          },
         },
-        include: {
-          account: true,
-        },
-      });
-      let organizationAdminsAccount = orgAdmins.map((data) => data.accountId);
-      let accounts = await this._prismaService.account.findMany({
+      );
+      const organizationAdminsAccount = orgAdmins.map((data) => data.accountId);
+      const accounts = await this._prismaService.account.findMany({
         where: {
           id: { in: organizationAdminsAccount },
         },
@@ -1429,10 +1543,10 @@ export class WebhooksService {
         },
       });
 
-      let emailMapping = accounts
+      const emailMapping = accounts
         .filter((account) => account.user.sendEmail)
         .map((account) => {
-          let payload = {
+          const payload = {
             email: account.user.email,
             adminName: account.user.firstName,
             repositoryName: data.repositoryInfo.repositoryName,
@@ -1459,7 +1573,7 @@ export class WebhooksService {
     repositoryInfo: { repositoryName: string };
   }) {
     try {
-      let organizationalAccount =
+      const organizationalAccount =
         await this._prismaService.organizationAccounts.findFirst({
           where: {
             role: 'ADMIN',
@@ -1469,17 +1583,19 @@ export class WebhooksService {
       if (!organizationalAccount) {
         throw new Error('Account not found');
       }
-      let orgAdmins = await this._prismaService.organizationAccounts.findMany({
-        where: {
-          organizationId: organizationalAccount.organizationId,
-          role: { not: 'MEMBER' },
+      const orgAdmins = await this._prismaService.organizationAccounts.findMany(
+        {
+          where: {
+            organizationId: organizationalAccount.organizationId,
+            role: { not: 'MEMBER' },
+          },
+          include: {
+            account: true,
+          },
         },
-        include: {
-          account: true,
-        },
-      });
-      let organizationAdminsAccount = orgAdmins.map((data) => data.accountId);
-      let accounts = await this._prismaService.account.findMany({
+      );
+      const organizationAdminsAccount = orgAdmins.map((data) => data.accountId);
+      const accounts = await this._prismaService.account.findMany({
         where: {
           id: { in: organizationAdminsAccount },
         },
@@ -1488,10 +1604,10 @@ export class WebhooksService {
         },
       });
 
-      let emailMapping = accounts
+      const emailMapping = accounts
         .filter((account) => account.user.sendEmail)
         .map((account) => {
-          let payload = {
+          const payload = {
             email: account.user.email,
             adminName: account.user.firstName,
             repositoryName: data.repositoryInfo.repositoryName,
@@ -1507,5 +1623,11 @@ export class WebhooksService {
     } catch (error) {
       console.error(error.message);
     }
+  }
+
+  async getRepositoryById(repositoryId: string) {
+    return this._prismaService.repository.findUnique({
+      where: { repositoryId },
+    });
   }
 }

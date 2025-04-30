@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { MailService } from 'src/mail/mail.service';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { BillingService } from '../billing/billing.service';
 import {
   CreateOrganizationRequestDto,
   InviteUserToOrganizationRequestDTO,
@@ -15,6 +16,7 @@ export class OrganizationService {
   constructor(
     private _prismaService: PrismaService,
     private _mailService: MailService,
+    private _billingService: BillingService,
   ) {}
 
   async createOrganization(
@@ -22,26 +24,44 @@ export class OrganizationService {
     accountId: string,
   ) {
     try {
-      let { organizationExist } = await this.organizationExist(accountId);
+      const { organizationExist } = await this.organizationExist(accountId);
       if (organizationExist) {
         throw new BadRequestException('Organization already exists');
       }
+
+      let createdOrganization;
+
       await this._prismaService.$transaction(async () => {
-        let organization = await this._prismaService.organization.create({
+        // Create the organization
+        createdOrganization = await this._prismaService.organization.create({
           data: data,
         });
 
+        // Create the organization-account relationship
         await this._prismaService.organizationAccounts.create({
           data: {
             accountId: accountId,
-            organizationId: organization.id,
+            organizationId: createdOrganization.id,
             role: 'ADMIN',
           },
         });
       });
 
+      // Create a 15-day trial subscription for the new organization
+      if (createdOrganization) {
+        try {
+          await this._billingService.createTrialSubscription(
+            createdOrganization.id,
+          );
+        } catch (subError) {
+          console.error('Error creating trial subscription:', subError);
+          // Don't throw error here - organization was created successfully
+        }
+      }
+
       return {
         Success: true,
+        organizationId: createdOrganization?.id,
       };
     } catch (error) {
       console.log(error);
@@ -54,19 +74,19 @@ export class OrganizationService {
     accountId: string,
   ) {
     try {
-      let organization = await this._prismaService.organization.findUnique({
+      const organization = await this._prismaService.organization.findUnique({
         where: { id: data.organizationId },
       });
       if (!organization) throw new NotFoundException('Organization not found');
 
-      let account = await this._prismaService.account.findUnique({
+      const account = await this._prismaService.account.findUnique({
         where: { id: accountId },
         include: { user: true },
       });
       if (!account) throw new NotFoundException('Account not found');
 
-      let invitationPayloads = data.users.map((user) => {
-        let payload = {
+      const invitationPayloads = data.users.map((user) => {
+        const payload = {
           organizationId: data.organizationId,
           role: user.role,
           email: user.email,
@@ -86,8 +106,8 @@ export class OrganizationService {
       }
 
       // send email with invitation link
-      let sendEmailMapping = data.users.map((user) => {
-        let payload = {
+      const sendEmailMapping = data.users.map((user) => {
+        const payload = {
           organizationId: data.organizationId,
           role: user.role,
           email: user.email,
@@ -118,7 +138,7 @@ export class OrganizationService {
 
   async getOrganizationInvitations(organizationId: string, accountId: string) {
     try {
-      let isValidAccount =
+      const isValidAccount =
         await this._prismaService.organizationAccounts.findFirst({
           where: {
             organizationId: organizationId,
@@ -126,7 +146,7 @@ export class OrganizationService {
           },
         });
       if (!isValidAccount) throw new NotFoundException('Invalid account');
-      let invitations =
+      const invitations =
         await this._prismaService.organizationInvitation.findMany({
           where: {
             organizationId: organizationId,
@@ -145,7 +165,7 @@ export class OrganizationService {
 
   async organizationExist(accountId: string) {
     try {
-      let organization =
+      const organization =
         await this._prismaService.organizationAccounts.findFirst({
           where: { accountId: accountId },
         });
@@ -168,7 +188,7 @@ export class OrganizationService {
 
   async organizationInfo(organizationId: string) {
     try {
-      let organizationAccount =
+      const organizationAccount =
         await this._prismaService.organizationAccounts.findFirst({
           where: {
             role: 'ADMIN',
@@ -180,7 +200,7 @@ export class OrganizationService {
           },
         });
 
-      let accountUser = await this._prismaService.account.findFirst({
+      const accountUser = await this._prismaService.account.findFirst({
         where: {
           id: organizationAccount.accountId,
         },
@@ -198,7 +218,7 @@ export class OrganizationService {
 
   async acceptInvitation(organizationId: string, accountId: string) {
     try {
-      let account = await this._prismaService.account.findUnique({
+      const account = await this._prismaService.account.findUnique({
         where: { id: accountId },
         include: { user: true },
       });
@@ -207,7 +227,7 @@ export class OrganizationService {
         throw new NotFoundException('Account not found');
       }
 
-      let organizationAccount =
+      const organizationAccount =
         await this._prismaService.organizationAccounts.findFirst({
           where: {
             role: 'ADMIN',
@@ -225,7 +245,7 @@ export class OrganizationService {
         throw new BadRequestException('You are already an admin');
       }
 
-      let memberAccount =
+      const memberAccount =
         await this._prismaService.organizationAccounts.findFirst({
           where: {
             accountId: accountId,
@@ -239,7 +259,7 @@ export class OrganizationService {
         );
       }
 
-      let invitation =
+      const invitation =
         await this._prismaService.organizationInvitation.findFirst({
           where: {
             organizationId: organizationId,

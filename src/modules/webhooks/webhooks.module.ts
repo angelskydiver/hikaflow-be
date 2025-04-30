@@ -1,6 +1,7 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { PrismaModule } from 'src/prisma/prisma.module';
 import { AccountCredentialModule } from '../accountCredentials/accountCredentials.module';
+import { BillingModule } from '../billing/billing.module';
 import { CodeOverviewModule } from '../codeOverview/codeOverview.module';
 import { CommentModule } from '../comment/comment.module';
 import { CommitSummaryModule } from '../commitSummary/commitSummary.module';
@@ -21,6 +22,7 @@ import { WebhooksService } from './webhooks.service';
     AccountCredentialModule,
     CodeOverviewModule,
     CommitSummaryModule,
+    BillingModule,
     forwardRef(() => PrTrackerModule),
   ],
   providers: [WebhooksService],

@@ -6,10 +6,12 @@ import { PassportModule } from '@nestjs/passport';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { BillingCronService } from './cron/billing.cron';
 import { PrTrackerCronService } from './cron/prTracker.cron';
 import { MailModule } from './mail/mail.module';
 import { AccountModule } from './modules/account/account.module';
 import { AccountCredentialModule } from './modules/accountCredentials/accountCredentials.module';
+import { BillingModule } from './modules/billing/billing.module';
 import { CodeOverviewModule } from './modules/codeOverview/codeOverview.module';
 import { CommentModule } from './modules/comment/comment.module';
 import { CommitSummaryModule } from './modules/commitSummary/commitSummary.module';
@@ -61,6 +63,7 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
     PrTrackerModule,
     CommitSummaryModule,
     RepositoryScanModule,
+    BillingModule,
   ],
   controllers: [AppController],
   providers: [
@@ -68,6 +71,7 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
     LocalStrategy,
     JwtStrategy,
     PrTrackerCronService,
+    BillingCronService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
   ],
 })

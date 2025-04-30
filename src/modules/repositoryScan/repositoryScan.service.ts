@@ -24,6 +24,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { repositoryScanQueue } from 'src/queue/repository.scan.queue';
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
+import { BillingService } from '../billing/billing.service';
 import { CommentService } from '../comment/comment.service';
 
 @Injectable()
@@ -32,6 +33,7 @@ export class RepositoryScanService {
     private readonly prisma: PrismaService,
     private readonly _commentService: CommentService,
     private readonly accountCredentialService: AccountCredentialService,
+    private readonly _billingService: BillingService,
   ) {}
 
   /**
@@ -236,7 +238,7 @@ export class RepositoryScanService {
       codeIssues = (
         await deepseekAI.deepAnalyzeCodeFilesForIssuesReliability(codeIssues)
       )?.codeIssues;
-      let allowedIssues = {};
+      const allowedIssues = {};
 
       repository.repositorySettings.forEach((element) => {
         allowedIssues[element.key] = 1;
@@ -254,10 +256,10 @@ export class RepositoryScanService {
         console.log(filteredIssues);
       }
 
-      let createCommentsMapping = filteredIssues
+      const createCommentsMapping = filteredIssues
         .map((data, index) => {
           // @ts-ignore
-          let payload = {
+          const payload = {
             repositoryId: repository.repositoryId,
             content: data.content,
             line: parseInt(data.line),
@@ -286,9 +288,9 @@ export class RepositoryScanService {
 
   async fetchFileStructure(repositoryId: string, accountId: string) {
     try {
-      let { decryptedToken, payload, accountType } =
+      const { decryptedToken, payload, accountType } =
         await this.accountCredentialService.getAccountToken({ accountId });
-      let scan = await this.prisma.repositoryScan.findFirst({
+      const scan = await this.prisma.repositoryScan.findFirst({
         where: {
           repositoryId,
         },
@@ -298,7 +300,7 @@ export class RepositoryScanService {
       });
       if (!scan) return [];
 
-      let fetchRepositoryStructuredPayload = {
+      const fetchRepositoryStructuredPayload = {
         owner: scan.repository.owner,
         repo: scan.repository.name,
         branch: scan.repository.baseBranch,
@@ -324,7 +326,7 @@ export class RepositoryScanService {
 
   async fetchFileSummary(data: { repositoryId: string; path: string }) {
     try {
-      let scan = await this.prisma.repositoryScan.findFirst({
+      const scan = await this.prisma.repositoryScan.findFirst({
         where: {
           repositoryId: data.repositoryId,
         },
@@ -337,7 +339,7 @@ export class RepositoryScanService {
         },
       });
 
-      let fetchFileContentPayload = {
+      const fetchFileContentPayload = {
         repositoryScanId: scan.id,
         repositoryId: scan.repositoryId,
         fullPath: data.path,
@@ -347,7 +349,7 @@ export class RepositoryScanService {
         // fullPath: `https://raw.githubusercontent.com/${scan.repository.owner}/${scan.repository.name}/${scan.repository.baseBranch}/${data.path}`,
       };
 
-      let contentSummary = await this.prisma.fileDocumentation.findFirst({
+      const contentSummary = await this.prisma.fileDocumentation.findFirst({
         where: fetchFileContentPayload,
       });
 
@@ -360,7 +362,7 @@ export class RepositoryScanService {
 
   async fetchScanStatus(repositoryId: string) {
     try {
-      let scan = await this.prisma.repositoryScan.findFirst({
+      const scan = await this.prisma.repositoryScan.findFirst({
         where: {
           repositoryId,
         },
@@ -368,6 +370,9 @@ export class RepositoryScanService {
           repository: true,
         },
       });
+
+      if (!scan)
+        return { status: 'NOT_FOUND', totalFiles: 0, totalFilesScanned: 0 };
 
       const totalFiles = await this.prisma.fileDocumentation.count({
         where: {
@@ -446,6 +451,24 @@ export class RepositoryScanService {
     accountId: string,
   ) {
     try {
+      // Get the organization ID for the repository
+      const repositoryBasic = await this.prisma.repository.findUnique({
+        where: { id: repositoryId },
+        select: { organizationId: true },
+      });
+
+      if (!repositoryBasic || !repositoryBasic.organizationId) {
+        throw new NotFoundException('Repository or organization not found');
+      }
+
+      // Check if this trial account can ask more questions today
+      const canAskResult = await this._billingService.canAskQuestion(
+        repositoryBasic.organizationId,
+      );
+      if (!canAskResult.canAsk) {
+        throw new BadRequestException(canAskResult.reason);
+      }
+
       const repository = await this.prisma.repository.findUnique({
         where: { id: repositoryId },
         include: {
@@ -465,7 +488,7 @@ export class RepositoryScanService {
       const accountCredentials =
         await this.accountCredentialService.getAccountToken({ accountId });
 
-      let repositoryScan = await this.prisma.repositoryScan.findFirst({
+      const repositoryScan = await this.prisma.repositoryScan.findFirst({
         where: {
           repositoryId: repositoryId,
         },
@@ -474,7 +497,7 @@ export class RepositoryScanService {
         },
       });
 
-      let repositoryScanId = repositoryScan.id;
+      const repositoryScanId = repositoryScan.id;
 
       const documentedFile = await this.prisma.fileDocumentation.findMany({
         where: {
@@ -494,7 +517,7 @@ export class RepositoryScanService {
         repositoryScanId,
       );
 
-      let usedTags = uniqueTags.map((data) => data.tag).join(', ');
+      const usedTags = uniqueTags.map((data) => data.tag).join(', ');
 
       const gemini = new Gemini();
 
@@ -543,14 +566,14 @@ export class RepositoryScanService {
 
         if (tagBasedFiles.length > 0) {
           // Process files based on tags
-          let fileQuickInfo = tagBasedFiles.map((data) => ({
+          const fileQuickInfo = tagBasedFiles.map((data) => ({
             fileName: data.name,
             filePath: data.fullPath,
             fileSummary: data.summary,
             fileTags: data.fileType,
           }));
 
-          let filteredFiles = await gemini.filterRelevantFiles(
+          const filteredFiles = await gemini.filterRelevantFiles(
             query,
             fileQuickInfo,
           );
@@ -597,13 +620,16 @@ export class RepositoryScanService {
             });
           } else {
             sourceCodeMapping = tagBasedFiles.map((data) => {
-              let payload = {
+              const payload = {
                 workspace: accountCredentials.payload.workspace.replace(
                   ' ',
                   '-',
                 ),
-                repo: repository.name.replace(' ', '-'),
-                branch: repository.baseBranch.replace(' ', '-'),
+                repo: documentedFile[0].repository.name.replace(' ', '-'),
+                branch: documentedFile[0].repository.baseBranch.replace(
+                  ' ',
+                  '-',
+                ),
                 token: accountCredentials.decryptedToken,
               };
               return axios.get(
@@ -630,7 +656,7 @@ export class RepositoryScanService {
               filesWithCode,
             );
 
-            let assistedQuestionPayload = {
+            const assistedQuestionPayload = {
               question: query,
               answer: {
                 response:
@@ -651,9 +677,22 @@ export class RepositoryScanService {
               accountId,
             };
 
-            let assistedQuestions = await this.prisma.assistedQuestions.create({
-              data: assistedQuestionPayload,
-            });
+            const assistedQuestions =
+              await this.prisma.assistedQuestions.create({
+                data: assistedQuestionPayload,
+              });
+
+            // After creating the assistedQuestions record, log the usage
+            try {
+              await this._billingService.createUsageLog({
+                organizationId: repository.organizationId,
+                repositoryId,
+                type: 'ASSISTANT_QUESTION',
+                description: `Question: ${query.substring(0, 50)}${query.length > 50 ? '...' : ''}`,
+              });
+            } catch (logError) {
+              console.error('Error logging question usage:', logError);
+            }
 
             return {
               id: assistedQuestions.id,
@@ -699,7 +738,7 @@ export class RepositoryScanService {
           LIMIT 15;
         `;
 
-        let fileQuickInfo = result.map((data) => ({
+        const fileQuickInfo = result.map((data) => ({
           ...data,
           fileName: data.fileName,
           filePath: data.filepath,
@@ -708,7 +747,7 @@ export class RepositoryScanService {
 
         // TODO: need to work here
 
-        let filteredFiles = await gemini.filterRelevantFiles(
+        const filteredFiles = await gemini.filterRelevantFiles(
           query,
           fileQuickInfo,
         );
@@ -734,10 +773,10 @@ export class RepositoryScanService {
           });
         } else {
           sourceCodeMapping = result.map((data) => {
-            let payload = {
+            const payload = {
               workspace: accountCredentials.payload.workspace.replace(' ', '-'),
-              repo: repository.name.replace(' ', '-'),
-              branch: repository.baseBranch.replace(' ', '-'),
+              repo: documentedFile[0].repository.name.replace(' ', '-'),
+              branch: documentedFile[0].repository.baseBranch.replace(' ', '-'),
               token: accountCredentials.decryptedToken,
             };
             return axios.get(
@@ -751,15 +790,15 @@ export class RepositoryScanService {
           });
         }
 
-        let sourceCodeResponses = await Promise.all(sourceCodeMapping);
+        const sourceCodeResponses = await Promise.all(sourceCodeMapping);
         result = sourceCodeResponses.map((res, index) => ({
           ...result[index],
           sourceCode: res.data,
         }));
 
-        let queryResponse = await gemini.generateAnswer(query, result);
+        const queryResponse = await gemini.generateAnswer(query, result);
 
-        let assistedQuestionPayload = {
+        const assistedQuestionPayload = {
           question: query,
           answer: {
             response:
@@ -779,7 +818,7 @@ export class RepositoryScanService {
           accountId,
         };
 
-        let assistedQuestions = await this.prisma.assistedQuestions.create({
+        const assistedQuestions = await this.prisma.assistedQuestions.create({
           data: assistedQuestionPayload,
         });
         return {
@@ -807,7 +846,7 @@ export class RepositoryScanService {
             },
           },
         });
-        let fileQuickInfo = result.map((data) => ({
+        const fileQuickInfo = result.map((data) => ({
           fileName: data.name,
           filePath: data.fullPath,
           fileSummary: data.summary,
@@ -816,7 +855,7 @@ export class RepositoryScanService {
 
         // TODO: need to work here
 
-        let filteredFiles = await gemini.filterRelevantFiles(
+        const filteredFiles = await gemini.filterRelevantFiles(
           query,
           fileQuickInfo,
         );
@@ -842,10 +881,10 @@ export class RepositoryScanService {
           });
         } else {
           sourceCodeMapping = result.map((data) => {
-            let payload = {
+            const payload = {
               workspace: accountCredentials.payload.workspace.replace(' ', '-'),
-              repo: repository.name.replace(' ', '-'),
-              branch: repository.baseBranch.replace(' ', '-'),
+              repo: documentedFile[0].repository.name.replace(' ', '-'),
+              branch: documentedFile[0].repository.baseBranch.replace(' ', '-'),
               token: accountCredentials.decryptedToken,
             };
             return axios.get(
@@ -859,7 +898,7 @@ export class RepositoryScanService {
           });
         }
 
-        let sourceCodeResponses = await Promise.all(sourceCodeMapping);
+        const sourceCodeResponses = await Promise.all(sourceCodeMapping);
         result = sourceCodeResponses.map((res, index) => ({
           ...result[index],
           sourceCode: res.data,
@@ -871,13 +910,13 @@ export class RepositoryScanService {
           sourceCode: data.sourceCode,
         }));
 
-        let queryResponse = await gemini.generateAnswer(query, result);
+        const queryResponse = await gemini.generateAnswer(query, result);
         // console.log(
         //   'queryResponse: ',
         //   JSON.stringify(queryResponse.output.response, null, 2),
         // );
 
-        let assistedQuestionPayload = {
+        const assistedQuestionPayload = {
           question: query,
           answer: {
             response:
@@ -897,9 +936,21 @@ export class RepositoryScanService {
           accountId,
         };
 
-        let assistedQuestions = await this.prisma.assistedQuestions.create({
+        const assistedQuestions = await this.prisma.assistedQuestions.create({
           data: assistedQuestionPayload,
         });
+
+        // After creating the assistedQuestions record, log the usage
+        try {
+          await this._billingService.createUsageLog({
+            organizationId: repository.organizationId,
+            repositoryId,
+            type: 'ASSISTANT_QUESTION',
+            description: `Question: ${query.substring(0, 50)}${query.length > 50 ? '...' : ''}`,
+          });
+        } catch (logError) {
+          console.error('Error logging question usage:', logError);
+        }
 
         return {
           id: assistedQuestions.id,
@@ -922,7 +973,7 @@ export class RepositoryScanService {
 
   async fetchedSavedQuestions(repositoryId: string) {
     try {
-      let repository = await this.prisma.repository.findUnique({
+      const repository = await this.prisma.repository.findUnique({
         where: {
           id: repositoryId,
         },
@@ -930,7 +981,7 @@ export class RepositoryScanService {
 
       if (!repository) throw new BadRequestException();
 
-      let questions = await this.prisma.assistedQuestions.findMany({
+      const questions = await this.prisma.assistedQuestions.findMany({
         where: {
           repositoryId,
           // saved: true,
@@ -955,7 +1006,7 @@ export class RepositoryScanService {
 
   async markQuestionSaved(questionId: string) {
     try {
-      let question = await this.prisma.assistedQuestions.findUnique({
+      const question = await this.prisma.assistedQuestions.findUnique({
         where: {
           id: questionId,
         },

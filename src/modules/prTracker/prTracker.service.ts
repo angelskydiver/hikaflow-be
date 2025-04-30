@@ -14,7 +14,7 @@ export class PrTrackerService {
 
   async trackPr(data: RegisterTrackerRequestDto) {
     try {
-      let prTracker = await this._prismaService.prTracker.findMany({
+      const prTracker = await this._prismaService.prTracker.findMany({
         where: { prId: data.prId },
       });
       if (prTracker.length + 1 > 3) {
@@ -39,7 +39,7 @@ export class PrTrackerService {
 
   async updatePrInfo(prId: string, status: PrTrackerStatus) {
     try {
-      let tracker = await this._prismaService.prTracker.findFirst({
+      const tracker = await this._prismaService.prTracker.findFirst({
         where: { prId },
         orderBy: {
           createdAt: 'desc',
@@ -60,7 +60,7 @@ export class PrTrackerService {
 
   async trackPrs() {
     try {
-      let prs = await this._prismaService.prTracker.findMany({
+      const prs = await this._prismaService.prTracker.findMany({
         where: {
           status: PrTrackerStatus.REJECTED,
           try: { lt: 3 },
@@ -69,7 +69,7 @@ export class PrTrackerService {
       });
       if (!prs.length) return;
       console.log('Total Number of in complete PRs: ', prs.length);
-      let prMapping = prs.map((body) => {
+      const prMapping = prs.map((body) => {
         // @ts-ignore
         if (body.response?.action == 'opened') {
           return this._webhooksService.managePRs(body.response);
