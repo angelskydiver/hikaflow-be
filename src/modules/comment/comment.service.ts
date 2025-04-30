@@ -16,7 +16,7 @@ export class CommentService {
   async registerDuplicateCode(data: RegisterDuplicateCodeRequestDto[]) {
     try {
       console.log('data: ', JSON.stringify(data, null, 2));
-      let dataMapping = data.map((duplicateCode) =>
+      const dataMapping = data.map((duplicateCode) =>
         this._prismaService.duplicatedCode.create({ data: duplicateCode }),
       );
       await Promise.all(dataMapping);
@@ -31,10 +31,10 @@ export class CommentService {
     data: GetCommentRequestDto,
   ) {
     try {
-      let whereParams = {
+      const whereParams = {
         repositoryId: data.repositoryId,
       };
-      let accountRepository =
+      const accountRepository =
         await this._prismaService.accountRepository.findFirst({
           where: whereParams,
           include: {
@@ -43,7 +43,7 @@ export class CommentService {
         });
       if (!accountRepository)
         throw new BadRequestException('Repository not found');
-      let repositoryGithubId = accountRepository.repository.repositoryId;
+      const repositoryGithubId = accountRepository.repository.repositoryId;
       let pullRequests = null;
       if (data.prId) {
         pullRequests = await this._prismaService.pullRequest.findFirst({
@@ -53,7 +53,7 @@ export class CommentService {
           },
         });
       }
-      let comments = await this._prismaService.duplicatedCode.findMany({
+      const comments = await this._prismaService.duplicatedCode.findMany({
         where: {
           repositoryId: accountRepository.repository.id,
           ...(data.prId && { prId: data.prId }),
@@ -63,7 +63,7 @@ export class CommentService {
         orderBy: { createdAt: 'desc' },
       });
 
-      let commentCount = await this._prismaService.duplicatedCode.count({
+      const commentCount = await this._prismaService.duplicatedCode.count({
         where: {
           repositoryId: accountRepository.repository.id,
           ...(data.prId && { prId: data.prId }),
@@ -93,17 +93,17 @@ export class CommentService {
 
   async fetchRepositoryComments(accountId: string, data: GetCommentRequestDto) {
     try {
-      let whereParams = {
+      const whereParams = {
         repositoryId: data.repositoryId,
       };
-      let repository = await this._prismaService.accountRepository.findFirst({
+      const repository = await this._prismaService.accountRepository.findFirst({
         where: whereParams,
         include: {
           repository: true,
         },
       });
       if (!repository) throw new BadRequestException('Repository not found');
-      let repositoryGithubId = repository.repository.repositoryId;
+      const repositoryGithubId = repository.repository.repositoryId;
       let pullRequests = null;
       if (data.prId) {
         pullRequests = await this._prismaService.pullRequest.findFirst({
@@ -113,7 +113,7 @@ export class CommentService {
           },
         });
       }
-      let comments = await this._prismaService.comment.findMany({
+      const comments = await this._prismaService.comment.findMany({
         where: {
           repositoryId: repositoryGithubId,
           ...(data.prId && { prId: pullRequests.id }),
@@ -129,7 +129,7 @@ export class CommentService {
         orderBy: { createdAt: 'desc' },
       });
 
-      let commentCount = await this._prismaService.comment.count({
+      const commentCount = await this._prismaService.comment.count({
         where: {
           repositoryId: repositoryGithubId,
           ...(data.prId && { prId: pullRequests.id }),

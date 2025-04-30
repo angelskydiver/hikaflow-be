@@ -51,7 +51,7 @@ export class UserController {
   @UseGuards(LocalAuthGuard)
   @Post('login')
   async Login(@Body() data: LoginRequestDto, @Request() req: any) {
-    let user = await this._userService.login(req.user);
+    const user = await this._userService.login(req.user);
     return user;
   }
 

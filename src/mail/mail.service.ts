@@ -154,7 +154,7 @@ export class MailService {
     signupLink: string;
     role: string;
   }) {
-    let { email, userName, organizationName, inviterName, signupLink, role } =
+    const { email, userName, organizationName, inviterName, signupLink, role } =
       data;
     try {
       await this.mailerService.sendMail({

@@ -9,7 +9,7 @@ export class CommitSummaryService {
 
   async createCommitSummary(data, repositoryId: string, reportId: string) {
     try {
-      let deepSeek = new DeepSeek();
+      const deepSeek = new DeepSeek();
 
       let filesPatch = {};
       if (!data.files[0].filename) {
@@ -17,7 +17,7 @@ export class CommitSummaryService {
       }
 
       // TODO need to do proper testing with github
-      let summary = await deepSeek.analyzeCommitSummary(
+      const summary = await deepSeek.analyzeCommitSummary(
         data.files.map((file, index) => {
           if (file.filename)
             return { fileName: file.filename, patch: file.patch };
@@ -25,7 +25,7 @@ export class CommitSummaryService {
           return { fileName: file, patch: filesPatch[file] };
         }),
       );
-      let payload = {
+      const payload = {
         commitId: data.sha,
         committer: data.author.login,
         additions: data.stats.additions,
@@ -37,7 +37,7 @@ export class CommitSummaryService {
         summary: summary,
       };
       console.log(data);
-      let commitSummary = await this._prismaService.commitSummary.create({
+      const commitSummary = await this._prismaService.commitSummary.create({
         //   @ts-ignore
         data: { ...payload },
       });

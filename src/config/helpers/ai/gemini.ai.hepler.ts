@@ -127,7 +127,7 @@ ${input}
 END OF QUESTION
 `;
 
-      let resp = await model.generateContent([prompt]);
+      const resp = await model.generateContent([prompt]);
 
       return {
         output: resp,

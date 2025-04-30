@@ -48,18 +48,18 @@ export class PullRequestService {
 
   async recentPullRequests(accountId: string, payload: GetPullRequestDto) {
     try {
-      let repositoryIdToTitleMap = {};
+      const repositoryIdToTitleMap = {};
       let accountRepositories;
       let repositoryIds;
 
-      let accountOrganization =
+      const accountOrganization =
         await this._prismaService.organizationAccounts.findMany({
           where: {
             accountId: accountId,
           },
         });
 
-      let organizationIds = accountOrganization.map(
+      const organizationIds = accountOrganization.map(
         (data) => data.organizationId,
       );
 
@@ -87,7 +87,7 @@ export class PullRequestService {
           accountRepositories[0].repository.name;
       }
 
-      let pullRequests: any = await this._prismaService.pullRequest.findMany({
+      const pullRequests: any = await this._prismaService.pullRequest.findMany({
         where: {
           repositoryId: { in: repositoryIds },
           summary: { not: '' },
@@ -100,7 +100,7 @@ export class PullRequestService {
         }),
       });
 
-      let commentsCount = await Promise.all(
+      const commentsCount = await Promise.all(
         pullRequests.map((pr) =>
           this._prismaService.comment.count({
             where: {
@@ -110,13 +110,13 @@ export class PullRequestService {
         ),
       );
 
-      let prReportMapping = pullRequests.map((data) =>
+      const prReportMapping = pullRequests.map((data) =>
         this._prismaService.executiveReport.findFirst({
           where: { prNumber: data.prNumber, repositoryId: data.repositoryId },
         }),
       );
 
-      let prReport = await Promise.all(prReportMapping);
+      const prReport = await Promise.all(prReportMapping);
 
       pullRequests.forEach((pullRequest, index) => {
         pullRequest.repositoryTitle =
@@ -125,7 +125,7 @@ export class PullRequestService {
         pullRequest.report = prReport[index];
       });
 
-      let prCount = await this._prismaService.pullRequest.count({
+      const prCount = await this._prismaService.pullRequest.count({
         where: {
           repositoryId: { in: repositoryIds },
           summary: { not: '' },
@@ -140,33 +140,33 @@ export class PullRequestService {
 
   async pullRequestCommits(id: string, prNumber: number, accountId: string) {
     try {
-      let repository = await this._prismaService.repository.findUnique({
+      const repository = await this._prismaService.repository.findUnique({
         where: { id: id },
       });
 
-      let organizationAccount =
+      const organizationAccount =
         await this._prismaService.organizationAccounts.findFirst({
           where: { role: 'ADMIN', organizationId: repository.organizationId },
           include: { account: true },
         });
-      let accountId = organizationAccount.accountId;
-      let credentialPayload = {
+      const accountId = organizationAccount.accountId;
+      const credentialPayload = {
         accountId,
         type: AccountCredentialsType.GITHUB_TOKEN,
       };
 
-      let { decryptedToken, accountType, payload } =
+      const { decryptedToken, accountType, payload } =
         await this._accountCredentialService.getAccountToken(credentialPayload);
 
       if (accountType == AccountCredentialsType.BITBUCKET_TOKEN) {
-        let prCommits = await fetchBitbucketPrCommits({
+        const prCommits = await fetchBitbucketPrCommits({
           token: decryptedToken,
           workspace: payload.workspace,
           repoSlug: repository.name,
           prNumber: prNumber,
         });
 
-        let diffChangesMapping = prCommits.map((commit) => {
+        const diffChangesMapping = prCommits.map((commit) => {
           return commitInfoBitbucket(
             {
               token: decryptedToken,
@@ -178,7 +178,7 @@ export class PullRequestService {
         let diffChanges = await Promise.all(diffChangesMapping);
 
         diffChanges = diffChanges.map((patch, i) => {
-          let { fileChanges, totalAdditions, totalDeletions } =
+          const { fileChanges, totalAdditions, totalDeletions } =
             parseGitDiff(patch);
           return {
             sha: prCommits[i].hash,
@@ -196,9 +196,9 @@ export class PullRequestService {
         return diffChanges.reverse();
       }
 
-      let prUrl = `https://api.github.com/repos/${repository.owner}/${repository.name}/pulls/${prNumber}/commits`;
-      let prCommits = await fetchPrCommits(prUrl, decryptedToken);
-      let prCommitDetailsMapping = prCommits.map((data) =>
+      const prUrl = `https://api.github.com/repos/${repository.owner}/${repository.name}/pulls/${prNumber}/commits`;
+      const prCommits = await fetchPrCommits(prUrl, decryptedToken);
+      const prCommitDetailsMapping = prCommits.map((data) =>
         commitInfo({
           owner: repository.owner,
           repo: repository.name,
@@ -206,7 +206,7 @@ export class PullRequestService {
           token: decryptedToken,
         }),
       );
-      let prCommitDetails = await Promise.all(prCommitDetailsMapping);
+      const prCommitDetails = await Promise.all(prCommitDetailsMapping);
       return prCommitDetails.map((data) => {
         return {
           sha: data.sha,

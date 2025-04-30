@@ -27,8 +27,8 @@ export class UserService {
   // Register a new user
   async createUser(data: CreateUserRequestDto): Promise<User> {
     try {
-      let { firstName, lastName, email, password } = data;
-      let IsUserExist = await this._prismaService.user.count({
+      const { firstName, lastName, email, password } = data;
+      const IsUserExist = await this._prismaService.user.count({
         where: { email },
       });
       if (IsUserExist > 0) {
@@ -36,7 +36,7 @@ export class UserService {
       }
 
       const hashedPassword = await hashPassword(password); // Hash the password
-      let User = await this._prismaService.user.create({
+      const User = await this._prismaService.user.create({
         data: {
           firstName,
           lastName,
@@ -60,27 +60,31 @@ export class UserService {
     // let Account: Account = await this._prismaService.account.findUnique({
     //   where: { userId: User.id },
     // });
-    let accountCreds = await this._prismaService.accountCredentials.findFirst({
-      where: { accountId: User?.account?.id },
-    });
+    const accountCreds = await this._prismaService.accountCredentials.findFirst(
+      {
+        where: { accountId: User?.account?.id },
+      },
+    );
     User.account['gitConnected'] = Boolean(accountCreds);
     const payload = {
       accountId: User?.account?.id,
       userId: User.id,
       verified: User?.account?.verified,
     };
-    let isInvited = await this._prismaService.organizationInvitation.findFirst({
-      where: {
-        email: User.email,
-      },
-    });
+    const isInvited =
+      await this._prismaService.organizationInvitation.findFirst({
+        where: {
+          email: User.email,
+        },
+      });
 
-    let isOrgMember = await this._prismaService.organizationAccounts.findFirst({
-      where: {
-        accountId: User?.account?.id,
-        role: { not: 'ADMIN' },
-      },
-    });
+    const isOrgMember =
+      await this._prismaService.organizationAccounts.findFirst({
+        where: {
+          accountId: User?.account?.id,
+          role: { not: 'ADMIN' },
+        },
+      });
 
     return {
       user: User,
@@ -99,7 +103,7 @@ export class UserService {
     email: string;
     plainPassword: string;
   }): Promise<User> {
-    let { email, plainPassword } = data;
+    const { email, plainPassword } = data;
     const User = await this._prismaService.user.findUnique({
       where: { email },
       include: { account: true },
@@ -135,7 +139,7 @@ export class UserService {
 
   async verificationCode(data: VerificationRequestDto) {
     try {
-      let user = await this._prismaService.user.findUnique({
+      const user = await this._prismaService.user.findUnique({
         where: { email: data.email },
         include: { account: true },
       });
@@ -143,10 +147,10 @@ export class UserService {
         throw new BadRequestException('User not found');
       }
       // send code to the user
-      let { code } = await this._verificationCodeService.createCode(
+      const { code } = await this._verificationCodeService.createCode(
         user.account.id,
       );
-      let payload = {
+      const payload = {
         email: user.email,
         name: user.firstName,
         otp: code,
@@ -163,11 +167,11 @@ export class UserService {
 
   async verifyEmail(data: VerifyEmailRequestDto) {
     try {
-      let user = await this._prismaService.user.findUnique({
+      const user = await this._prismaService.user.findUnique({
         where: { email: data.email },
         include: { account: true },
       });
-      let isCodeVerified = await this._verificationCodeService.validateCode(
+      const isCodeVerified = await this._verificationCodeService.validateCode(
         user.account.id,
         data.code,
       );
@@ -190,7 +194,7 @@ export class UserService {
         verified: true,
       };
 
-      let isInvited =
+      const isInvited =
         await this._prismaService.organizationInvitation.findFirst({
           where: {
             email: user.email,
@@ -215,7 +219,7 @@ export class UserService {
 
   async setNewPassword(data: VerifyPasswordRequestDto) {
     try {
-      let user = await this._prismaService.user.findUnique({
+      const user = await this._prismaService.user.findUnique({
         where: { email: data.email },
         include: { account: true },
       });

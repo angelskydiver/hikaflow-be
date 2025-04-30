@@ -1,6 +1,8 @@
+import { ConfigService } from '@nestjs/config';
 import { ScanStatus } from '@prisma/client';
 import { Worker } from 'bullmq';
 import { AccountCredentialService } from 'src/modules/accountCredentials/accountCredentials.service';
+import { BillingService } from 'src/modules/billing/billing.service';
 import { CommentService } from 'src/modules/comment/comment.service';
 import { RepositoryScanService } from 'src/modules/repositoryScan/repositoryScan.service';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -9,11 +11,13 @@ import { PrismaService } from 'src/prisma/prisma.service';
 const prisma = new PrismaService();
 const accountCredentialService = new AccountCredentialService(prisma);
 const commentService = new CommentService(prisma);
+const billingService = new BillingService(prisma, new ConfigService());
 
 const repositoryScanService = new RepositoryScanService(
   prisma,
   commentService,
   accountCredentialService,
+  billingService,
 );
 
 // Function to process jobs

@@ -36,7 +36,7 @@ export class VerificationCodeService {
           where: { accountId: accountId },
         });
 
-      let verificationCode = verificationCodes[verificationCodes.length - 1];
+      const verificationCode = verificationCodes[verificationCodes.length - 1];
 
       // If no code exists for this account, throw an error
       if (!verificationCode) {

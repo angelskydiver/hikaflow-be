@@ -57,8 +57,8 @@ export const fetchBitbucketRepositories = async (data: {
   token: string;
 }) => {
   try {
-    let method = 'GET';
-    let resource = `/2.0/repositories/${data.workspace}?pagelen=100`;
+    const method = 'GET';
+    const resource = `/2.0/repositories/${data.workspace}?pagelen=100`;
     let allRepositories: any[] = [];
     let hasNextPage = true;
     let nextPageUrl = `https://api.bitbucket.org${resource}`; // Initial URL
@@ -174,8 +174,8 @@ export const fetchBitbucketPr = async (data: {
   prNumber: number;
 }) => {
   try {
-    let method = 'GET';
-    let resource = `/2.0/repositories/${data.workspace}/${data.repoSlug.replace(' ', '-')}/pullrequests/${data.prNumber}`; // Include /2.0 in the resource for QSH
+    const method = 'GET';
+    const resource = `/2.0/repositories/${data.workspace}/${data.repoSlug.replace(' ', '-')}/pullrequests/${data.prNumber}`; // Include /2.0 in the resource for QSH
     // let token = getAuthToken(data, method, resource);
     const response = await axios.get(`https://api.bitbucket.org${resource}`, {
       headers: {
@@ -489,8 +489,8 @@ function processDiff(rawDiff) {
 // }
 
 export function extractChangesFromPatch(rawDiff) {
-  let additions = [];
-  let deletions = [];
+  const additions = [];
+  const deletions = [];
   let additionCount = 0;
   let deletionCount = 0;
 

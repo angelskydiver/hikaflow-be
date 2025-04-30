@@ -84,6 +84,22 @@ enum ScanStatus {
   FAILED      @map("FAILED")
 }
 
+enum SubscriptionPlanType {
+  TRIAL    @map("TRIAL") // Free trial: 2 repos max, 5 questions daily, expires in 15 days
+  BASIC    @map("BASIC") // $20/project + 50 cents per evaluation
+  STANDARD @map("STANDARD") // $30/project + 25 cents per evaluation
+  PREMIUM  @map("PREMIUM") // $50/project + 10 cents per evaluation
+  CUSTOM   @map("CUSTOM") // Custom pricing
+}
+
+enum InvoiceStatus {
+  DRAFT    @map("DRAFT")
+  PENDING  @map("PENDING")
+  PAID     @map("PAID")
+  FAILED   @map("FAILED")
+  CANCELED @map("CANCELED")
+}
+
 model User {
   id        String        @id @default(uuid())
   firstName String
@@ -116,17 +132,24 @@ model Account {
   accountOrganization OrganizationAccounts[]
   scan                RepositoryScan[]
   AssistedQuestions   AssistedQuestions[]
+  // Researcher          Researcher[]
+  // ResearchAssistant   ResearchAssistant[]
 }
 
 model Organization {
-  id   String  @id @default(uuid())
-  name String  @unique
-  logo String? @default("")
+  id                     String  @id @default(uuid())
+  name                   String  @unique
+  logo                   String? @default("")
+  defaultPaymentMethodId String? @default("")
 
   organizationalAccount  OrganizationAccounts[] // Many-to-many relationship
   repositories           Repository[] // One-to-many relation with repositories
   AccountRepository      AccountRepository[] // Many-to-many relationship
   OrganizationInvitation OrganizationInvitation[]
+  subscriptions          Subscription[]
+  usageLogs              UsageLog[]
+  // Researcher             Researcher[]
+  // ResearchAssistant      ResearchAssistant[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -202,6 +225,8 @@ model Repository {
   file               FileDocumentation[]
   scan               RepositoryScan[]
   AssistedQuestions  AssistedQuestions[]
+  UsageLog           UsageLog[]
+  // Researcher         Researcher[]
 }
 
 model AccountRepository {
@@ -408,14 +433,15 @@ model RepositoryScan {
 }
 
 model AssistedQuestions {
-  id            String  @id @default(uuid())
-  question      String
-  answer        Json    @default("{}")
-  repositoryId  String
-  scanId        String
-  tokenUtilized Int     @default(0)
-  saved         Boolean @default(false)
-  accountId     String
+  id             String  @id @default(uuid())
+  question       String
+  answer         Json    @default("{}")
+  repositoryId   String
+  scanId         String
+  tokenUtilized  Int     @default(0)
+  saved          Boolean @default(false)
+  accountId      String
+  organizationId String?
 
   account    Account        @relation(fields: [accountId], references: [id])
   repository Repository     @relation(fields: [repositoryId], references: [id])
@@ -424,3 +450,118 @@ model AssistedQuestions {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model PricingPlan {
+  id              String               @id @default(uuid())
+  name            String
+  planType        SubscriptionPlanType
+  basePrice       Float // Base price per project
+  evaluationPrice Float // Price per evaluation
+  active          Boolean              @default(true)
+  stripeProductId String? // Stripe product ID
+  stripePriceId   String? // Stripe price ID
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id                   String       @id @default(uuid())
+  organizationId       String
+  organization         Organization @relation(fields: [organizationId], references: [id])
+  pricingPlanId        String
+  pricingPlan          PricingPlan  @relation(fields: [pricingPlanId], references: [id])
+  stripeCustomerId     String? // Keep as is, don't change to a relation yet
+  stripeSubscriptionId String? // Stripe subscription ID
+  startDate            DateTime     @default(now())
+  endDate              DateTime?
+  isActive             Boolean      @default(true)
+  customBasePrice      Float? // Only for custom plans
+  customEvalPrice      Float? // Only for custom plans
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  invoices  Invoice[]
+  usageLogs UsageLog[]
+}
+
+model Invoice {
+  id                    String        @id @default(uuid())
+  subscriptionId        String
+  subscription          Subscription  @relation(fields: [subscriptionId], references: [id])
+  invoiceNumber         String        @unique
+  amount                Float
+  tax                   Float         @default(0)
+  total                 Float
+  status                InvoiceStatus @default(DRAFT)
+  dueDate               DateTime
+  paidDate              DateTime?
+  stripeInvoiceId       String? // Stripe invoice ID
+  stripePaymentIntentId String? // Stripe payment intent ID
+  description           String?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  invoiceItems InvoiceItem[]
+}
+
+model InvoiceItem {
+  id          String   @id @default(uuid())
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
+  description String
+  quantity    Int
+  unitPrice   Float
+  amount      Float
+  type        String // PROJECT or EVALUATION
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model UsageLog {
+  id             String       @id @default(uuid())
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id])
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  repositoryId   String?
+  repository     Repository?  @relation(fields: [repositoryId], references: [id])
+  type           String // PR_ANALYSIS, ASSISTANT_QUESTION, etc.
+  description    String
+  counted        Boolean      @default(false) // Whether it's been counted in an invoice
+  invoiceId      String? // The invoice it was counted in
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// model Researcher {
+//   id                 String              @id @default(uuid())
+//   name               String
+//   email              String?
+//   accountId          String
+//   repositoryId       String
+//   organizationId     String
+//   researchAssistants ResearchAssistant[]
+//   createdAt          DateTime            @default(now())
+//   updatedAt          DateTime            @updatedAt
+
+//   account      Account      @relation(fields: [accountId], references: [id])
+//   repository   Repository   @relation(fields: [repositoryId], references: [id])
+//   organization Organization @relation(fields: [organizationId], references: [id])
+// }
+
+// model ResearchAssistant {
+//   id             String   @id @default(uuid())
+//   name           String
+//   description    String?
+//   accountId      String
+//   organizationId String
+//   researcherId   String
+//   createdAt      DateTime @default(now())
+//   updatedAt      DateTime @updatedAt
+
+//   account      Account      @relation(fields: [accountId], references: [id])
+//   organization Organization @relation(fields: [organizationId], references: [id])
+//   researcher   Researcher   @relation(fields: [researcherId], references: [id])
+// }

@@ -86,7 +86,7 @@ export class RepositoryController {
   @ApiBearerAuth()
   @Get('/settings/:repositoryId')
   async FetchRepositorySettings(@Param('repositoryId') repositoryId: string) {
-    let response =
+    const response =
       await this._repositoryService.fetchRepositorySettings(repositoryId);
     return response;
   }
