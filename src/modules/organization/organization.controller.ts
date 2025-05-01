@@ -1,9 +1,18 @@
-import { Body, Controller, Get, Param, Post, Request } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  Request,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Public } from 'src/decorators/public';
 import {
   CreateOrganizationRequestDto,
   InviteUserToOrganizationRequestDTO,
+  OrganizationInsightsQueryDto,
 } from './dto/organization.request.dto';
 import { OrganizationService } from './organization.service';
 
@@ -67,6 +76,23 @@ export class OrganizationController {
   ) {
     return await this._organizationService.inviteUserToOrganization(
       data,
+      req.user.accountId,
+    );
+  }
+
+  @ApiBearerAuth()
+  @Get('insights/:organizationId')
+  @ApiQuery({ name: 'repositoryId', required: false })
+  @ApiQuery({ name: 'daysLimit', required: false, type: Number })
+  @ApiQuery({ name: 'prLimit', required: false, type: Number })
+  async getOrganizationInsights(
+    @Param('organizationId') organizationId: string,
+    @Query() query: OrganizationInsightsQueryDto,
+    @Request() req: any,
+  ) {
+    return await this._organizationService.getOrganizationInsights(
+      organizationId,
+      query,
       req.user.accountId,
     );
   }

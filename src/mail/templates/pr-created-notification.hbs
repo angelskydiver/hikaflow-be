@@ -1,127 +1,130 @@
-<html lang="en">
+<html lang='en'>
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta charset='UTF-8' />
+    <meta name='viewport' content='width=device-width, initial-scale=1.0' />
     <title>New Pull Request Notification</title>
     <style>
-      body {
-        font-family: Arial, sans-serif;
-        margin: 0;
-        padding: 0;
-        background-color: #f4f4f4;
-      }
-      .container {
-        max-width: 600px;
-        margin: 20px auto;
-        background-color: #fff;
-        border-radius: 5px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        overflow: hidden;
-        border-top: 5px solid #008c6e;
-      }
-      .logoImage {
-        font-size: 48px;
-        font-weight: bold;
-        color: #008c6e;
-        margin-bottom: 20px;
-        text-align: left;
-      }
-      .wrapper {
-        padding: 20px;
-      }
-      .banner {
-        height: 50px;
-        background: #ffffff;
-        color: #008c6e;
-        text-align: left;
-        display: flex;
-        justify-content: start;
-        align-items: center;
-        font-size: 40px;
-        gap: 10px;
-        padding: 20px;
-        font-weight: bold;
-      }
-      h1 {
-        color: #333;
-        margin-bottom: 10px;
-      }
-      p {
-        color: #555;
-        line-height: 1.6;
-      }
-      .button {
-        display: inline-block;
-        padding: 12px 25px;
-        font-size: 18px;
-        color: #fff;
-        background-color: #008c6e;
-        text-align: center;
-        text-decoration: none;
-        border-radius: 5px;
-        margin-top: 20px;
-        transition: background-color 0.3s;
-      }
-      .button:hover {
-        background-color: #222e35;
-      }
-      .footer {
-        margin-top: 20px;
-        text-align: left;
-        font-size: 12px;
-        color: #666;
-      }
-      .pr-details {
-        background-color: #e7e7ff;
-        padding: 15px;
-        border-radius: 5px;
-        margin: 20px 0;
-      }
-      .pr-details ul {
-        list-style-type: none;
-        padding-left: 0;
-      }
-      .pr-details li {
-        margin-bottom: 10px;
-      }
-      .pr-details li::before {
-        content: '✔ ';
-        color: #008c6e;
-      }
+      body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 0;
+      background-color: #1a1a1a; color: #e0e0e0; } .container { max-width:
+      600px; margin: 20px auto; background: linear-gradient(145deg, #1e1e1e,
+      #2d2d2d); border-radius: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+      overflow: hidden; } .banner { background: linear-gradient(135deg, #2b2b2b,
+      #1a1a1a); padding: 24px; text-align: left; } .logo { font-size: 32px;
+      font-weight: bold; color: #4CAF50; margin: 0; letter-spacing: 1px; }
+      .wrapper { padding: 32px; } h1 { color: #4CAF50; margin-bottom: 24px;
+      font-size: 24px; } h2 { color: #4CAF50; margin-bottom: 16px; font-size:
+      20px; } p { color: #e0e0e0; line-height: 1.6; margin-bottom: 16px; }
+      .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap:
+      16px; margin: 24px 0; } .stat-item { background: linear-gradient(145deg,
+      #2b2b2b, #232323); padding: 20px; border-radius: 10px; text-align: center;
+      border: 1px solid #333; } .stat-value { font-size: 28px; font-weight:
+      bold; color: #4CAF50; margin-bottom: 8px; } .stat-label { font-size: 14px;
+      color: #b0b0b0; } .changes-table { width: 100%; border-collapse: separate;
+      border-spacing: 0; margin: 24px 0; border-radius: 10px; overflow: hidden;
+      } .changes-table th { background: linear-gradient(145deg, #2b2b2b,
+      #232323); color: #4CAF50; padding: 16px; text-align: left; font-weight:
+      500; border-bottom: 1px solid #333; } .changes-table td { background:
+      rgba(43, 43, 43, 0.5); padding: 12px 16px; color: #e0e0e0; border-bottom:
+      1px solid #333; } .changes-table tr:last-child td { border-bottom: none; }
+      .analysis-list { background: linear-gradient(145deg, #2b2b2b, #232323);
+      padding: 24px; border-radius: 10px; margin: 24px 0; border: 1px solid
+      #333; } .analysis-item { background: rgba(43, 43, 43, 0.5); padding: 16px;
+      border-radius: 8px; margin-bottom: 12px; border: 1px solid #333; }
+      .analysis-title { color: #4CAF50; font-weight: bold; margin-bottom: 8px; }
+      .analysis-description { color: #b0b0b0; } .button { display: inline-block;
+      padding: 12px 24px; font-size: 16px; color: #fff; background:
+      linear-gradient(135deg, #4CAF50, #45a049); text-decoration: none;
+      border-radius: 25px; margin-top: 24px; transition: all 0.3s ease; }
+      .button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px
+      rgba(76, 175, 80, 0.3); } .footer { margin-top: 32px; padding-top: 16px;
+      border-top: 1px solid #333; text-align: left; font-size: 12px; color:
+      #888; }
     </style>
   </head>
   <body>
-    <div class="container">
-      <section class="banner">
-        <h1 class="logoImage">Hikaflow</h1>
-      </section>
-      <div class="wrapper">
+    <div class='container'>
+      <div class='banner'>
+        <h1 class='logo'>Hikaflow</h1>
+      </div>
+      <div class='wrapper'>
         <h1>New Pull Request Notification</h1>
         <p>Hi {{adminName}},</p>
         <p>
-          A new pull request has been created in {{repositoryName}} by
-          {{authorName}}. You can review the changes and provide feedback.
+          A new pull request has been created in
+          <strong>{{repositoryName}}</strong>
+          by
+          <strong>{{authorName}}</strong>. Here's what you need to know:
         </p>
-        <a href="{{prUrl}}" class="button">View Pull Request</a>
-        <div class="pr-details">
-          <p>This PR includes:</p>
-          <ul>
-            <li>Code changes summary</li>
-            <li>Initial AI analysis of potential issues</li>
-            <li>Duplicate code and security checks</li>
-          </ul>
+
+        <div class='stats-grid'>
+          <div class='stat-item'>
+            <div class='stat-value'>{{changedFiles}}</div>
+            <div class='stat-label'>Files Changed</div>
+          </div>
+          <div class='stat-item'>
+            <div class='stat-value'>{{additions}}</div>
+            <div class='stat-label'>Lines Added</div>
+          </div>
+          <div class='stat-item'>
+            <div class='stat-value'>{{deletions}}</div>
+            <div class='stat-label'>Lines Removed</div>
+          </div>
+          <div class='stat-item'>
+            <div class='stat-value'>{{changedFiles}}</div>
+            <div class='stat-label'>Files Changed</div>
+          </div>
         </div>
-        <p>Stay ahead of your review process with AI-driven insights!</p>
-        <p>
-          Best regards,<br />
-          The Hikaflow Team
-        </p>
-      </div>
-      <div class="footer">
-        <p>
-          This is an automated message. Please do not reply to this email. If
-          you have any questions, please contact our support team.
-        </p>
+
+        <div class='analysis-list'>
+          <h2>Key Changes</h2>
+          <table class='changes-table'>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Changes</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{#each fileChanges}}
+                <tr>
+                  <td>{{this.file}}</td>
+                  <td>{{this.changes}} changes</td>
+                  <td>{{this.status}}</td>
+                </tr>
+              {{/each}}
+            </tbody>
+          </table>
+        </div>
+
+        <div class='analysis-list'>
+          <h2>Initial AI Analysis</h2>
+          <div class='analysis-item'>
+            <div class='analysis-title'>Code Quality Assessment</div>
+            <div class='analysis-description'>{{codeQuality}}</div>
+          </div>
+          <div class='analysis-item'>
+            <div class='analysis-title'>Potential Security Concerns</div>
+            <div class='analysis-description'>{{securityIssues}}</div>
+          </div>
+          <div class='analysis-item'>
+            <div class='analysis-title'>Code Duplication Check</div>
+            <div class='analysis-description'>{{duplicateCode}}</div>
+          </div>
+          <div class='analysis-item'>
+            <div class='analysis-title'>Performance Impact</div>
+            <div class='analysis-description'>{{performanceImpact}}</div>
+          </div>
+        </div>
+
+        <a href='{{prUrl}}' class='button'>Review Pull Request</a>
+
+        <div class='footer'>
+          <p>
+            This is an automated message. Please do not reply to this email. If
+            you have any questions, please contact our support team.
+          </p>
+        </div>
       </div>
     </div>
   </body>

@@ -47,6 +47,12 @@ export class BillingController {
     return await this._billingService.initializePricingPlans();
   }
 
+  @Public()
+  @Get('invoices/migrate-existing-accounts-to-basic-plan')
+  async migrateExistingAccountsToBasicPlan() {
+    return await this._billingService.migrateExistingAccountsToBasicPlan();
+  }
+
   // Pricing Plan endpoints
   @ApiBearerAuth()
   @Post('pricing-plans')
