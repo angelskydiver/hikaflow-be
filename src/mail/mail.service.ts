@@ -223,4 +223,50 @@ export class MailService {
       console.log(error.message);
     }
   }
+
+  async repositoryScanCompleteNotification(data: {
+    email: string;
+    adminName: string;
+    repositoryName: string;
+    totalFiles: number;
+    issuesFound: number;
+    securityIssues: number;
+    codeSmells: number;
+    topSecurityIssues: Array<{
+      severity: string;
+      title: string;
+      description: string;
+    }>;
+    topCodeIssues: Array<{
+      severity: string;
+      title: string;
+      description: string;
+    }>;
+    reportUrl: string;
+  }) {
+    try {
+      await this.mailerService.sendMail({
+        to: data.email,
+        subject: 'Repository Scan Complete',
+        template: 'repository-scan-complete',
+        context: {
+          adminName: data.adminName,
+          repositoryName: data.repositoryName,
+          totalFiles: data.totalFiles,
+          issuesFound: data.issuesFound,
+          securityIssues: data.securityIssues,
+          codeSmells: data.codeSmells,
+          topSecurityIssues: data.topSecurityIssues,
+          topCodeIssues: data.topCodeIssues,
+          reportUrl: data.reportUrl,
+        },
+      });
+    } catch (error) {
+      console.error(
+        'Error sending repository scan complete notification:',
+        error,
+      );
+      throw error;
+    }
+  }
 }

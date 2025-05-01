@@ -9,6 +9,7 @@ import { ExecutiveReportModule } from '../executiveReport/executiveReport.module
 import { PrTrackerModule } from '../prTracker/prTracker.module';
 import { PullRequestModule } from '../pullRequest/pullRequest.module';
 import { RepositoryModule } from '../repository/repository.module';
+import { RepositoryScanModule } from '../repositoryScan/repositoryScan.module';
 import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
 
@@ -24,6 +25,7 @@ import { WebhooksService } from './webhooks.service';
     CommitSummaryModule,
     BillingModule,
     forwardRef(() => PrTrackerModule),
+    forwardRef(() => RepositoryScanModule),
   ],
   providers: [WebhooksService],
   controllers: [WebhooksController],

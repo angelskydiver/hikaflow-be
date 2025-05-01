@@ -3,12 +3,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { OrganizationalAccountRole, Prisma } from '@prisma/client';
 import { MailService } from 'src/mail/mail.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { BillingService } from '../billing/billing.service';
 import {
   CreateOrganizationRequestDto,
   InviteUserToOrganizationRequestDTO,
+  OrganizationInsightsQueryDto,
 } from './dto/organization.request.dto';
 
 @Injectable()
@@ -86,50 +88,37 @@ export class OrganizationService {
       if (!account) throw new NotFoundException('Account not found');
 
       const invitationPayloads = data.users.map((user) => {
-        const payload = {
-          organizationId: data.organizationId,
-          role: user.role,
+        const invitationData: Prisma.OrganizationInvitationCreateInput = {
+          organization: { connect: { id: data.organizationId } },
+          role: user.role as OrganizationalAccountRole,
           email: user.email,
           name: user.name,
-          inviterId: account.user.id,
+          inviter: { connect: { id: account.user.id } },
         };
 
         return this._prismaService.organizationInvitation.create({
-          data: payload,
+          data: invitationData,
         });
       });
 
-      try {
-        await Promise.all(invitationPayloads);
-      } catch (error) {
-        console.log(error);
-      }
+      await Promise.all(invitationPayloads);
 
       // send email with invitation link
       const sendEmailMapping = data.users.map((user) => {
-        const payload = {
-          organizationId: data.organizationId,
-          role: user.role,
-          email: user.email,
-          name: user.name,
-        };
-
         return this._mailService.organizationInvitation({
-          email: payload.email,
-          userName: payload.name,
+          email: user.email,
+          userName: user.name,
           organizationName: organization.name,
           inviterName:
             account.user.firstName +
             (account.user.lastName ? ' ' + account.user.lastName : ''),
           signupLink: `${process.env.HIKAFLOW_PORTAL_URL}/organization/invitation/${organization.id}`,
-          role: payload.role,
+          role: user.role,
         });
       });
 
       await Promise.all(sendEmailMapping);
-      return {
-        Success: true,
-      };
+      return { Success: true };
     } catch (error) {
       console.log(error);
       throw new BadRequestException(error.message);
@@ -295,5 +284,245 @@ export class OrganizationService {
       console.log(error.message);
       throw new BadRequestException(error.message);
     }
+  }
+
+  async getOrganizationInsights(
+    organizationId: string,
+    query: OrganizationInsightsQueryDto,
+    accountId: string,
+  ) {
+    try {
+      const { repositoryId, daysLimit = 30 } = query;
+      const startDate = new Date(Date.now() - daysLimit * 24 * 60 * 60 * 1000);
+
+      // Verify user has access to organization
+      const orgAccess =
+        await this._prismaService.organizationAccounts.findFirst({
+          where: {
+            organizationId: organizationId,
+            accountId: accountId,
+          },
+        });
+
+      if (!orgAccess) {
+        throw new NotFoundException('Organization access not found');
+      }
+
+      // Get repositories for the organization
+      const repositories = await this._prismaService.repository.findMany({
+        where: repositoryId ? { id: repositoryId } : { organizationId },
+        select: {
+          id: true,
+          repositoryId: true,
+          name: true,
+          language: true,
+        },
+      });
+
+      const repoIds = repositories.map((r) => r.repositoryId);
+
+      // 1. Repository Activity Summary
+      const pullRequests = await this._prismaService.pullRequest.findMany({
+        where: {
+          repositoryId: { in: repoIds },
+          createdAt: { gte: startDate },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      // Calculate PR frequency for last 7 days
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      const recentPRs = await this._prismaService.pullRequest.findMany({
+        where: {
+          repositoryId: { in: repoIds },
+          createdAt: { gte: sevenDaysAgo },
+        },
+        select: {
+          createdAt: true,
+          repositoryId: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      // 2. Issue Statistics
+      const issues = await this._prismaService.comment.findMany({
+        where: {
+          repositoryId: { in: repoIds },
+          type: 'ISSUE',
+          createdAt: { gte: startDate },
+        },
+        select: {
+          severity: true,
+          issueCategory: true,
+          status: true,
+          createdAt: true,
+        },
+      });
+
+      // 3. Code Quality Metrics
+      const codeQuality = await this._prismaService.codeOverview.findMany({
+        where: {
+          repositoryId: { in: repoIds },
+          createdAt: { gte: startDate },
+        },
+        select: {
+          summary: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      });
+
+      // 4. Repository Usage Stats
+      const usageLogs = await this._prismaService.usageLog.findMany({
+        where: {
+          organizationId,
+          createdAt: { gte: startDate },
+        },
+        select: {
+          type: true,
+          createdAt: true,
+          repository: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      });
+
+      // Process and return insights
+      return {
+        repositoryStats: {
+          totalRepositories: repositories.length,
+          byLanguage: this._groupByLanguage(repositories),
+          recentActivity: this._processRecentActivity(pullRequests, issues),
+          prFrequency: {
+            last7Days: this._calculatePRFrequency(recentPRs),
+            totalPRs: recentPRs.length,
+            dailyAverage: +(recentPRs.length / 7).toFixed(2),
+          },
+        },
+        issueMetrics: {
+          total: issues.length,
+          bySeverity: this._groupBySeverity(issues),
+          byCategory: this._groupByCategory(issues),
+          trend: this._calculateTrend(issues, daysLimit),
+        },
+        codeQualityTrend: codeQuality.map((q) => ({
+          date: q.createdAt,
+          metrics: q.summary,
+        })),
+        usageAnalytics: {
+          totalUsage: usageLogs.length,
+          byType: this._groupByType(usageLogs),
+          byRepository: this._groupByRepository(usageLogs),
+        },
+      };
+    } catch (error) {
+      console.error('Error fetching organization insights:', error);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  private _groupByLanguage(repositories: any[]) {
+    return repositories.reduce((acc, repo) => {
+      const lang = repo.language || 'Unknown';
+      acc[lang] = (acc[lang] || 0) + 1;
+      return acc;
+    }, {});
+  }
+
+  private _processRecentActivity(pullRequests: any[], issues: any[]) {
+    const timeline = [...pullRequests, ...issues]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, 10)
+      .map((item) => ({
+        type: 'prNumber' in item ? 'PR' : 'Issue',
+        date: item.createdAt,
+        details: 'prNumber' in item ? item.prTitle : item.issueCategory,
+      }));
+    return timeline;
+  }
+
+  private _groupBySeverity(issues: any[]) {
+    return issues.reduce((acc, issue) => {
+      acc[issue.severity] = (acc[issue.severity] || 0) + 1;
+      return acc;
+    }, {});
+  }
+
+  private _groupByCategory(issues: any[]) {
+    return issues.reduce((acc, issue) => {
+      acc[issue.issueCategory] = (acc[issue.issueCategory] || 0) + 1;
+      return acc;
+    }, {});
+  }
+
+  private _calculateTrend(issues: any[], daysLimit: number) {
+    const trend = {};
+    const days = [...Array(daysLimit)].map((_, i) => {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      return date.toISOString().split('T')[0];
+    });
+
+    days.forEach((day) => {
+      trend[day] = 0;
+    });
+
+    issues.forEach((issue) => {
+      const day = issue.createdAt.toISOString().split('T')[0];
+      if (trend[day] !== undefined) {
+        trend[day]++;
+      }
+    });
+
+    return trend;
+  }
+
+  private _groupByType(logs: any[]) {
+    return logs.reduce((acc, log) => {
+      acc[log.type] = (acc[log.type] || 0) + 1;
+      return acc;
+    }, {});
+  }
+
+  private _groupByRepository(logs: any[]) {
+    return logs.reduce((acc, log) => {
+      const repoName = log.repository?.name || 'Unknown';
+      acc[repoName] = (acc[repoName] || 0) + 1;
+      return acc;
+    }, {});
+  }
+
+  private _calculatePRFrequency(prs: any[]) {
+    const frequency = {
+      Monday: 0,
+      Tuesday: 0,
+      Wednesday: 0,
+      Thursday: 0,
+      Friday: 0,
+      Saturday: 0,
+      Sunday: 0,
+    };
+
+    const days = [
+      'Sunday',
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+    ];
+
+    prs.forEach((pr) => {
+      const dayName = days[pr.createdAt.getDay()];
+      frequency[dayName]++;
+    });
+
+    return frequency;
   }
 }

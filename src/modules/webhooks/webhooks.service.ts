@@ -5,6 +5,7 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { CommentType, PrTrackerStatus } from '@prisma/client';
+import * as gptTokenizer from 'gpt-3-encoder';
 import { shouldAnalyze } from 'src/config/constants/unnecessary.files.constant';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
 import { filterHighPriorityComments } from 'src/config/helpers/comment.helper';
@@ -37,6 +38,7 @@ import { ExecutiveReportService } from '../executiveReport/executiveReport.servi
 import { PrTrackerService } from '../prTracker/prTracker.service';
 import { PullRequestService } from '../pullRequest/pullRequest.service';
 import { RepositoryService } from '../repository/repository.service';
+import { RepositoryScanService } from '../repositoryScan/repositoryScan.service';
 import { PrismaService } from './../../prisma/prisma.service';
 
 const MAX_TOKENS = 62000;
@@ -60,6 +62,7 @@ export class WebhooksService {
     private _billingService: BillingService,
     @Inject(forwardRef(() => PrTrackerService))
     private _prTrackerService: PrTrackerService,
+    private _repositoryScanService: RepositoryScanService,
   ) {}
 
   private _accountCredentialByRepository = async (data) => {
@@ -358,15 +361,13 @@ export class WebhooksService {
           commentUrl: data.pullrequest.links.comments.href,
           body: {
             content: {
-              raw: `${issue.issue} - Priority: ${issue.priority} \n ${issue.reason}`,
+              raw: `${issue.issue} - Priority: ${issue.priority}\n${issue.reason}`,
             },
-            inline: {
-              to: parseInt(issue.line),
-              path: issue.file,
-            },
+            inline: { to: parseInt(issue.line), path: issue.file },
           },
         }),
       );
+      await Promise.allSettled(commentsMapping);
 
       prInfo['prId'] = pullRequest.id;
 
@@ -386,7 +387,6 @@ export class WebhooksService {
         return this._commentService.createComment(payload);
       });
 
-      await Promise.allSettled(commentsMapping);
       await Promise.allSettled(createCommentsMapping);
 
       // Log PR evaluation usage for billing
@@ -672,11 +672,14 @@ export class WebhooksService {
           executiveReportPayload,
         );
 
-      const commitSummaryMapping = commits.map((commit, index) =>
-        this._commitSummaryService.createCommitSummary(
-          commit,
-          data.repository.id.toString(),
-          report.id,
+      // Create commit summaries
+      await Promise.all(
+        commits.map((commit) =>
+          this._commitSummaryService.createCommitSummary(
+            commit,
+            data.repository.id.toString(),
+            report.id,
+          ),
         ),
       );
 
@@ -812,8 +815,7 @@ export class WebhooksService {
       const complexityAndDuplication =
         await deepSeekAgent.analyzeCodeComplexityAndDuplication(filteredFiles);
 
-      const mapPrCommit = prCommits.map((data, i) => {
-        // console.log('mapPrCommit: ', i + ' ' + JSON.stringify(data, null, 2));
+      const mapPrCommit = prCommits.map((data) => {
         return commitInfoBitbucket({
           token: decryptedToken,
           commitDiffUrl: data.links.diff.href,
@@ -863,25 +865,26 @@ export class WebhooksService {
           executiveReportPayload,
         );
 
-      // TODO contibue from here
-
-      const commitSummaryMapping = commits.map((commit, index) => {
-        const stats = extractChangesFromPatch(commit.patch[0]);
-        return this._commitSummaryService.createCommitSummary(
-          {
-            ...commit,
-            stats: {
-              additions: stats.additionCount,
-              deletions: stats.deletionCount,
+      // Create commit summaries
+      await Promise.all(
+        commits.map((commit) => {
+          const stats = extractChangesFromPatch(commit.patch[0]);
+          return this._commitSummaryService.createCommitSummary(
+            {
+              ...commit,
+              stats: {
+                additions: stats.additionCount,
+                deletions: stats.deletionCount,
+              },
+              commit: { message: commit.message },
+              sha: commit.hash,
+              author: { login: commit.author.user.display_name },
             },
-            commit: { message: commit.message },
-            sha: commit.hash,
-            author: { login: commit.author.user.display_name },
-          },
-          data.repository.uuid.toString(),
-          report.id,
-        );
-      });
+            data.repository.uuid.toString(),
+            report.id,
+          );
+        }),
+      );
 
       const payload = {
         accountId: prInfo.accountId,
@@ -1054,8 +1057,8 @@ export class WebhooksService {
 
     // Step 4: Identify hot spots (frequently changed and error-prone files)
     const hotSpots = sortedFiles
-      .filter(([fileName, count]) => count > 4) // Threshold for hot spots (adjust as needed)
-      .slice(0, topN) // Limit to top N files
+      .filter(([, count]) => count > 4)
+      .slice(0, topN)
       .map(([fileName, count]) => ({
         fileName,
         modificationCount: count,
@@ -1064,8 +1067,8 @@ export class WebhooksService {
 
     // Step 5: Identify code churn (high modification frequency)
     const codeChurn = sortedFiles
-      .filter(([fileName, count]) => count > 1) // Threshold for code churn (adjust as needed)
-      .slice(0, topN) // Limit to top N files
+      .filter(([, count]) => count > 1)
+      .slice(0, topN)
       .map(([fileName, count]) => ({
         fileName,
         modificationCount: count,
@@ -1106,7 +1109,7 @@ export class WebhooksService {
         filesContent.push({ file: data.fileName, content: withLineNumbers });
       });
 
-      const { duplicateIdenticalCodeIssue, duplicateCodes, identicalCodes } =
+      const { duplicateIdenticalCodeIssue, duplicateCodes } =
         await this.detectDuplicateAndIdenticalCode(filePatch);
 
       const PrPatches = changesMapping(filePatch);
@@ -1144,26 +1147,22 @@ export class WebhooksService {
 
       const filteredIssues = filterHighPriorityComments(allIssues);
 
-      const commentsMapping = filteredIssues.map((data) =>
-        commentBitbucketPr({
-          token: prInfo.token,
-          commentUrl: prInfo.links.comments.href,
-          body: {
-            content: {
-              raw: `${data.issue} - Priority: ${data.priority} \n ${data.reason}`,
+      // Post high-priority issues as inline comments on Bitbucket
+      const commentsMapping = filteredIssues.map(
+        ({ issue, priority, reason, line, file }) =>
+          commentBitbucketPr({
+            token: prInfo.token,
+            commentUrl: prInfo.links.comments.href,
+            body: {
+              content: { raw: `${issue} - Priority: ${priority}\n${reason}` },
+              inline: { to: parseInt(line), path: file },
             },
-            inline: {
-              to: parseInt(data.line),
-              path: data.file,
-            },
-          },
-        }),
+          }),
       );
+      await Promise.allSettled(commentsMapping);
 
-      const comments = await Promise.allSettled(commentsMapping);
       const createCommentsMapping = filteredIssues
         .map((data, index) => {
-          // @ts-ignore
           const payload = {
             repositoryId: prInfo.id,
             prId: prInfo.prId,
@@ -1176,10 +1175,8 @@ export class WebhooksService {
             reason: data.reason,
             type: PrPatches[`${data.file}-${data.line}`]
               ? CommentType.PULL_REQUEST
-              : CommentType.ISSUE, // Since it's a PR comment, set the type as PULL_REQUEST
+              : CommentType.ISSUE,
           };
-
-          // Only create the comment if it's a PR-related comment
           return this._commentService.createComment(payload);
         })
         .filter((comment) => comment !== undefined);
@@ -1312,7 +1309,7 @@ export class WebhooksService {
       const createCommentsMapping = allIssues
         .map((data, index) => {
           // Check if it's a PR comment by checking the 'isPrIssue' flag
-          // @ts-ignore
+          // @ts-expect-error - The comments array is guaranteed to have the same length as allIssues
           if (comments[index].value.isPrIssue) {
             const payload = {
               repositoryId: prInfo.id,
@@ -1403,11 +1400,10 @@ export class WebhooksService {
   async detectDuplicateAndIdenticalCode(fileChanges: any) {
     try {
       const deepSeekWrapper = new DeepSeek();
-      const tokenizer = require('gpt-3-encoder'); // Tokenizer library
 
       // Helper function to calculate token count for a block of changes
       const calculateTokenCount = (block) => {
-        return tokenizer.encode(JSON.stringify(block)).length;
+        return gptTokenizer.encode(JSON.stringify(block)).length;
       };
 
       const chunks = [];
