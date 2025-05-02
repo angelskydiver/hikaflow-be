@@ -726,7 +726,8 @@ export class BillingService {
       }
 
       // Standard tax rate (e.g., 8.25%)
-      const taxRate = 0.0825;
+      // const taxRate = 0.0825;
+      const taxRate = 0;
       const tax = subtotal * taxRate;
       const total = subtotal + tax;
 
@@ -848,10 +849,6 @@ export class BillingService {
 
       if (invoice.status === InvoiceStatus.PAID) {
         throw new BadRequestException('Invoice already paid');
-      }
-
-      if (invoice.status !== InvoiceStatus.PENDING) {
-        throw new BadRequestException('Only pending invoices can be paid');
       }
 
       let paymentIntent;
@@ -1653,31 +1650,6 @@ export class BillingService {
         throw new NotFoundException('Organization not found');
       }
 
-      // Validate card has minimum $5 USD
-      try {
-        const paymentIntent = await this.stripe.paymentIntents.create({
-          amount: 500, // $5 USD in cents
-          currency: 'usd',
-          payment_method: paymentMethodId,
-          confirm: true,
-          capture_method: 'manual', // Don't actually capture the payment
-          automatic_payment_methods: {
-            enabled: true,
-            allow_redirects: 'never',
-          },
-        });
-
-        // Cancel the test payment intent
-        await this.stripe.paymentIntents.cancel(paymentIntent.id);
-      } catch (error) {
-        if (error.type === 'StripeCardError') {
-          throw new BadRequestException(
-            'Card validation failed. Please ensure your card has at least $5 USD available.',
-          );
-        }
-        throw new BadRequestException(error.message);
-      }
-
       // Get the Stripe customer ID from the active subscription
       let stripeCustomerId: string;
 
@@ -1698,6 +1670,32 @@ export class BillingService {
       await this.stripe.paymentMethods.attach(paymentMethodId, {
         customer: stripeCustomerId,
       });
+
+      // Validate card has minimum $5 USD
+      try {
+        const paymentIntent = await this.stripe.paymentIntents.create({
+          amount: 500, // $5 USD in cents
+          currency: 'usd',
+          payment_method: paymentMethodId,
+          customer: stripeCustomerId,
+          confirm: true,
+          capture_method: 'manual', // Don't actually capture the payment
+          automatic_payment_methods: {
+            enabled: true,
+            allow_redirects: 'never',
+          },
+        });
+
+        // Cancel the test payment intent
+        await this.stripe.paymentIntents.cancel(paymentIntent.id);
+      } catch (error) {
+        if (error.type === 'StripeCardError') {
+          throw new BadRequestException(
+            'Card validation failed. Please ensure your card has at least $5 USD available.',
+          );
+        }
+        throw new BadRequestException(error.message);
+      }
 
       // Set as default payment method for the customer
       await this.stripe.customers.update(stripeCustomerId, {
