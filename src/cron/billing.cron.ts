@@ -1,13 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { BillingService } from 'src/modules/billing/billing.service';
 
 @Injectable()
 export class BillingCronService {
   constructor(private _billingService: BillingService) {}
-  @Cron('*/2 * * * *') // Or you can pass a custom cron expression like "0 0 * * *"
+  @Cron(CronExpression.EVERY_DAY_AT_4PM) // Or you can pass a custom cron expression like "0 0 * * *"
   async trackPrs() {
-    console.log('Cron job is running every 5 minute!');
+    console.log('Cron job is running every day 4pm!');
     // Your custom logic here
     await this._billingService.runDailySubscriptionCheck();
   }

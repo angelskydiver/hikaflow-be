@@ -90,15 +90,11 @@ export class RepositoryScanController {
     @Body() body: any,
     @Request() req: any,
   ) {
-    try {
-      return await this._repositoryScanService.testAnalyzeAssistance(
-        repositoryId,
-        body.query,
-        req.user.accountId,
-      );
-    } catch (error) {
-      console.error(error);
-    }
+    return await this._repositoryScanService.testAnalyzeAssistance(
+      repositoryId,
+      body.query,
+      req.user.accountId,
+    );
   }
 
   @ApiBearerAuth()
