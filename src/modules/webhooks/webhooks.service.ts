@@ -29,6 +29,7 @@ import {
 } from 'src/config/helpers/repositories/github.helper';
 import { filterFiles } from 'src/config/helpers/unnecessary.files.helper';
 import { MailService } from 'src/mail/mail.service';
+import { queueChangedFilesScan } from 'src/queue/repository.scan.queue';
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
 import { BillingService } from '../billing/billing.service';
 import { CodeOverviewService } from '../codeOverview/codeOverview.service';
@@ -708,6 +709,78 @@ export class WebhooksService {
         PrTrackerStatus.APPROVED,
       );
 
+      // Run regression testing analysis on the changed files
+      try {
+        const repository = await this._prismaService.repository.findFirst({
+          where: {
+            repositoryId: data.repository.id.toString(),
+          },
+          include: {
+            accounts: true, // Include the accounts relationship
+          },
+        });
+
+        if (!repository) {
+          console.log('Repository not found for regression analysis');
+          return;
+        }
+
+        // Get account information for the mail notification
+        // Find the first account associated with this repository
+        const accountRelation =
+          repository.accounts && repository.accounts.length > 0
+            ? repository.accounts[0]
+            : null;
+
+        console.log('accountRelation', accountRelation);
+
+        const accountId = accountRelation?.accountId;
+
+        if (!accountId) {
+          console.log('No account found for repository');
+          return;
+        }
+
+        // Extract changed file paths
+        console.log('data.pull_request.files', filteredFiles);
+        const changedFiles = filteredFiles.map((file) => file.filename);
+
+        console.log('changedFiles', changedFiles);
+
+        // Queue changed files for rescanning to keep docs and embeddings up to date
+        if (changedFiles.length > 0) {
+          console.log('changedFiles', changedFiles);
+          await queueChangedFilesScan(repository.id, changedFiles, accountId);
+          console.log(
+            `Queued ${changedFiles.length} files for rescanning after PR merge`,
+          );
+        }
+
+        // Get the latest version of files from both branches for comparison
+        const regressionAnalysis =
+          await this._repositoryScanService.analyzeRegressionImpactEnhanced(
+            repository.id,
+            data.number,
+            filteredFiles,
+            accountId,
+          );
+
+        if (regressionAnalysis) {
+          // Send notification email about the regression test results
+          await this._mailService.sendRegressionTestingNotification({
+            accountId,
+            authorName: data.sender.login,
+            repositoryInfo: {
+              repositoryName: data.repository.name,
+            },
+            regressionData: regressionAnalysis,
+            prNumber: data.number,
+          });
+        }
+      } catch (error) {
+        console.error('Error in regression analysis:', error);
+      }
+
       // Log PR evaluation usage for billing
       try {
         await this._billingService.createUsageLog({
@@ -910,6 +983,97 @@ export class WebhooksService {
         `${data.repository.name}-${data.pullrequest.id}-${data.event}`,
         PrTrackerStatus.APPROVED,
       );
+
+      // Run regression testing analysis on the changed files
+      try {
+        const repository = await this._prismaService.repository.findFirst({
+          where: {
+            repositoryId: data.repository.uuid,
+          },
+        });
+
+        if (!repository) {
+          console.log('Repository not found for regression analysis');
+          return;
+        }
+
+        // Extract changed file paths from the PR
+        const changedFiles = [];
+
+        // For Bitbucket, we need to extract changed files from the diff
+        if (
+          data.pullrequest &&
+          data.pullrequest.source &&
+          data.pullrequest.destination
+        ) {
+          const sourceCommit = data.pullrequest.source.commit?.hash;
+          const destCommit = data.pullrequest.destination.commit?.hash;
+
+          if (sourceCommit && destCommit) {
+            // Fetch changed files using Bitbucket API
+            const accountCredentials =
+              await this._accountCredentialService.getAccountToken({
+                accountId,
+              });
+
+            const workspaceName = repository.owner;
+            const repoSlug = repository.name;
+
+            const diffUrl = `https://api.bitbucket.org/2.0/repositories/${workspaceName}/${repoSlug}/diffstat/${sourceCommit}..${destCommit}`;
+
+            const response = await fetch(diffUrl, {
+              headers: {
+                Authorization: `Bearer ${accountCredentials.decryptedToken}`,
+              },
+            });
+
+            if (response.ok) {
+              const diffData = await response.json();
+
+              // Extract file paths from the diffstat
+              if (diffData.values) {
+                diffData.values.forEach((item) => {
+                  if (item.new && item.new.path) {
+                    changedFiles.push(item.new.path);
+                  }
+                });
+              }
+            }
+          }
+        }
+
+        // Queue changed files for rescanning to keep docs and embeddings up to date
+        if (changedFiles.length > 0) {
+          await queueChangedFilesScan(repository.id, changedFiles, accountId);
+          console.log(
+            `Queued ${changedFiles.length} files for rescanning after Bitbucket PR merge`,
+          );
+        }
+
+        // Get the latest version of files from both branches for comparison
+        const regressionAnalysis =
+          await this._repositoryScanService.analyzeRegressionImpactEnhanced(
+            repository.id,
+            data.pullrequest.id,
+            filteredFiles,
+            accountId,
+          );
+
+        if (regressionAnalysis) {
+          // Send notification email about the regression test results
+          await this._mailService.sendRegressionTestingNotification({
+            accountId,
+            authorName: data.actor.display_name,
+            repositoryInfo: {
+              repositoryName: data.repository.name,
+            },
+            regressionData: regressionAnalysis,
+            prNumber: data.pullrequest.id,
+          });
+        }
+      } catch (error) {
+        console.error('Error in regression analysis:', error);
+      }
 
       // Log PR evaluation usage for billing
       try {
@@ -1610,7 +1774,7 @@ export class WebhooksService {
             authorName: data.authorName,
             reportUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/report/${data.reportId}`,
           };
-          this._mailService.prClosedNotification(payload);
+          // this._mailService.prClosedNotification(payload);
         });
 
       await Promise.all(emailMapping);

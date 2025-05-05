@@ -1,6 +1,4 @@
-import { HelperDelegate } from 'handlebars';
-
-export const isEqual: HelperDelegate = function (a, b, options) {
+export const isEqual = function (a, b, options) {
   if (a == b) {
     return options.fn(this);
   } else {
@@ -8,7 +6,7 @@ export const isEqual: HelperDelegate = function (a, b, options) {
   }
 };
 
-export const isOrganizer: HelperDelegate = function (organizedId, participantId, options) {
+export const isOrganizer = function (organizedId, participantId, options) {
   if (organizedId == participantId) {
     return options.fn(this);
   } else {
@@ -16,7 +14,7 @@ export const isOrganizer: HelperDelegate = function (organizedId, participantId,
   }
 };
 
-export const isCreator: HelperDelegate = function (creatorId, participantId, options) {
+export const isCreator = function (creatorId, participantId, options) {
   if (creatorId == participantId) {
     return options.fn(this);
   } else {

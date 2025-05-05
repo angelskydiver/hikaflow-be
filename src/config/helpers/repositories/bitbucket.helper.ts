@@ -1,6 +1,6 @@
 import * as atlassianJwt from 'atlassian-jwt';
 import axios from 'axios';
-import * as moment from 'moment';
+import moment from 'moment';
 import {
   ignoredExtensionsForFileScan,
   ignoredFilesForFileScan,

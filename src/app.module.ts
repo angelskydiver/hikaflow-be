@@ -8,6 +8,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { BillingCronService } from './cron/billing.cron';
 import { PrTrackerCronService } from './cron/prTracker.cron';
+import { RepositoryScanCronService } from './cron/repositoryScan.cron';
 import { MailModule } from './mail/mail.module';
 import { AccountModule } from './modules/account/account.module';
 import { AccountCredentialModule } from './modules/accountCredentials/accountCredentials.module';
@@ -72,6 +73,7 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
     JwtStrategy,
     PrTrackerCronService,
     BillingCronService,
+    RepositoryScanCronService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
   ],
 })
