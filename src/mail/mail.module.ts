@@ -3,8 +3,8 @@ import { HandlebarsAdapter } from '@nestjs-modules/mailer/dist/adapters/handleba
 import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { join } from 'path';
+import { PrismaModule } from 'src/prisma/prisma.module';
 import { MailService } from './mail.service';
-
 @Global()
 @Module({
   imports: [
@@ -40,6 +40,7 @@ import { MailService } from './mail.service';
       }),
       inject: [ConfigService],
     }),
+    PrismaModule,
   ],
   providers: [MailService],
   exports: [MailService],

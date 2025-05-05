@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        color: #333;
+        line-height: 1.5;
+        margin: 0;
+        padding: 0;
+      }
+      .container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 0;
+      }
+      .banner {
+        background-color: #f2f7ff;
+        padding: 20px;
+        border-bottom: 1px solid #d1e3ff;
+      }
+      .logo {
+        color: #1a5dd4;
+        margin: 0;
+        padding: 0;
+        font-size: 24px;
+      }
+      .wrapper {
+        padding: 30px;
+      }
+      h1 {
+        color: #1a5dd4;
+        margin-top: 0;
+      }
+      .regression-summary {
+        margin-bottom: 30px;
+        padding: 20px;
+        background-color: #f8f9fa;
+        border-radius: 6px;
+        border-left: 4px solid #ffc107;
+      }
+      .section {
+        margin-bottom: 30px;
+      }
+      .section-title {
+        margin-bottom: 15px;
+        color: #1a5dd4;
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .flow-card {
+        padding: 15px;
+        margin-bottom: 15px;
+        border-left: 4px solid;
+        background-color: #f8f9fa;
+        border-radius: 4px;
+      }
+      .high-risk {
+        border-left-color: #dc3545;
+      }
+      .medium-risk {
+        border-left-color: #ffc107;
+      }
+      .low-risk {
+        border-left-color: #28a745;
+      }
+      .flow-name {
+        font-weight: bold;
+        font-size: 16px;
+        margin-bottom: 8px;
+      }
+      .flow-risk {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: bold;
+        color: #fff;
+        margin-left: 8px;
+      }
+      .risk-HIGH {
+        background-color: #dc3545;
+      }
+      .risk-MEDIUM {
+        background-color: #ffc107;
+        color: #333;
+      }
+      .risk-LOW {
+        background-color: #28a745;
+      }
+      .behavior-change {
+        margin-bottom: 15px;
+        padding: 15px;
+        background-color: #f8f9fa;
+        border-radius: 4px;
+      }
+      .component-name {
+        font-weight: bold;
+        margin-bottom: 8px;
+      }
+      .test-case {
+        margin-bottom: 15px;
+        padding: 15px;
+        background-color: #f8f9fa;
+        border-radius: 4px;
+      }
+      .test-name {
+        font-weight: bold;
+        margin-bottom: 8px;
+      }
+      .code-block {
+        background-color: #272822;
+        color: #f8f8f2;
+        padding: 15px;
+        border-radius: 4px;
+        overflow-x: auto;
+        font-family: monospace;
+        margin-top: 10px;
+      }
+      .footer {
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 1px solid #eee;
+        font-size: 14px;
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <div class='container'>
+      <div class='banner'>
+        <h1 class='logo'>Hikaflow</h1>
+      </div>
+      <div class='wrapper'>
+        <h1>Regression Testing Report</h1>
+        <p>Hi {{authorName}},</p>
+        <p>
+          We've analyzed the changes in PR #{{prNumber}} in 
+          <strong>{{repositoryName}}</strong> 
+          and identified potential regression impacts.
+        </p>
+
+        <div class="regression-summary">
+          <h2>Summary</h2>
+          <p>{{regressionData.summary}}</p>
+        </div>
+
+        {{#if regressionData.impactedFlows.length}}
+        <div class="section">
+          <h3 class="section-title">Impacted Flows</h3>
+          {{#each regressionData.impactedFlows}}
+            <div class="flow-card {{#if (eq this.riskLevel 'HIGH')}}high-risk{{else if (eq this.riskLevel 'MEDIUM')}}medium-risk{{else}}low-risk{{/if}}">
+              <div class="flow-name">
+                {{this.name}}
+                <span class="flow-risk risk-{{this.riskLevel}}">{{this.riskLevel}}</span>
+              </div>
+              <p><strong>Description:</strong> {{this.description}}</p>
+              <p><strong>Impact:</strong> {{this.changeImpact}}</p>
+            </div>
+          {{/each}}
+        </div>
+        {{/if}}
+
+        {{#if regressionData.changedBehavior.length}}
+        <div class="section">
+          <h3 class="section-title">Changed Behavior</h3>
+          {{#each regressionData.changedBehavior}}
+            <div class="behavior-change">
+              <div class="component-name">{{this.component}}</div>
+              <p><strong>Previous:</strong> {{this.previousBehavior}}</p>
+              <p><strong>Current:</strong> {{this.currentBehavior}}</p>
+              <p><strong>Impact:</strong> {{this.impact}}</p>
+            </div>
+          {{/each}}
+        </div>
+        {{/if}}
+
+        {{#if regressionData.potentialBreakages.length}}
+        <div class="section">
+          <h3 class="section-title">Potential Issues</h3>
+          {{#each regressionData.potentialBreakages}}
+            <div class="flow-card {{#if (eq this.severity 'HIGH')}}high-risk{{else if (eq this.severity 'MEDIUM')}}medium-risk{{else}}low-risk{{/if}}">
+              <p><strong>{{this.location}}:</strong> {{this.description}}</p>
+              <p><strong>Recommendation:</strong> {{this.recommendation}}</p>
+            </div>
+          {{/each}}
+        </div>
+        {{/if}}
+
+        {{#if regressionData.testCases.length}}
+        <div class="section">
+          <h3 class="section-title">Suggested Test Cases</h3>
+          {{#each regressionData.testCases}}
+            <div class="test-case">
+              <div class="test-name">{{this.name}}</div>
+              <p><strong>Description:</strong> {{this.description}}</p>
+              <p><strong>Expected Outcome:</strong> {{this.expectedOutcome}}</p>
+              {{#if this.code}}
+              <div class="code-block">{{this.code}}</div>
+              {{/if}}
+            </div>
+          {{/each}}
+        </div>
+        {{/if}}
+
+        <div class="footer">
+          <p>This is an automated message from Hikaflow. Please do not reply to this email.</p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html> 

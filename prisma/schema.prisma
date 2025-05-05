@@ -100,6 +100,16 @@ enum InvoiceStatus {
   CANCELED @map("CANCELED")
 }
 
+enum FileDocumentationType {
+  COMPONENT
+  UTILITY
+  CONFIG
+  CONTENT
+  DOCUMENTATION
+  TEST
+  UNKNOWN
+}
+
 model User {
   id        String        @id @default(uuid())
   firstName String
@@ -131,7 +141,7 @@ model Account {
   accountCredentials  AccountCredentials[]
   accountOrganization OrganizationAccounts[]
   scan                RepositoryScan[]
-  AssistedQuestions   AssistedQuestions[]
+  // AssistedQuestions   AssistedQuestions[]
   // Researcher          Researcher[]
   // ResearchAssistant   ResearchAssistant[]
 }
@@ -151,8 +161,9 @@ model Organization {
   // Researcher             Researcher[]
   // ResearchAssistant      ResearchAssistant[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  RegressionReport RegressionReport[]
 }
 
 model OrganizationAccounts {
@@ -227,6 +238,7 @@ model Repository {
   AssistedQuestions  AssistedQuestions[]
   UsageLog           UsageLog[]
   // Researcher         Researcher[]
+  RegressionReport   RegressionReport[]
 }
 
 model AccountRepository {
@@ -411,6 +423,28 @@ model FileDocumentation {
   updatedAt        DateTime                    @updatedAt
 }
 
+// model FileDocumentation {
+//   id               String         @id @default(uuid())
+//   name             String // File name
+//   fullPath         String // Full file path
+//   imports          String[]       @default([]) // List of imported files
+//   exports          String[]       @default([]) // List of exported files
+//   functions        Json           @default("{}") // Hierarchical function structure
+//   classes          Json           @default("{}") // Hierarchical class structure
+//   components       Json           @default("[]") // Hierarchical function structure
+//   fileType         String[]       @default([]) // Enum-based file classification
+//   summary          String         @default("") // AI-generated file summary
+//   repositoryId     String // Link to the repository
+//   repositoryScanId String // Link to the repository scan
+//   summaryEmbedding Json? // Store embeddings as JSON array for compatibility
+//   repositoryScan   RepositoryScan @relation(fields: [repositoryScanId], references: [id], onDelete: Cascade)
+//   repository       Repository     @relation(fields: [repositoryId], references: [id])
+//   createdAt        DateTime       @default(now())
+//   updatedAt        DateTime       @updatedAt
+
+//   @@map("FileDocumentation")
+// }
+
 model RepositoryScan {
   id                String     @id @default(uuid())
   repositoryId      String // Links to the Repository being scanned
@@ -433,22 +467,40 @@ model RepositoryScan {
 }
 
 model AssistedQuestions {
-  id             String  @id @default(uuid())
-  question       String
-  answer         Json    @default("{}")
-  repositoryId   String
-  scanId         String
-  tokenUtilized  Int     @default(0)
-  saved          Boolean @default(false)
-  accountId      String
-  organizationId String?
+  id            String   @id @default(uuid())
+  question      String
+  answer        Json     @default("{}")
+  accountId     String?
+  repositoryId  String
+  scanId        String
+  tokenUtilized Int      @default(0)
+  saved         Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  account    Account        @relation(fields: [accountId], references: [id])
-  repository Repository     @relation(fields: [repositoryId], references: [id])
-  scan       RepositoryScan @relation(fields: [scanId], references: [id])
+  // account          Account         @relation(fields: [accountId], references: [id])
+  repository       Repository      @relation(fields: [repositoryId], references: [id])
+  // scan       RepositoryScan @relation(fields: [scanId], references: [id])
+  RepositoryScan   RepositoryScan? @relation(fields: [repositoryScanId], references: [id])
+  repositoryScanId String?
+}
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model RegressionReport {
+  id                 String   @id @default(uuid())
+  repositoryId       String
+  prNumber           Int
+  status             String
+  summary            String
+  impactedFlows      Json
+  changedBehavior    Json
+  potentialBreakages Json
+  testCases          Json
+  organizationId     String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  repository   Repository   @relation(fields: [repositoryId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
 }
 
 model PricingPlan {

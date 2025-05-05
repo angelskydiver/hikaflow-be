@@ -1,9 +1,13 @@
 import { MailerService } from '@nestjs-modules/mailer';
 import { Injectable } from '@nestjs/common';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
 export class MailService {
-  constructor(private mailerService: MailerService) {}
+  constructor(
+    private mailerService: MailerService,
+    private prismaService: PrismaService,
+  ) {}
 
   async rejectCreatorEmail(data) {
     try {
@@ -201,6 +205,53 @@ export class MailService {
     } catch (error) {
       console.error(error.message);
       throw new Error(error.message);
+    }
+  }
+
+  async sendRegressionTestingNotification(data: {
+    accountId: string;
+    authorName: string;
+    repositoryInfo: {
+      repositoryName: string;
+    };
+    regressionData: {
+      summary: string;
+      impactedFlows: any[];
+      changedBehavior: any[];
+      potentialBreakages: any[];
+      testCases: any[];
+    };
+    prNumber?: string | number;
+  }) {
+    try {
+      console.log('need to send email from here');
+      // Get email from accountId
+      const account = await this.prismaService.account.findUnique({
+        where: { id: data.accountId },
+        include: { user: true },
+      });
+
+      if (!account || !account.user) {
+        throw new Error(`Account not found for ID: ${data.accountId}`);
+      }
+
+      const email = account.user.email;
+      const prNumber = data.prNumber || 'N/A';
+
+      await this.mailerService.sendMail({
+        to: email,
+        subject: `[Hikaflow] Regression Testing Report: ${data.repositoryInfo.repositoryName}`,
+        template: './regression-testing-notification',
+        context: {
+          authorName: data.authorName,
+          repositoryName: data.repositoryInfo.repositoryName,
+          prNumber,
+          regressionData: data.regressionData,
+        },
+      });
+    } catch (error) {
+      console.error('Error sending regression testing notification:', error);
+      // Don't throw the error to prevent disrupting the PR workflow
     }
   }
 

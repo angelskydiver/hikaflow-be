@@ -1094,7 +1094,9 @@ export class BillingService {
 
         questionsToday = await this._prismaService.assistedQuestions.count({
           where: {
-            organizationId: subscription.organizationId,
+            repository: {
+              organizationId: subscription.organizationId,
+            },
             createdAt: {
               gte: startOfDay,
               lte: endOfDay,
