@@ -594,6 +594,10 @@ export class RepositoryScanService {
         orderBy: { createdAt: 'desc' },
       });
 
+      if (!scan) {
+        throw new NotFoundException('Scan not found');
+      }
+
       const totalFilesScanned = await this.prisma.fileDocumentation.count({
         where: { repositoryScanId: scan.id },
       });
@@ -1288,6 +1292,10 @@ export class RepositoryScanService {
     accountId: string,
   ) {
     try {
+      console.log(
+        `Analyzing regression impact for PR #${prNumber} with ${changedFiles.length} files`,
+      );
+
       const repository = await this.prisma.repository.findUnique({
         where: { id: repositoryId },
         include: {
@@ -1296,305 +1304,232 @@ export class RepositoryScanService {
       });
 
       if (!repository) {
-        throw new Error(`Repository "${repositoryId}" not found.`);
+        throw new Error(`Repository not found with ID ${repositoryId}`);
       }
 
-      // Get account credentials to access repository files
-      const accountCredentials =
-        await this.accountCredentialService.getAccountToken({ accountId });
-
-      // Get the latest repository scan for file documentation
+      // Fetch documentation for context information
       const repositoryScan = await this.prisma.repositoryScan.findFirst({
         where: { repositoryId },
         orderBy: { createdAt: 'desc' },
       });
 
       if (!repositoryScan) {
-        throw new Error(
-          `No repository scan found for repository "${repositoryId}".`,
-        );
+        console.warn(`No repository scan found for repository ${repositoryId}`);
       }
 
-      // Get file documentation for all files in the repository, not just changed files
-      // This allows us to find all imports relationships
-      const allFileDocumentation = await this.prisma.fileDocumentation.findMany(
-        {
+      // Get file documentation for additional context
+      let fileDocumentation = [];
+      if (repositoryScan) {
+        fileDocumentation = await this.prisma.fileDocumentation.findMany({
           where: {
             repositoryScanId: repositoryScan.id,
+            fullPath: {
+              in: changedFiles.map((file) => file.filename),
+            },
           },
-        },
-      );
+        });
+      }
+
+      // Enable API access with account credentials
+      const accountCredentials =
+        await this.accountCredentialService.getAccountToken({ accountId });
+
+      // Build dependency graph for understanding file relationships
+      const dependencyMap = this._buildDependencyGraph(fileDocumentation);
+
+      // Fetch the latest commit from the PR and its parent to get proper "before" and "after" versions
+      let latestCommitSha = 'HEAD';
+      let parentCommitSha = null;
+
+      try {
+        // Get the latest commit from the PR
+        const commitInfo = await this._fetchPrCommitInfo(
+          repository,
+          prNumber,
+          accountCredentials,
+        );
+
+        if (commitInfo) {
+          latestCommitSha = commitInfo.latestCommitSha;
+          parentCommitSha = commitInfo.parentCommitSha;
+          console.log(
+            `Using commits for comparison: latest=${latestCommitSha}, parent=${parentCommitSha}`,
+          );
+        } else {
+          console.log(
+            'Could not determine commit information, using HEAD and baseBranch as fallback',
+          );
+          parentCommitSha = repository.baseBranch;
+        }
+      } catch (error) {
+        console.error('Error fetching PR commit information:', error);
+        console.log('Using HEAD and baseBranch as fallback');
+        parentCommitSha = repository.baseBranch;
+      }
 
       // Create a map of file documentation for quick lookup
       const fileDocMap = {};
-      allFileDocumentation.forEach((doc) => {
-        fileDocMap[doc.fullPath] = doc;
+      fileDocumentation.forEach((doc) => {
+        if (doc && doc.fullPath) {
+          fileDocMap[doc.fullPath] = doc;
+        }
       });
 
-      // Get file documentation specifically for changed files
-      const changedFileDocumentation = allFileDocumentation.filter((doc) =>
-        changedFiles.some((file) => file.filename === doc.fullPath),
-      );
-
-      // Build a comprehensive dependency graph for the entire repository
-      const dependencyMap = this._buildDependencyGraph(allFileDocumentation);
-
-      // ENHANCEMENT: Find additional files that import from changed files
-      const filesImportingChangedFiles = new Set<string>();
-
-      // Track directly changed files
-      const directlyChangedFiles = new Set<string>();
-      changedFiles.forEach((file) => directlyChangedFiles.add(file.filename));
-
-      // For each changed file, find all files that import from it
-      changedFileDocumentation.forEach((changedDoc) => {
-        // Files that import from this changed file
-        const importers = this._findImportersOfFile(
-          changedDoc.fullPath,
-          allFileDocumentation,
-        );
-        importers.forEach((importer) => {
-          // Don't add files that are already directly changed
-          if (!directlyChangedFiles.has(importer)) {
-            filesImportingChangedFiles.add(importer);
-          }
-        });
-      });
-
-      console.log(
-        'Files importing from changed files:',
-        Array.from(filesImportingChangedFiles),
-      );
-
-      // Enhanced changed files array that includes files that import from changed files
-      const enhancedFilesToCheck = [
-        ...changedFiles,
-        ...Array.from(filesImportingChangedFiles).map((filename) => ({
-          filename,
-          patch: '', // No patch since these aren't directly changed
-          importerOnly: true, // Flag to indicate this file only imports changed content
-        })),
-      ];
-
-      // Enhanced file content retrieval - fetch from both head and base branches
+      // Prepare enhanced file data with content and metadata
       const enhancedChangedFiles = await Promise.all(
-        enhancedFilesToCheck.map(async (file) => {
-          // Files with complete content (from head and base branches)
-          const fileWithContent = {
+        changedFiles.map(async (file) => {
+          // Skip if file is missing name
+          if (!file.filename) {
+            console.warn('Skipping file with missing filename');
+            return null;
+          }
+
+          // Prepare file content and metadata
+          const enhancedFile = {
             filename: file.filename,
-            patch: file.patch,
-            importerOnly: file['importerOnly'] || false,
+            patch: file.patch || '',
             documentation: fileDocMap[file.filename] || null,
             functions: fileDocMap[file.filename]?.functions || [],
             imports: fileDocMap[file.filename]?.imports || [],
             exports: fileDocMap[file.filename]?.exports || [],
             impactedBy: dependencyMap.impactedBy[file.filename] || [],
             impacts: dependencyMap.impacts[file.filename] || [],
-            previousContent: '',
-            currentContent: '',
+            previousContent: file.previousContent || '',
+            currentContent: file.currentContent || '',
           };
 
-          // Fetch base version (previous) of the file
-          fileWithContent.previousContent = await this._fetchFileContent(
-            repository,
-            file.filename,
-            repository.baseBranch,
-            accountCredentials,
+          // If content isn't already provided, fetch it from the repository
+          if (!enhancedFile.previousContent) {
+            try {
+              enhancedFile.previousContent = await this._fetchFileContent(
+                repository,
+                file.filename,
+                parentCommitSha,
+                accountCredentials,
+              );
+            } catch (error) {
+              console.error(
+                `Error fetching previous content for ${file.filename}:`,
+                error.message,
+              );
+            }
+          }
+
+          if (!enhancedFile.currentContent) {
+            try {
+              enhancedFile.currentContent = await this._fetchFileContent(
+                repository,
+                file.filename,
+                latestCommitSha,
+                accountCredentials,
+              );
+            } catch (error) {
+              console.error(
+                `Error fetching current content for ${file.filename}:`,
+                error.message,
+              );
+            }
+          }
+
+          // Extract function definitions to understand what changed
+          enhancedFile.functions = this._extractFunctions(
+            enhancedFile.currentContent || '',
           );
 
-          // Fetch head version (current) of the file
-          fileWithContent.currentContent = await this._fetchFileContent(
-            repository,
-            file.filename,
-            'HEAD', // Use HEAD to get the latest version
-            accountCredentials,
-          );
-
-          return fileWithContent;
+          return enhancedFile;
         }),
       );
 
-      // NEW: Analyze variable usage in each file to detect potential issues
-      const variableAnalysis = enhancedChangedFiles
-        .map((file) => {
-          // Skip if we don't have the content
-          if (!file.currentContent) return null;
+      // Filter out null entries
+      const filteredFiles = enhancedChangedFiles.filter(Boolean);
 
-          // Find variables defined in this file
-          const { defined, used } = this._analyzeVariableUsage(
-            file.currentContent,
-          );
-
-          // Find undefined variables that might come from imports
-          const undefinedVars = this._detectUndefinedVariables(
-            file.currentContent,
-            file.imports || [],
-          );
-
-          // Create a map of exports provided by imported files to check for missing exports
-          const availableImportedExports = new Set<string>();
-
-          // Get all exports from files imported by this file
-          (file.impactedBy || []).forEach((importedFile) => {
-            const importedFileDoc = enhancedChangedFiles.find(
-              (f) => f.filename === importedFile,
-            );
-            if (importedFileDoc) {
-              (importedFileDoc.exports || []).forEach((exp) => {
-                availableImportedExports.add(exp);
-              });
-            }
-          });
-
-          // Find variables used but not available through imports (potential errors)
-          const missingVariables = new Set<string>();
-          undefinedVars.forEach((variable) => {
-            if (!availableImportedExports.has(variable)) {
-              missingVariables.add(variable);
-            }
-          });
-
-          return {
-            filename: file.filename,
-            definedVars: Array.from(defined),
-            usedVars: Array.from(used),
-            undefinedVars: Array.from(undefinedVars),
-            missingVariables: Array.from(missingVariables),
-            importsWithoutExports:
-              file.imports?.filter(
-                (imp) =>
-                  !allFileDocumentation.some(
-                    (doc) =>
-                      (doc.fullPath === imp || doc.name === imp) &&
-                      doc.exports &&
-                      doc.exports.length > 0,
-                  ),
-              ) || [],
-          };
-        })
-        .filter(Boolean);
-
-      // Calculate affected flows based on dependencies
+      // Identify affected flows based on dependencies
       const affectedFlows = await this._identifyAffectedFlows(
-        enhancedChangedFiles,
-        allFileDocumentation,
+        filteredFiles,
+        fileDocumentation,
         dependencyMap,
       );
 
-      // ENHANCEMENT: Create a more detailed flow impact analysis
-      const flowImpactAnalysis = this._analyzeFlowImpact(
-        affectedFlows,
-        variableAnalysis,
-        enhancedChangedFiles,
-      );
+      // Analyze variable usage to detect undefined variables
+      const variableAnalysis = filteredFiles.map((file) => {
+        const fileExtension = file.filename.split('.').pop()?.toLowerCase();
+        const language = this._detectLanguage(file.currentContent || '');
+        const variableUsage = this._analyzeVariableUsage(
+          file.currentContent || '',
+        );
+        const docType = this.mapFileTypeToDocumentationType(
+          file.filename.split('.').pop() || '',
+        );
 
-      // ENHANCEMENT: Analyze affected dependencies
+        return {
+          filename: file.filename,
+          language,
+          variables: {
+            defined: Array.from(variableUsage.defined),
+            used: Array.from(variableUsage.used),
+          },
+        };
+      });
+
+      // Analyze dependencies across files to find potential breakages
       const affectedDependencies = this._analyzeAffectedDependencies(
-        enhancedChangedFiles,
-        changedFiles.map((f) => f.filename),
+        filteredFiles,
+        filteredFiles.map((f) => f.filename),
         dependencyMap,
       );
 
-      // Use DeepSeek to analyze regression impact with additional dependency info
+      // Use DeepSeek AI for regression analysis
       const deepseekAI = new DeepSeek();
+      const geminiAI = new Gemini(); // Gemini as potential fallback
 
-      // Handle large PRs by analyzing files individually if needed
-      let regressionAnalysis;
-
-      // Check if PR is small enough for bulk analysis (max 10 files or 50k characters total)
-      const totalContentSize = enhancedChangedFiles.reduce(
-        (sum, file) =>
-          sum +
-          (file.previousContent?.length || 0) +
-          (file.currentContent?.length || 0),
-        0,
+      console.log(
+        `Performing regression analysis on ${filteredFiles.length} files`,
       );
 
-      if (enhancedChangedFiles.length <= 10 && totalContentSize <= 50000) {
-        // For small PRs, analyze all files at once for better context
+      let regressionAnalysis = null;
+      try {
         regressionAnalysis = await deepseekAI.analyzeRegressionImpact(
-          enhancedChangedFiles.map((file) => ({
+          filteredFiles.map((file) => ({
             filename: file.filename,
             patch: file.patch,
-            importerOnly: file.importerOnly || false,
             previousContent: file.previousContent || '',
             currentContent: file.currentContent || '',
-            documentation: file.documentation || null,
             functions: file.functions || [],
             imports: file.imports || [],
             exports: file.exports || [],
             impactedBy: file.impactedBy || [],
             impacts: file.impacts || [],
             affectedFlows: affectedFlows.fileFlowMap[file.filename] || [],
-            dependencyInfo: affectedDependencies[file.filename] || {
-              importedChangedFiles: [],
-              exportedToFiles: [],
-            },
-            variableAnalysis: variableAnalysis.find(
-              (v) => v.filename === file.filename,
-            ),
           })),
         );
-      } else {
-        // For larger PRs, analyze files one by one with important context
-        const analysisResults = await this._analyzeLargePRFiles(
-          enhancedChangedFiles,
-          variableAnalysis,
-          affectedFlows.fileFlowMap,
-          affectedDependencies,
-          deepseekAI,
-        );
-
-        regressionAnalysis = this._combineSingleFileAnalyses(analysisResults);
+      } catch (error) {
+        console.error('Error with DeepSeek analysis:', error);
+        // Handle error, potentially implement fallback to Gemini here
       }
 
-      // NEW: Augment the analysis with variable-level risk assessment
-      const enhancedRegressionAnalysis = {
-        ...regressionAnalysis,
-        flowImpactAnalysis,
-        variableRisks: variableAnalysis
-          .filter(
-            (analysis) =>
-              analysis.missingVariables.length > 0 ||
-              analysis.importsWithoutExports.length > 0,
-          )
-          .map((analysis) => ({
-            filename: analysis.filename,
-            missingVariables: analysis.missingVariables,
-            importsWithoutExports: analysis.importsWithoutExports,
-            riskLevel: analysis.missingVariables.length > 0 ? 'HIGH' : 'MEDIUM',
-          })),
-      };
-
-      // Include organization information for report creation
-      const organizationId = repository.organizationId;
-
-      // Store regression analysis results
+      // Create a report in the database
       const regressionTestingReport = await this.prisma.regressionReport.create(
         {
           data: {
             repositoryId,
             prNumber,
             status: 'COMPLETED',
-            summary: enhancedRegressionAnalysis.summary,
-            impactedFlows: enhancedRegressionAnalysis.impactedFlows,
-            testCases: enhancedRegressionAnalysis.testCases,
-            potentialBreakages: enhancedRegressionAnalysis.potentialBreakages,
-            changedBehavior: enhancedRegressionAnalysis.changedBehavior,
-            organizationId,
-            // Remove extraInfo as it's not in the schema
+            summary: regressionAnalysis?.summary || 'Analysis failed',
+            impactedFlows: regressionAnalysis?.impactedFlows || [],
+            testCases: regressionAnalysis?.testCases || [],
+            potentialBreakages: regressionAnalysis?.potentialBreakages || [],
+            changedBehavior: regressionAnalysis?.changedBehavior || [],
+            organizationId: repository.organizationId,
           },
         },
       );
 
-      // Return enhanced results including variable risks and flow impact
       return {
         reportId: regressionTestingReport.id,
-        ...enhancedRegressionAnalysis,
-        importersCount: filesImportingChangedFiles.size,
+        ...regressionAnalysis,
       };
     } catch (error) {
-      console.error('❌ Error in analyzeRegressionImpactEnhanced:', error);
+      console.error('Error in analyzeRegressionImpactEnhanced:', error);
       throw new BadRequestException(error.message);
     }
   }
@@ -1894,10 +1829,41 @@ export class RepositoryScanService {
       const dependencyMap = this._buildDependencyGraph(fileDocumentation);
 
       console.log('dependencyMap', dependencyMap);
-      // Enhanced file content retrieval - fetch from both head and base branches
+
+      // Fetch the latest commit from the PR and its parent to get proper "before" and "after" versions
+      let latestCommitSha = 'HEAD';
+      let parentCommitSha = null;
+
+      try {
+        // Get the latest commit from the PR
+        const commitInfo = await this._fetchPrCommitInfo(
+          repository,
+          prNumber,
+          accountCredentials,
+        );
+
+        if (commitInfo) {
+          latestCommitSha = commitInfo.latestCommitSha;
+          parentCommitSha = commitInfo.parentCommitSha;
+          console.log(
+            `Using commits for comparison: latest=${latestCommitSha}, parent=${parentCommitSha}`,
+          );
+        } else {
+          console.log(
+            'Could not determine commit information, using HEAD and baseBranch as fallback',
+          );
+          parentCommitSha = repository.baseBranch;
+        }
+      } catch (error) {
+        console.error('Error fetching PR commit information:', error);
+        console.log('Using HEAD and baseBranch as fallback');
+        parentCommitSha = repository.baseBranch;
+      }
+
+      // Enhanced file content retrieval - fetch from specific commits
       const enhancedChangedFiles = await Promise.all(
         changedFiles.map(async (file) => {
-          // Files with complete content (from head and base branches)
+          // Files with complete content (from before and after the changes)
           const fileWithContent = {
             filename: file.filename,
             patch: file.patch,
@@ -1911,21 +1877,31 @@ export class RepositoryScanService {
             currentContent: '',
           };
 
-          // Fetch base version (previous) of the file
-          fileWithContent.previousContent = await this._fetchFileContent(
-            repository,
-            file.filename,
-            repository.baseBranch,
-            accountCredentials,
-          );
+          // If "previous" content was already provided, use it
+          if (file.previousContent) {
+            fileWithContent.previousContent = file.previousContent;
+          } else {
+            // Fetch "previous" version from parent commit
+            fileWithContent.previousContent = await this._fetchFileContent(
+              repository,
+              file.filename,
+              parentCommitSha,
+              accountCredentials,
+            );
+          }
 
-          // Fetch head version (current) of the file
-          fileWithContent.currentContent = await this._fetchFileContent(
-            repository,
-            file.filename,
-            'HEAD', // Use HEAD to get the latest version
-            accountCredentials,
-          );
+          // If "current" content was already provided, use it
+          if (file.currentContent) {
+            fileWithContent.currentContent = file.currentContent;
+          } else {
+            // Fetch "current" version from latest commit
+            fileWithContent.currentContent = await this._fetchFileContent(
+              repository,
+              file.filename,
+              latestCommitSha,
+              accountCredentials,
+            );
+          }
 
           return fileWithContent;
         }),
@@ -1989,6 +1965,82 @@ export class RepositoryScanService {
     } catch (error) {
       console.error('❌ Error in analyzeRegressionImpact:', error);
       throw new BadRequestException(error.message);
+    }
+  }
+
+  /**
+   * Fetches commit information for a PR to get the latest commit and its parent
+   * @param repository Repository object
+   * @param prNumber PR number
+   * @param credentials Account credentials for API access
+   * @returns Object containing the latest commit SHA and its parent commit SHA
+   */
+  private async _fetchPrCommitInfo(
+    repository: any,
+    prNumber: number,
+    credentials: any,
+  ): Promise<{ latestCommitSha: string; parentCommitSha: string } | null> {
+    try {
+      if (credentials.accountType === AccountCredentialsType.GITHUB_TOKEN) {
+        // GitHub PR commit info retrieval
+        const url = `https://api.github.com/repos/${repository.owner}/${repository.name}/pulls/${prNumber}/commits`;
+        const response = await axios.get(url, {
+          headers: {
+            Accept: 'application/vnd.github.v3+json',
+            Authorization: `Bearer ${credentials.decryptedToken}`,
+          },
+        });
+
+        if (response.data && response.data.length > 0) {
+          // Get the latest commit (last in the array)
+          const latestCommit = response.data[response.data.length - 1];
+          const latestCommitSha = latestCommit.sha;
+
+          // Get the parent commit of the latest commit
+          if (latestCommit.parents && latestCommit.parents.length > 0) {
+            const parentCommitSha = latestCommit.parents[0].sha;
+            return { latestCommitSha, parentCommitSha };
+          }
+        }
+      } else if (
+        credentials.accountType === AccountCredentialsType.BITBUCKET_TOKEN
+      ) {
+        // Bitbucket PR commit info retrieval
+        const workspace = credentials.payload.workspace.replace(' ', '-');
+        const repo = repository.name.replace(' ', '-');
+
+        const url = `https://api.bitbucket.org/2.0/repositories/${workspace}/${repo}/pullrequests/${prNumber}/commits`;
+        const response = await axios.get(url, {
+          headers: {
+            Authorization: `${credentials.decryptedToken}`,
+          },
+        });
+
+        if (
+          response.data &&
+          response.data.values &&
+          response.data.values.length > 0
+        ) {
+          // Get the latest commit (first in the values array)
+          const latestCommit = response.data.values[0];
+          const latestCommitSha = latestCommit.hash;
+
+          // Get the parent commit of the latest commit
+          if (latestCommit.parents && latestCommit.parents.length > 0) {
+            const parentCommitSha = latestCommit.parents[0].hash;
+            return { latestCommitSha, parentCommitSha };
+          }
+        }
+      }
+
+      // If we couldn't get commit information
+      return null;
+    } catch (error) {
+      console.error(
+        `Error fetching PR commit information for PR #${prNumber}:`,
+        error.message,
+      );
+      return null;
     }
   }
 
@@ -3015,11 +3067,13 @@ export class RepositoryScanService {
     affectedFlows: any,
     affectedDependencies: any,
   ) {
+    console.log('Using chunked regression analysis strategy for large PR');
     const deepseekAI = new DeepSeek();
+    const geminiAI = new Gemini();
 
     // Constants for chunking
-    const MAX_FILES_PER_CHUNK = 5; // Adjust based on average file size
-    const MAX_CONTENT_LENGTH = 30000; // ~15k tokens, half of Deepseek's context
+    const MAX_FILES_PER_CHUNK = 3; // Adjusted down to ensure we stay well under token limits
+    const MAX_CONTENT_LENGTH = 15000; // ~7k tokens, much less than DeepSeek's context
 
     // Sort files by importance - changed files first, then importers
     const sortedFiles = [...enhancedChangedFiles].sort((a, b) => {
@@ -3037,10 +3091,12 @@ export class RepositoryScanService {
       if (aMissingVars !== bMissingVars) return bMissingVars - aMissingVars;
 
       // Finally sort by number of flows affected
-      const aFlows = affectedFlows.fileFlowMap[a.filename]?.length || 0;
-      const bFlows = affectedFlows.fileFlowMap[b.filename]?.length || 0;
+      const aFlows = (affectedFlows.fileFlowMap[a.filename] || []).length;
+      const bFlows = (affectedFlows.fileFlowMap[b.filename] || []).length;
       return bFlows - aFlows;
     });
+
+    console.log('Sorted files by importance for chunked analysis');
 
     // Create chunks of files
     const fileChunks: any[][] = [];
@@ -3075,494 +3131,208 @@ export class RepositoryScanService {
       fileChunks.push(currentChunk);
     }
 
+    console.log(`Created ${fileChunks.length} chunks for analysis`);
+
     // Process each chunk with the AI
     const chunkAnalysisResults = await Promise.all(
-      fileChunks.map(async (chunk) => {
+      fileChunks.map(async (chunk, index) => {
+        console.log(
+          `Processing chunk ${index + 1}/${fileChunks.length} with ${chunk.length} files`,
+        );
+
         // For each chunk, create a more compact representation to send to AI
-        const compactChunk = chunk.map((file) =>
-          this._createCompactFileRepresentation(
-            file,
-            variableAnalysis.find((v) => v.filename === file.filename),
-            affectedFlows.fileFlowMap[file.filename] || [],
-            affectedDependencies[file.filename] || {
+        const compactChunk = chunk.map((file) => {
+          // Create a more concise representation with just essential data
+          const compactFile = {
+            filename: file.filename,
+            patch: file.patch?.substring(0, 500) || '',
+            previousContent: file.previousContent?.substring(0, 1000) || '',
+            currentContent: file.currentContent?.substring(0, 1000) || '',
+            functions: (file.functions || []).slice(0, 5),
+            imports: (file.imports || []).slice(0, 5),
+            exports: (file.exports || []).slice(0, 5),
+            variableInfo:
+              variableAnalysis.find((v) => v.filename === file.filename) || {},
+            affectedFlows: (
+              affectedFlows.fileFlowMap[file.filename] || []
+            ).slice(0, 3),
+            dependencyInfo: affectedDependencies[file.filename] || {
               importedChangedFiles: [],
               exportedToFiles: [],
             },
-          ),
-        );
+          };
 
-        // Send to AI for analysis
-        return await deepseekAI.analyzeRegressionImpact(compactChunk);
+          return compactFile;
+        });
+
+        // Try DeepSeek first, if it fails due to token limits, use Gemini
+        try {
+          console.log(`Analyzing chunk ${index + 1} with DeepSeek`);
+          return await deepseekAI.analyzeRegressionImpact(compactChunk);
+        } catch (error) {
+          console.error(
+            `DeepSeek analysis failed for chunk ${index + 1}:`,
+            error.message,
+          );
+          console.log(`Falling back to Gemini for chunk ${index + 1}`);
+          return await geminiAI.analyzeRegressionImpact(compactChunk);
+        }
       }),
     );
+
+    console.log(`Successfully analyzed ${chunkAnalysisResults.length} chunks`);
 
     // Merge the results from each chunk
     return this._mergeChunkResults(chunkAnalysisResults, fileChunks);
   }
 
   /**
-   * Creates a compact representation of a file to reduce token usage
+   * Merge results from multiple chunk analyses into a single coherent report
+   */
+  private _mergeChunkResults(chunkResults: any[], fileChunks: any[][]): any {
+    console.log('Merging chunk analysis results');
+
+    // Initialize merged result structure
+    const mergedResult = {
+      summary: '',
+      impactedFlows: [],
+      testCases: [],
+      potentialBreakages: [],
+      changedBehavior: [],
+    };
+
+    // Generate combined summary
+    const summaries = chunkResults
+      .map((result) => result.summary || '')
+      .filter(Boolean);
+    mergedResult.summary = this._generateCombinedSummary(summaries, fileChunks);
+
+    // Merge arrays from each chunk result
+    chunkResults.forEach((result, index) => {
+      // Merge impacted flows
+      if (Array.isArray(result.impactedFlows)) {
+        mergedResult.impactedFlows.push(...result.impactedFlows);
+      }
+
+      // Merge test cases
+      if (Array.isArray(result.testCases)) {
+        mergedResult.testCases.push(...result.testCases);
+      }
+
+      // Merge potential breakages
+      if (Array.isArray(result.potentialBreakages)) {
+        mergedResult.potentialBreakages.push(...result.potentialBreakages);
+      }
+
+      // Merge behavior changes
+      if (Array.isArray(result.changedBehavior)) {
+        mergedResult.changedBehavior.push(...result.changedBehavior);
+      }
+    });
+
+    // Deduplicate results to avoid repetition
+    mergedResult.impactedFlows = this._deduplicateByField(
+      mergedResult.impactedFlows,
+      'flowName',
+    );
+    mergedResult.testCases = this._deduplicateByField(
+      mergedResult.testCases,
+      'testName',
+    );
+    mergedResult.potentialBreakages = this._deduplicateByField(
+      mergedResult.potentialBreakages,
+      'area',
+    );
+    mergedResult.changedBehavior = this._deduplicateByField(
+      mergedResult.changedBehavior,
+      'component',
+    );
+
+    console.log('Finished merging chunk results');
+    return mergedResult;
+  }
+
+  /**
+   * Generate a combined summary from individual chunk summaries
+   */
+  private _generateCombinedSummary(
+    summaries: string[],
+    fileChunks: any[][],
+  ): string {
+    // Count total files analyzed
+    const totalFiles = fileChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+
+    // Create an intro sentence
+    const intro = `Analysis of ${totalFiles} changed files revealed the following key impacts:`;
+
+    // Extract key points from each summary
+    let keyPoints: string[] = [];
+    summaries.forEach((summary) => {
+      // Split summary into sentences and take the most important ones
+      const sentences = summary.split(/\.\s+/);
+      const importantSentences = sentences
+        .filter(
+          (s) =>
+            s.toLowerCase().includes('impact') ||
+            s.toLowerCase().includes('change') ||
+            s.toLowerCase().includes('break') ||
+            s.toLowerCase().includes('risk'),
+        )
+        .slice(0, 2);
+
+      keyPoints.push(...importantSentences);
+    });
+
+    // Remove duplicates and limit to top 5 points
+    keyPoints = [...new Set(keyPoints)].slice(0, 5);
+
+    // Format key points as bullet points
+    const bulletPoints = keyPoints.map((point) => `• ${point}`).join('\n');
+
+    // Create a summary from intro and bullet points
+    return `${intro}\n\n${bulletPoints}`;
+  }
+
+  /**
+   * Deduplicate array items by a specific field
+   */
+  private _deduplicateByField(items: any[], field: string): any[] {
+    const uniqueMap = new Map();
+
+    items.forEach((item) => {
+      const key = item[field];
+      if (key && !uniqueMap.has(key)) {
+        uniqueMap.set(key, item);
+      }
+    });
+
+    return Array.from(uniqueMap.values());
+  }
+
+  /**
+   * Create a compact file representation for AI analysis
    */
   private _createCompactFileRepresentation(
     file: any,
     variableAnalysis: any,
-    flows: string[],
-    dependencies: any,
-  ) {
-    // Calculate what portions of code changed to focus context
-    const codeChanges = this._extractCodeChanges(
-      file.previousContent || '',
-      file.currentContent || '',
-    );
-
+    affectedFlows: any[],
+    dependencyInfo: any,
+  ): any {
     return {
       filename: file.filename,
       patch: file.patch,
-      // Only include relevant portions of content
-      previousContentSummary: this._getSummaryOfContent(
-        file.previousContent,
-        codeChanges.removed,
-      ),
-      currentContentSummary: this._getSummaryOfContent(
-        file.currentContent,
-        codeChanges.added,
-      ),
-      functions: file.functions || [],
-      imports: file.imports || [],
-      exports: file.exports || [],
-      impactedBy: file.impactedBy || [],
-      impacts: file.impacts || [],
-      affectedFlows: flows,
-      dependencyInfo: dependencies,
-      variableAnalysis: variableAnalysis,
-      codeChanges: codeChanges,
+      previousContent: file.previousContent?.substring(0, 1500) || '',
+      currentContent: file.currentContent?.substring(0, 1500) || '',
+      functions: (file.functions || []).slice(0, 5),
+      imports: (file.imports || []).slice(0, 5),
+      exports: (file.exports || []).slice(0, 5),
+      variableInfo: variableAnalysis || {},
+      affectedFlows: affectedFlows || [],
+      dependencyInfo: dependencyInfo || {
+        importedChangedFiles: [],
+        exportedToFiles: [],
+      },
     };
-  }
-
-  /**
-   * Extracts only the changed portions of code to reduce context size
-   */
-  private _extractCodeChanges(previousContent: string, currentContent: string) {
-    if (!previousContent || !currentContent) {
-      return { added: [], removed: [] };
-    }
-
-    try {
-      // Convert content to lines
-      const prevLines = previousContent.split('\n');
-      const currLines = currentContent.split('\n');
-
-      // Simple line-based diff (can be enhanced with proper diff algorithm)
-      const added: { lineNumber: number; content: string }[] = [];
-      const removed: { lineNumber: number; content: string }[] = [];
-
-      // Find added lines (in current but not in previous)
-      currLines.forEach((line, index) => {
-        if (!prevLines.includes(line)) {
-          added.push({ lineNumber: index + 1, content: line });
-        }
-      });
-
-      // Find removed lines (in previous but not in current)
-      prevLines.forEach((line, index) => {
-        if (!currLines.includes(line)) {
-          removed.push({ lineNumber: index + 1, content: line });
-        }
-      });
-
-      return { added, removed };
-    } catch (error) {
-      console.error('Error extracting code changes:', error);
-      return { added: [], removed: [] };
-    }
-  }
-
-  /**
-   * Gets a summary of content focusing on the changed lines and their context
-   */
-  private _getSummaryOfContent(
-    content: string,
-    changes: { lineNumber: number; content: string }[],
-  ) {
-    if (!content || !changes || changes.length === 0) {
-      return '';
-    }
-
-    try {
-      const lines = content.split('\n');
-      const contextLines = 3; // Number of lines before/after changes to include
-      const includedLines = new Set<number>();
-
-      // Add changed lines and their context to the set
-      changes.forEach((change) => {
-        const lineNumber = change.lineNumber;
-        // Include context lines before and after
-        for (
-          let i = Math.max(0, lineNumber - contextLines);
-          i <= Math.min(lines.length - 1, lineNumber + contextLines);
-          i++
-        ) {
-          includedLines.add(i);
-        }
-      });
-
-      // Convert set to sorted array
-      const lineNumbers = Array.from(includedLines).sort((a, b) => a - b);
-
-      // Generate summary with line numbers
-      let summary = '';
-      let lastLineNumber = -1;
-
-      lineNumbers.forEach((lineNumber) => {
-        // Add ellipsis for gaps
-        if (lastLineNumber !== -1 && lineNumber > lastLineNumber + 1) {
-          summary += '...\n';
-        }
-
-        // Add the line with its number
-        summary += `${lineNumber + 1}: ${lines[lineNumber]}\n`;
-        lastLineNumber = lineNumber;
-      });
-
-      return summary;
-    } catch (error) {
-      console.error('Error creating content summary:', error);
-      return '';
-    }
-  }
-
-  /**
-   * Merges results from multiple chunk analyses
-   */
-  private _mergeChunkResults(chunkResults: any[], fileChunks: any[][]) {
-    // Initialize merged result
-    const merged = {
-      summary: '',
-      impactedFlows: [],
-      testCases: [],
-      potentialBreakages: [],
-      changedBehavior: [],
-    };
-
-    // Track unique items
-    const uniqueFlows = new Set<string>();
-    const uniqueTestCases = new Set<string>();
-    const uniqueBreakages = new Set<string>();
-    const uniqueBehaviorChanges = new Set<string>();
-
-    // Build list of all file names for reference
-    const allFileNames = fileChunks.flat().map((file) => file.filename);
-
-    // Combine results from each chunk
-    chunkResults.forEach((result, index) => {
-      // Add to summary, prefixing with chunk information
-      const fileInfo = `[Files ${index + 1}/${chunkResults.length}: ${fileChunks[index].map((f) => f.filename.split('/').pop()).join(', ')}]`;
-      merged.summary +=
-        (merged.summary ? '\n\n' : '') + `${fileInfo}\n${result.summary}`;
-
-      // Add unique flows
-      result.impactedFlows.forEach((flow: string) => {
-        if (!uniqueFlows.has(flow)) {
-          uniqueFlows.add(flow);
-          merged.impactedFlows.push(flow);
-        }
-      });
-
-      // Add unique test cases (based on description)
-      result.testCases.forEach((testCase: any) => {
-        const testCaseKey = testCase.description;
-        if (!uniqueTestCases.has(testCaseKey)) {
-          uniqueTestCases.add(testCaseKey);
-          merged.testCases.push(testCase);
-        }
-      });
-
-      // Add unique potential breakages
-      result.potentialBreakages.forEach((breakage: any) => {
-        const breakageKey =
-          typeof breakage === 'string'
-            ? breakage
-            : breakage.description || JSON.stringify(breakage);
-
-        if (!uniqueBreakages.has(breakageKey)) {
-          uniqueBreakages.add(breakageKey);
-          merged.potentialBreakages.push(breakage);
-        }
-      });
-
-      // Add unique behavior changes
-      result.changedBehavior.forEach((change: any) => {
-        const changeKey =
-          typeof change === 'string'
-            ? change
-            : change.description || JSON.stringify(change);
-
-        if (!uniqueBehaviorChanges.has(changeKey)) {
-          uniqueBehaviorChanges.add(changeKey);
-          merged.changedBehavior.push(change);
-        }
-      });
-    });
-
-    // Add a summary of the overall analysis
-    const overallSummary = `
-Analysis of ${allFileNames.length} files completed. 
-Found ${merged.impactedFlows.length} impacted flows, 
-${merged.testCases.length} recommended test cases, 
-${merged.potentialBreakages.length} potential breakages, and 
-${merged.changedBehavior.length} behavior changes.`;
-
-    merged.summary = overallSummary + '\n\n' + merged.summary;
-
-    return merged;
-  }
-
-  /**
-   * Merges standard and chunked analyses
-   */
-  private _mergeAnalysisResults(standardAnalysis: any, chunkedAnalysis: any) {
-    // For most fields, prefer chunked analysis as it's more comprehensive
-    return {
-      ...standardAnalysis,
-      summary: chunkedAnalysis.summary,
-      impactedFlows: chunkedAnalysis.impactedFlows,
-      testCases: chunkedAnalysis.testCases,
-      potentialBreakages: chunkedAnalysis.potentialBreakages,
-      changedBehavior: chunkedAnalysis.changedBehavior,
-      // Keep our enhanced flow analysis and variable risks
-      flowImpactAnalysis: standardAnalysis.flowImpactAnalysis,
-      variableRisks: standardAnalysis.variableRisks,
-    };
-  }
-
-  /**
-   * Analyzes files in a large PR individually to maintain quality while staying within context limits
-   */
-  private async _analyzeLargePRFiles(
-    enhancedChangedFiles: any[],
-    variableAnalysis: any[],
-    flowsMap: Record<string, string[]>,
-    dependenciesMap: Record<string, any>,
-    ai: any,
-  ) {
-    // Sort files by importance (directly changed files first, then by potential issues)
-    const sortedFiles = [...enhancedChangedFiles].sort((a, b) => {
-      // Direct changes are more important than importers
-      if (a.importerOnly && !b.importerOnly) return 1;
-      if (!a.importerOnly && b.importerOnly) return -1;
-
-      // Files with missing variables are next most important
-      const aAnalysis = variableAnalysis.find((v) => v.filename === a.filename);
-      const bAnalysis = variableAnalysis.find((v) => v.filename === b.filename);
-
-      const aMissingVars = aAnalysis?.missingVariables?.length || 0;
-      const bMissingVars = bAnalysis?.missingVariables?.length || 0;
-
-      return bMissingVars - aMissingVars;
-    });
-
-    const results = [];
-
-    // Process each file with important contextual information
-    for (const file of sortedFiles) {
-      // Get files that are directly related to this file (imports/exports)
-      const relatedFiles = this._getRelatedFiles(file, enhancedChangedFiles);
-
-      // Find related variable analyses
-      const fileAnalysis = variableAnalysis.find(
-        (v) => v.filename === file.filename,
-      );
-      const relatedAnalyses = relatedFiles
-        .map((relFile) =>
-          variableAnalysis.find((v) => v.filename === relFile.filename),
-        )
-        .filter(Boolean);
-
-      // Prepare context for AI with the main file and minimal key information about related files
-      const analysisContext = {
-        mainFile: {
-          filename: file.filename,
-          patch: file.patch,
-          importerOnly: file.importerOnly || false,
-          previousContent: file.previousContent || '',
-          currentContent: file.currentContent || '',
-          functions: file.functions || [],
-          imports: file.imports || [],
-          exports: file.exports || [],
-          impactedBy: file.impactedBy || [],
-          impacts: file.impacts || [],
-          affectedFlows: flowsMap[file.filename] || [],
-          dependencyInfo: dependenciesMap[file.filename] || {
-            importedChangedFiles: [],
-            exportedToFiles: [],
-          },
-          variableAnalysis: fileAnalysis,
-        },
-        relatedFiles: relatedFiles.map((relFile) => ({
-          filename: relFile.filename,
-          // Only include key information about related files, not full content
-          functions: relFile.functions || [],
-          exports: relFile.exports || [],
-          imports: relFile.imports || [],
-          relationToMain: this._getRelationship(file, relFile),
-          variableAnalysis: variableAnalysis.find(
-            (v) => v.filename === relFile.filename,
-          ),
-        })),
-      };
-
-      // Analyze this file with its context
-      try {
-        const result = await ai.analyzeRegressionImpact([analysisContext]);
-        results.push({
-          filename: file.filename,
-          result,
-        });
-      } catch (error) {
-        console.error(`Error analyzing file ${file.filename}:`, error);
-        results.push({
-          filename: file.filename,
-          error: error.message,
-          result: {
-            summary: `Error analyzing ${file.filename}: ${error.message}`,
-            impactedFlows: [],
-            testCases: [],
-            potentialBreakages: [
-              `Potential issues in ${file.filename} could not be analyzed`,
-            ],
-            changedBehavior: [],
-          },
-        });
-      }
-    }
-
-    return results;
-  }
-
-  /**
-   * Gets files that have direct relationships with the given file
-   */
-  private _getRelatedFiles(file: any, allFiles: any[]) {
-    if (!file || !file.filename) return [];
-
-    // Find files that this file imports from or exports to
-    const relatedFilePaths = new Set<string>();
-
-    // Add files that this file imports from
-    (file.impactedBy || []).forEach((path: string) =>
-      relatedFilePaths.add(path),
-    );
-
-    // Add files that import from this file
-    (file.impacts || []).forEach((path: string) => relatedFilePaths.add(path));
-
-    // Return the actual file objects
-    return allFiles.filter(
-      (f) => f.filename !== file.filename && relatedFilePaths.has(f.filename),
-    );
-  }
-
-  /**
-   * Determines the relationship between two files
-   */
-  private _getRelationship(mainFile: any, otherFile: any) {
-    if ((mainFile.impactedBy || []).includes(otherFile.filename)) {
-      return 'import'; // Main file imports from other file
-    } else if ((mainFile.impacts || []).includes(otherFile.filename)) {
-      return 'export'; // Main file exports to other file
-    } else {
-      return 'related'; // Other relationship
-    }
-  }
-
-  /**
-   * Combines individual file analyses into a comprehensive regression analysis
-   */
-  private _combineSingleFileAnalyses(analysisResults: any[]) {
-    // Initialize with empty arrays
-    const combined = {
-      summary: '',
-      impactedFlows: [],
-      testCases: [],
-      potentialBreakages: [],
-      changedBehavior: [],
-    };
-
-    // Track unique items
-    const uniqueFlows = new Set<string>();
-    const uniqueTestCases = new Set<string>();
-    const uniqueBreakages = new Set<string>();
-    const uniqueBehaviorChanges = new Set<string>();
-
-    // Individual file summaries
-    const fileSummaries: string[] = [];
-
-    // Process each result
-    analysisResults.forEach(({ filename, result }) => {
-      if (!result) return;
-
-      // Add file summary
-      fileSummaries.push(
-        `File: ${filename}\n${result.summary || 'No issues detected'}`,
-      );
-
-      // Add unique flows
-      (result.impactedFlows || []).forEach((flow: string) => {
-        if (!uniqueFlows.has(flow)) {
-          uniqueFlows.add(flow);
-          combined.impactedFlows.push(flow);
-        }
-      });
-
-      // Add unique test cases (based on description)
-      (result.testCases || []).forEach((testCase: any) => {
-        const testCaseKey =
-          typeof testCase === 'string' ? testCase : testCase.description;
-        if (testCaseKey && !uniqueTestCases.has(testCaseKey)) {
-          uniqueTestCases.add(testCaseKey);
-          combined.testCases.push(testCase);
-        }
-      });
-
-      // Add unique potential breakages
-      (result.potentialBreakages || []).forEach((breakage: any) => {
-        const breakageKey =
-          typeof breakage === 'string'
-            ? breakage
-            : breakage.description || JSON.stringify(breakage);
-
-        if (breakageKey && !uniqueBreakages.has(breakageKey)) {
-          uniqueBreakages.add(breakageKey);
-          combined.potentialBreakages.push(breakage);
-        }
-      });
-
-      // Add unique behavior changes
-      (result.changedBehavior || []).forEach((change: any) => {
-        const changeKey =
-          typeof change === 'string'
-            ? change
-            : change.description || JSON.stringify(change);
-
-        if (changeKey && !uniqueBehaviorChanges.has(changeKey)) {
-          uniqueBehaviorChanges.add(changeKey);
-          combined.changedBehavior.push(change);
-        }
-      });
-    });
-
-    // Generate overall summary
-    const overallSummary = `
-Analysis of ${analysisResults.length} files completed. 
-Found ${combined.impactedFlows.length} impacted flows, 
-${combined.testCases.length} recommended test cases, 
-${combined.potentialBreakages.length} potential breakages, and 
-${combined.changedBehavior.length} behavior changes.`;
-
-    // Combine all summaries
-    combined.summary = `${overallSummary}\n\n${fileSummaries.join('\n\n')}`;
-
-    return combined;
   }
 
   /**

@@ -99,14 +99,73 @@
         margin-bottom: 8px;
       }
       .test-case {
-        margin-bottom: 15px;
+        margin-bottom: 24px;
         padding: 15px;
         background-color: #f8f9fa;
         border-radius: 4px;
+        border-left: 4px solid #1a5dd4;
+      }
+      .breakage-test {
+        border-left-color: #dc3545;
+      }
+      .safe-test {
+        border-left-color: #28a745;
       }
       .test-name {
         font-weight: bold;
+        font-size: 16px;
         margin-bottom: 8px;
+        display: flex;
+        justify-content: space-between;
+      }
+      .test-badge {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: bold;
+        color: #fff;
+      }
+      .badge-breakage {
+        background-color: #dc3545;
+      }
+      .badge-safe {
+        background-color: #28a745;
+      }
+      .test-section {
+        margin-top: 12px;
+      }
+      .test-section-title {
+        font-weight: bold;
+        margin-bottom: 4px;
+      }
+      .test-steps {
+        list-style-type: none;
+        padding-left: 0;
+      }
+      .test-steps li {
+        margin-bottom: 4px;
+        padding-left: 20px;
+        position: relative;
+      }
+      .test-steps li:before {
+        content: "▶";
+        position: absolute;
+        left: 0;
+        color: #1a5dd4;
+      }
+      .affected-components {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .component-tag {
+        background-color: #e9ecef;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 12px;
+        color: #495057;
       }
       .code-block {
         background-color: #272822;
@@ -149,13 +208,73 @@
         <div class="section">
           <h3 class="section-title">Impacted Flows</h3>
           {{#each regressionData.impactedFlows}}
-            <div class="flow-card {{#if (eq this.riskLevel 'HIGH')}}high-risk{{else if (eq this.riskLevel 'MEDIUM')}}medium-risk{{else}}low-risk{{/if}}">
+            <div class="flow-card {{#if (eq this.impactSeverity 'HIGH')}}high-risk{{else if (eq this.impactSeverity 'MEDIUM')}}medium-risk{{else}}low-risk{{/if}}">
               <div class="flow-name">
-                {{this.name}}
-                <span class="flow-risk risk-{{this.riskLevel}}">{{this.riskLevel}}</span>
+                {{#if this.flowName}}
+                  {{this.flowName}}
+                  {{#if this.impactSeverity}}
+                    <span class="flow-risk risk-{{this.impactSeverity}}">{{this.impactSeverity}}</span>
+                  {{/if}}
+                {{else}}
+                  {{this}}
+                {{/if}}
               </div>
-              <p><strong>Description:</strong> {{this.description}}</p>
-              <p><strong>Impact:</strong> {{this.changeImpact}}</p>
+              {{#if this.description}}
+                <p><strong>Description:</strong> {{this.description}}</p>
+              {{/if}}
+              {{#if this.breakageStatus}}
+                <p><strong>Impact:</strong> {{this.breakageStatus}}</p>
+              {{/if}}
+              {{#if this.affectedComponents}}
+              <div class="affected-components">
+                {{#each this.affectedComponents}}
+                  <span class="component-tag">{{this}}</span>
+                {{/each}}
+              </div>
+              {{/if}}
+            </div>
+          {{/each}}
+        </div>
+        {{/if}}
+
+        {{#if regressionData.testCases.length}}
+        <div class="section">
+          <h3 class="section-title">Suggested Test Cases</h3>
+          {{#each regressionData.testCases}}
+            <div class="test-case {{#if this.willCatchBreakage}}breakage-test{{else}}safe-test{{/if}}">
+              <div class="test-name">
+                {{this.testName}}
+                {{#if this.willCatchBreakage}}
+                  <span class="test-badge badge-breakage">DETECTS REGRESSION</span>
+                {{else}}
+                  <span class="test-badge badge-safe">VALIDATION</span>
+                {{/if}}
+              </div>
+              <p><strong>Type:</strong> {{this.type}}</p>
+              <p><strong>Scenario:</strong> {{this.scenario}}</p>
+              
+              {{#if this.steps}}
+              <div class="test-section">
+                <div class="test-section-title">Steps:</div>
+                <ul class="test-steps">
+                  {{#each this.steps}}
+                    <li>{{this}}</li>
+                  {{/each}}
+                </ul>
+              </div>
+              {{/if}}
+              
+              <div class="test-section">
+                <div class="test-section-title">Expected Result:</div>
+                <p>{{this.expectedResult}}</p>
+              </div>
+              
+              {{#if this.codeExample}}
+              <div class="test-section">
+                <div class="test-section-title">Example Code:</div>
+                <div class="code-block">{{this.codeExample}}</div>
+              </div>
+              {{/if}}
             </div>
           {{/each}}
         </div>
@@ -168,7 +287,7 @@
             <div class="behavior-change">
               <div class="component-name">{{this.component}}</div>
               <p><strong>Previous:</strong> {{this.previousBehavior}}</p>
-              <p><strong>Current:</strong> {{this.currentBehavior}}</p>
+              <p><strong>Current:</strong> {{this.newBehavior}}</p>
               <p><strong>Impact:</strong> {{this.impact}}</p>
             </div>
           {{/each}}
@@ -179,24 +298,12 @@
         <div class="section">
           <h3 class="section-title">Potential Issues</h3>
           {{#each regressionData.potentialBreakages}}
-            <div class="flow-card {{#if (eq this.severity 'HIGH')}}high-risk{{else if (eq this.severity 'MEDIUM')}}medium-risk{{else}}low-risk{{/if}}">
-              <p><strong>{{this.location}}:</strong> {{this.description}}</p>
-              <p><strong>Recommendation:</strong> {{this.recommendation}}</p>
-            </div>
-          {{/each}}
-        </div>
-        {{/if}}
-
-        {{#if regressionData.testCases.length}}
-        <div class="section">
-          <h3 class="section-title">Suggested Test Cases</h3>
-          {{#each regressionData.testCases}}
-            <div class="test-case">
-              <div class="test-name">{{this.name}}</div>
-              <p><strong>Description:</strong> {{this.description}}</p>
-              <p><strong>Expected Outcome:</strong> {{this.expectedOutcome}}</p>
-              {{#if this.code}}
-              <div class="code-block">{{this.code}}</div>
+            <div class="flow-card {{#if (eq this.breakageStatus 'WILL_BREAK')}}high-risk{{else if (eq this.breakageStatus 'MIGHT_BREAK')}}medium-risk{{else}}low-risk{{/if}}">
+              <p><strong>{{this.area}}:</strong> {{this.description}}</p>
+              <p><strong>Location:</strong> {{this.location}}</p>
+              <p><strong>Recommendation:</strong> {{this.mitigation}}</p>
+              {{#if this.breakageStatus}}
+                <p><strong>Status:</strong> {{this.breakageStatus}}</p>
               {{/if}}
             </div>
           {{/each}}

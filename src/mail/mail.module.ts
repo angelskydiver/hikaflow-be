@@ -2,9 +2,16 @@ import { MailerModule } from '@nestjs-modules/mailer';
 import { HandlebarsAdapter } from '@nestjs-modules/mailer/dist/adapters/handlebars.adapter';
 import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as handlebars from 'handlebars';
 import { join } from 'path';
 import { PrismaModule } from 'src/prisma/prisma.module';
 import { MailService } from './mail.service';
+
+// Register Handlebars helpers
+handlebars.registerHelper('eq', function (arg1, arg2) {
+  return arg1 === arg2;
+});
+
 @Global()
 @Module({
   imports: [

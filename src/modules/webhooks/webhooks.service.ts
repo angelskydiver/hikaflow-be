@@ -756,12 +756,23 @@ export class WebhooksService {
           );
         }
 
+        // Prepare files for regression analysis
+        // The filteredFiles array contains only the filenames and patches, but we need more context
+        // Pass just the file paths and patches to the analysis service which will fetch the content
+        // from the appropriate commits
+        const filesForAnalysis = filteredFiles.map((file) => ({
+          filename: file.filename,
+          patch: file.patch || '',
+          // Don't include content - let the service fetch it from the appropriate commits
+          // The service will fetch previous content from the parent commit and current content from the merge commit
+        }));
+
         // Get the latest version of files from both branches for comparison
         const regressionAnalysis =
           await this._repositoryScanService.analyzeRegressionImpactEnhanced(
             repository.id,
             data.number,
-            filteredFiles,
+            filesForAnalysis,
             accountId,
           );
 
@@ -1051,26 +1062,26 @@ export class WebhooksService {
         }
 
         // Get the latest version of files from both branches for comparison
-        const regressionAnalysis =
-          await this._repositoryScanService.analyzeRegressionImpactEnhanced(
-            repository.id,
-            data.pullrequest.id,
-            filteredFiles,
-            accountId,
-          );
+        // const regressionAnalysis =
+        //   await this._repositoryScanService.analyzeRegressionImpactEnhanced(
+        //     repository.id,
+        //     data.pullrequest.id,
+        //     filteredFiles,
+        //     accountId,
+        //   );
 
-        if (regressionAnalysis) {
-          // Send notification email about the regression test results
-          await this._mailService.sendRegressionTestingNotification({
-            accountId,
-            authorName: data.actor.display_name,
-            repositoryInfo: {
-              repositoryName: data.repository.name,
-            },
-            regressionData: regressionAnalysis,
-            prNumber: data.pullrequest.id,
-          });
-        }
+        // if (regressionAnalysis) {
+        //   // Send notification email about the regression test results
+        //   await this._mailService.sendRegressionTestingNotification({
+        //     accountId,
+        //     authorName: data.actor.display_name,
+        //     repositoryInfo: {
+        //       repositoryName: data.repository.name,
+        //     },
+        //     regressionData: regressionAnalysis,
+        //     prNumber: data.pullrequest.id,
+        //   });
+        // }
       } catch (error) {
         console.error('Error in regression analysis:', error);
       }
