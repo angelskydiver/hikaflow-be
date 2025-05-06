@@ -1,4 +1,3 @@
-import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { ScanStatus } from '@prisma/client';
 import { Worker } from 'bullmq';
@@ -18,7 +17,6 @@ const prisma = new PrismaService();
 const accountCredentialService = new AccountCredentialService(prisma);
 const commentService = new CommentService(prisma);
 const billingService = new BillingService(prisma, new ConfigService());
-const httpService = new HttpService();
 
 // Create a mock MailerService for the worker environment
 const mockMailerService = {
@@ -38,7 +36,6 @@ const repositoryScanService = new RepositoryScanService(
   commentService,
   accountCredentialService,
   billingService,
-  // httpService,
   // mailService,
   // fileCache,
 );
