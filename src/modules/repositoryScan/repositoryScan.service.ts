@@ -9,7 +9,10 @@ import {
   ScanStatus,
 } from '@prisma/client';
 import axios from 'axios';
-import { ignoredExtensionsForFileScan } from 'src/config/constants/unnecessary.files.constant';
+import {
+  fetchFileExtension,
+  ignoredExtensionsForFileScan,
+} from 'src/config/constants/unnecessary.files.constant';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
 import { Gemini } from 'src/config/helpers/ai/gemini.ai.helper';
 import { filterHighPriorityComments } from 'src/config/helpers/comment.helper';
@@ -591,7 +594,11 @@ export class RepositoryScanService {
       });
 
       // If file documentation is not found and accountId is provided, try on-demand scanning
-      if (!fileDocumentation && data.accountId) {
+      if (
+        !fileDocumentation &&
+        data.accountId &&
+        !ignoredExtensionsForFileScan.includes(fetchFileExtension(data.path))
+      ) {
         try {
           console.log(
             `Documentation not found for ${data.path}, attempting on-demand scan...`,
