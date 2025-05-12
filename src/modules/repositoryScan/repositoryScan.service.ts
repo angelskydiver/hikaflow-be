@@ -9,6 +9,7 @@ import {
   ScanStatus,
 } from '@prisma/client';
 import axios from 'axios';
+import { ignoredExtensionsForFileScan } from 'src/config/constants/unnecessary.files.constant';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
 import { Gemini } from 'src/config/helpers/ai/gemini.ai.helper';
 import { filterHighPriorityComments } from 'src/config/helpers/comment.helper';
@@ -21,6 +22,7 @@ import {
   githubRepositoryAccess,
   githubRepositoryStructure,
 } from 'src/config/helpers/repositories/github.helper';
+import { MailService } from 'src/mail/mail.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import {
   queueChangedFilesScan,
@@ -30,6 +32,7 @@ import {
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
 import { BillingService } from '../billing/billing.service';
 import { CommentService } from '../comment/comment.service';
+import { CommentRequestType } from '../comment/dto/comment.request.dto';
 
 @Injectable()
 export class RepositoryScanService {
@@ -38,6 +41,7 @@ export class RepositoryScanService {
     private readonly _commentService: CommentService,
     private readonly accountCredentialService: AccountCredentialService,
     private readonly _billingService: BillingService,
+    private readonly _mailService: MailService,
   ) {}
 
   /**
@@ -198,41 +202,75 @@ export class RepositoryScanService {
         // Don't throw here, continue to update the scan status
       }
 
+      // Get scan results for email notification
+      const scan = await this.prisma.repositoryScan.findUnique({
+        where: { id: repositoryScanId },
+        include: {
+          account: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      });
+
+      // Get security and code issues
+      const securityIssues = await this._commentService.fetchRepositoryComments(
+        scan.accountId,
+        {
+          repositoryId: repository.id,
+          category: CommentRequestType.SECURITY_ISSUES,
+          currentPage: '1',
+          pageSize: '5',
+          prId: '', // Empty string for non-PR comments
+        },
+      );
+      const codeSmells = await this._commentService.fetchRepositoryComments(
+        scan.accountId,
+        {
+          repositoryId: repository.id,
+          category: CommentRequestType.CODE_ISSUES,
+          currentPage: '1',
+          pageSize: '5',
+          prId: '', // Empty string for non-PR comments
+        },
+      );
+
+      // Send email notification
+      await this._mailService.repositoryScanCompleteNotification({
+        email: scan.account.user.email,
+        adminName: scan.account.user.firstName,
+        repositoryName: repository.name,
+        totalFiles: scan.totalFiles,
+        issuesFound: securityIssues.commentCount + codeSmells.commentCount,
+        securityIssues: securityIssues.commentCount,
+        codeSmells: codeSmells.commentCount,
+        topSecurityIssues: securityIssues.comments.slice(0, 5).map((issue) => ({
+          severity: issue.severity,
+          title: issue.issue,
+          description: issue.content,
+        })),
+        topCodeIssues: codeSmells.comments.slice(0, 5).map((issue) => ({
+          severity: issue.severity,
+          title: issue.issue,
+          description: issue.content,
+        })),
+        reportUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/${repository.id}/${repository.organizationId}`,
+      });
+
       // Update scan status as COMPLETED
       await this.prisma.repositoryScan.update({
         where: { id: repositoryScanId },
         data: {
           totalFilesScanned: analyzedFiles.length,
           status: ScanStatus.COMPLETED,
+          completedAt: new Date(),
         },
       });
 
       return analyzedFiles;
     } catch (error) {
       console.error('❌ Error in scanRepositoriesDirect:', error);
-
-      // Even if the main process fails, try to update the scan status
-      try {
-        // Get existing scan logs
-        const scan = await this.prisma.repositoryScan.findUnique({
-          where: { id: repositoryScanId },
-          select: { logs: true },
-        });
-
-        const existingLogs = scan?.logs || '';
-        const newLogEntry = `${new Date().toISOString()} - Critical error in scan process: ${error.message}\n`;
-
-        await this.prisma.repositoryScan.update({
-          where: { id: repositoryScanId },
-          data: {
-            status: ScanStatus.FAILED,
-            logs: existingLogs + newLogEntry,
-          },
-        });
-      } catch (updateError) {
-        console.error('Failed to update scan status:', updateError);
-      }
-
       throw new Error('Failed to scan repositories.');
     }
   }
@@ -3598,36 +3636,36 @@ export class RepositoryScanService {
               : '';
 
             // List of supported extensions for scanning
-            const supportedExtensions = [
-              '.js',
-              '.jsx',
-              '.ts',
-              '.tsx',
-              '.py',
-              '.rb',
-              '.java',
-              '.c',
-              '.cpp',
-              '.h',
-              '.cs',
-              '.php',
-              '.go',
-              '.rs',
-              '.swift',
-              '.kt',
-              '.html',
-              '.css',
-              '.scss',
-              '.json',
-              '.xml',
-              '.yaml',
-              '.yml',
-              '.md',
-              '.txt',
-            ];
+            // const supportedExtensions = [
+            //   '.js',
+            //   '.jsx',
+            //   '.ts',
+            //   '.tsx',
+            //   '.py',
+            //   '.rb',
+            //   '.java',
+            //   '.c',
+            //   '.cpp',
+            //   '.h',
+            //   '.cs',
+            //   '.php',
+            //   '.go',
+            //   '.rs',
+            //   '.swift',
+            //   '.kt',
+            //   '.html',
+            //   '.css',
+            //   '.scss',
+            //   '.json',
+            //   '.xml',
+            //   '.yaml',
+            //   '.yml',
+            //   '.md',
+            //   '.txt',
+            // ];
 
             // Skip if extension is not supported
-            if (!supportedExtensions.includes(fileExtension)) {
+            if (ignoredExtensionsForFileScan.includes(fileExtension)) {
               return false;
             }
 

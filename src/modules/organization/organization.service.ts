@@ -87,7 +87,23 @@ export class OrganizationService {
       });
       if (!account) throw new NotFoundException('Account not found');
 
-      const invitationPayloads = data.users.map((user) => {
+      let invitationAlreadyExist =
+        await this._prismaService.organizationInvitation.findMany({
+          where: {
+            organizationId: data.organizationId,
+            email: { in: data.users.map((user) => user.email) },
+          },
+        });
+      console.log(invitationAlreadyExist);
+
+      const newUsers = data.users.filter(
+        (user) =>
+          !invitationAlreadyExist.some(
+            (invitation) => invitation.email === user.email,
+          ),
+      );
+
+      const invitationPayloads = newUsers.map((user) => {
         const invitationData: Prisma.OrganizationInvitationCreateInput = {
           organization: { connect: { id: data.organizationId } },
           role: user.role as OrganizationalAccountRole,
@@ -116,7 +132,6 @@ export class OrganizationService {
           role: user.role,
         });
       });
-
       await Promise.all(sendEmailMapping);
       return { Success: true };
     } catch (error) {
