@@ -88,3 +88,7 @@ export const ignoredExtensionsForFileScan = [
   '.exe',
   '.dll',
 ];
+
+export const fetchFileExtension = (fileName) => {
+  return `.${fileName.split('.').pop()}`;
+};
