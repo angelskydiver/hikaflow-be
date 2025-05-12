@@ -5,37 +5,35 @@
     <title>Repository Scan Complete</title>
     <style>
       body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 0;
-      background-color: #1a1a1a; color: #e0e0e0; } .container { max-width:
-      600px; margin: 20px auto; background: linear-gradient(145deg, #1e1e1e,
-      #2d2d2d); border-radius: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-      overflow: hidden; } .banner { background: linear-gradient(135deg, #2b2b2b,
-      #1a1a1a); padding: 24px; text-align: left; } .logo { font-size: 32px;
-      font-weight: bold; color: #4CAF50; margin: 0; letter-spacing: 1px; }
-      .wrapper { padding: 32px; } h1 { color: #4CAF50; margin-bottom: 24px;
-      font-size: 24px; } h2 { color: #4CAF50; margin-bottom: 16px; font-size:
+      background-color: #111B21; color: #e0e0e0; } .container { max-width:
+      600px; margin: 20px auto; background: #202C33; border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2); overflow: hidden; } .banner {
+      background: #222E35; padding: 24px; text-align: left; } .logo { font-size:
+      32px; font-weight: bold; color: #00A884; margin: 0; letter-spacing: 1px; }
+      .wrapper { padding: 32px; } h1 { color: #00A884; margin-bottom: 24px;
+      font-size: 24px; } h2 { color: #00A884; margin-bottom: 16px; font-size:
       20px; } p { color: #e0e0e0; line-height: 1.6; margin-bottom: 16px; }
       .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap:
-      16px; margin: 24px 0; } .stat-item { background: linear-gradient(145deg,
-      #2b2b2b, #232323); padding: 20px; border-radius: 10px; text-align: center;
-      border: 1px solid #333; } .stat-value { font-size: 28px; font-weight:
-      bold; color: #4CAF50; margin-bottom: 8px; } .stat-label { font-size: 14px;
-      color: #b0b0b0; } .issues-list { background: linear-gradient(145deg,
-      #2b2b2b, #232323); padding: 24px; border-radius: 10px; margin: 24px 0;
-      border: 1px solid #333; } .issue-item { background: rgba(43, 43, 43, 0.5);
-      padding: 16px; border-radius: 8px; margin-bottom: 12px; border: 1px solid
-      #333; } .issue-severity { display: inline-block; padding: 4px 12px;
-      border-radius: 20px; font-size: 12px; font-weight: 500; margin-right: 8px;
-      } .severity-high { background-color: #ff4444; color: #fff; }
-      .severity-medium { background-color: #ffbb33; color: #000; } .severity-low
-      { background-color: #00C851; color: #fff; } .issue-description {
-      margin-top: 8px; color: #b0b0b0; } .button { display: inline-block;
-      padding: 12px 24px; font-size: 16px; color: #fff; background:
-      linear-gradient(135deg, #4CAF50, #45a049); text-decoration: none;
-      border-radius: 25px; margin-top: 24px; transition: all 0.3s ease; }
+      16px; margin: 24px 0; } .stat-item { background: #222E35; padding: 20px;
+      border-radius: 10px; text-align: center; border: 1px solid #333; }
+      .stat-value { font-size: 28px; font-weight: bold; color: #00A884;
+      margin-bottom: 8px; } .stat-label { font-size: 14px; color: #7C8B95; }
+      .issues-list { background: #222E35; padding: 24px; border-radius: 10px;
+      margin: 24px 0; border: 1px solid #333; } .issue-item { background:
+      rgba(34, 46, 53, 0.5); padding: 16px; border-radius: 8px; margin-bottom:
+      12px; border: 1px solid #333; } .issue-severity { display: inline-block;
+      padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 500;
+      margin-right: 8px; } .severity-high { background-color: #ff4444; color:
+      #fff; } .severity-medium { background-color: #ffbb33; color: #000; }
+      .severity-low { background-color: #00A884; color: #fff; }
+      .issue-description { margin-top: 8px; color: #7C8B95; } .button { display:
+      inline-block; padding: 12px 24px; font-size: 16px; color: #fff;
+      background: linear-gradient(135deg, #00A884, #008c6e); text-decoration:
+      none; border-radius: 25px; margin-top: 24px; transition: all 0.3s ease; }
       .button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px
-      rgba(76, 175, 80, 0.3); } .footer { margin-top: 32px; padding-top: 16px;
+      rgba(0, 168, 132, 0.3); } .footer { margin-top: 32px; padding-top: 16px;
       border-top: 1px solid #333; text-align: left; font-size: 12px; color:
-      #888; }
+      #7C8B95; }
     </style>
   </head>
   <body>
@@ -46,11 +44,9 @@
       <div class='wrapper'>
         <h1>Repository Scan Complete</h1>
         <p>Hi {{adminName}},</p>
-        <p>
-          The scan of repository
+        <p>The scan of repository
           <strong>{{repositoryName}}</strong>
-          has been completed. Here's a summary of the findings:
-        </p>
+          has been completed. Here's a summary of the findings:</p>
 
         <div class='stats-grid'>
           <div class='stat-item'>
@@ -71,39 +67,41 @@
           </div>
         </div>
 
-        <div class='issues-list'>
-          <h2>Top Security Issues</h2>
-          {{#each topSecurityIssues}}
-            <div class='issue-item'>
-              <span
-                class='issue-severity severity-{{this.severity}}'
-              >{{this.severity}}</span>
-              <strong>{{this.title}}</strong>
-              <div class='issue-description'>{{this.description}}</div>
-            </div>
-          {{/each}}
-        </div>
+        {{#if topSecurityIssues.length}}
+          <div class='issues-list'>
+            <h2>Top Security Issues</h2>
+            {{#each topSecurityIssues}}
+              <div class='issue-item'>
+                <span
+                  class='issue-severity severity-{{this.severity}}'
+                >{{this.severity}}</span>
+                <strong>{{this.title}}</strong>
+                <div class='issue-description'>{{this.description}}</div>
+              </div>
+            {{/each}}
+          </div>
+        {{/if}}
 
-        <div class='issues-list'>
-          <h2>Top Code Quality Issues</h2>
-          {{#each topCodeIssues}}
-            <div class='issue-item'>
-              <span
-                class='issue-severity severity-{{this.severity}}'
-              >{{this.severity}}</span>
-              <strong>{{this.title}}</strong>
-              <div class='issue-description'>{{this.description}}</div>
-            </div>
-          {{/each}}
-        </div>
+        {{#if topCodeIssues.length}}
+          <div class='issues-list'>
+            <h2>Top Code Quality Issues</h2>
+            {{#each topCodeIssues}}
+              <div class='issue-item'>
+                <span
+                  class='issue-severity severity-{{this.severity}}'
+                >{{this.severity}}</span>
+                <strong>{{this.title}}</strong>
+                <div class='issue-description'>{{this.description}}</div>
+              </div>
+            {{/each}}
+          </div>
+        {{/if}}
 
         <a href='{{reportUrl}}' class='button'>View Detailed Report</a>
 
         <div class='footer'>
-          <p>
-            This is an automated message. Please do not reply to this email. If
-            you have any questions, please contact our support team.
-          </p>
+          <p>This is an automated message. Please do not reply to this email. If
+            you have any questions, please contact our support team.</p>
         </div>
       </div>
     </div>

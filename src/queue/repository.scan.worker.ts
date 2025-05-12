@@ -1,6 +1,9 @@
+import { MailerService } from '@nestjs-modules/mailer';
+import { HandlebarsAdapter } from '@nestjs-modules/mailer/dist/adapters/handlebars.adapter';
 import { ConfigService } from '@nestjs/config';
 import { ScanStatus } from '@prisma/client';
 import { Worker } from 'bullmq';
+import { join } from 'path';
 import { Gemini } from 'src/config/helpers/ai/gemini.ai.helper';
 import { fetchFileByUrl } from 'src/config/helpers/repositories/github.helper';
 import { MailService } from 'src/mail/mail.service';
@@ -9,35 +12,45 @@ import { BillingService } from 'src/modules/billing/billing.service';
 import { CommentService } from 'src/modules/comment/comment.service';
 import { RepositoryScanService } from 'src/modules/repositoryScan/repositoryScan.service';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { FileCache } from '../cache/file.cache';
-// import { MailService } from '../mail/mail.service';
 
 // Initialize Prisma & Services
 const prisma = new PrismaService();
 const accountCredentialService = new AccountCredentialService(prisma);
 const commentService = new CommentService(prisma);
 const billingService = new BillingService(prisma, new ConfigService());
-
-// Create a mock MailerService for the worker environment
-const mockMailerService = {
-  sendMail: async () => {
-    console.log('Mock email sending in worker environment');
-    return true;
+const configService = new ConfigService();
+const mailerService = new MailerService(
+  {
+    transport: {
+      host: configService.get('MAILER_HOST'),
+      secure: false,
+      auth: {
+        user: configService.get('MAILER_USER_EMAIL'),
+        pass: configService.get('MAILER_USER_PASSWORD'),
+      },
+    },
+    defaults: {
+      from: `"No Reply" <${configService.get('MAILER_USER_EMAIL')}>`,
+    },
+    template: {
+      dir: join(__dirname, 'templates'),
+      adapter: new HandlebarsAdapter(),
+      options: {
+        strict: true,
+      },
+    },
   },
-};
+  null,
+);
+const mailService = new MailService(mailerService, prisma);
 
-const mailService = new MailService(mockMailerService as any, prisma);
-// const mailService = new MailService(mockMailerService as any);
-
-const fileCache = new FileCache();
-
+// Initialize repository scan service with required dependencies
 const repositoryScanService = new RepositoryScanService(
   prisma,
   commentService,
   accountCredentialService,
   billingService,
-  // mailService,
-  // fileCache,
+  mailService,
 );
 
 // Function to process full repository scan jobs
@@ -235,3 +248,6 @@ console.log('✅ Repository Scan Worker is running...');
 
 // Export the worker for use in other modules
 export { repositoryScanWorker };
+
+// Export the initialized service
+export { repositoryScanService };

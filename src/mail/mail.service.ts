@@ -1,13 +1,47 @@
 import { MailerService } from '@nestjs-modules/mailer';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
 export class MailService {
+  private readonly logger = new Logger(MailService.name);
+
   constructor(
     private mailerService: MailerService,
     private prismaService: PrismaService,
   ) {}
+
+  private async sendEmailWithRetry(
+    options: {
+      to: string;
+      subject: string;
+      template: string;
+      context: any;
+      from?: string;
+    },
+    retries = 3,
+  ): Promise<boolean> {
+    try {
+      await this.mailerService.sendMail({
+        to: options.to,
+        subject: options.subject,
+        template: options.template,
+        context: options.context,
+        from: options.from || '"Hikaflow" <noreply@hikaflow.com>',
+      });
+      return true;
+    } catch (error) {
+      this.logger.error(`Failed to send email: ${error.message}`, error.stack);
+      if (retries > 0) {
+        this.logger.log(
+          `Retrying email send... (${retries} attempts remaining)`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second before retry
+        return this.sendEmailWithRetry(options, retries - 1);
+      }
+      throw error;
+    }
+  }
 
   async rejectCreatorEmail(data) {
     try {
@@ -131,13 +165,11 @@ export class MailService {
     prUrl: string;
   }) {
     try {
-      await this.mailerService.sendMail({
+      await this.sendEmailWithRetry({
         to: data.email,
-        // from: `${data.authorName} [Hikaflow]`, // override default from
         subject: `[Hikaflow] 🔔New Pull Request Created`,
-        template: './pr-created-notification', // `.hbs` extension is appended automatically
+        template: './pr-created-notification',
         context: {
-          // ✏️ filling curly brackets with content
           adminName: data.adminName,
           repositoryName: data.repositoryName,
           authorName: data.authorName,
@@ -145,8 +177,10 @@ export class MailService {
         },
       });
     } catch (error) {
-      console.error(error.message);
-      throw new Error(error.message);
+      this.logger.error(
+        `Failed to send PR created notification: ${error.message}`,
+      );
+      // Don't throw to prevent disrupting the PR workflow
     }
   }
 
@@ -189,13 +223,11 @@ export class MailService {
     reportUrl: string;
   }) {
     try {
-      await this.mailerService.sendMail({
+      await this.sendEmailWithRetry({
         to: data.email,
-        // from: `${data.authorName} [Hikaflow]`, // override default from
         subject: `[Hikaflow] Pull Request Closed`,
-        template: './pr-closed-notification', // `.hbs` extension is appended automatically
+        template: './pr-closed-notification',
         context: {
-          // ✏️ filling curly brackets with content
           adminName: data.adminName,
           repositoryName: data.repositoryName,
           authorName: data.authorName,
@@ -203,8 +235,10 @@ export class MailService {
         },
       });
     } catch (error) {
-      console.error(error.message);
-      throw new Error(error.message);
+      this.logger.error(
+        `Failed to send PR closed notification: ${error.message}`,
+      );
+      // Don't throw to prevent disrupting the PR workflow
     }
   }
 
@@ -224,8 +258,6 @@ export class MailService {
     prNumber?: string | number;
   }) {
     try {
-      console.log('need to send email from here');
-      // Get email from accountId
       const account = await this.prismaService.account.findUnique({
         where: { id: data.accountId },
         include: { user: true },
@@ -238,20 +270,22 @@ export class MailService {
       const email = account.user.email;
       const prNumber = data.prNumber || 'N/A';
 
-      await this.mailerService.sendMail({
+      await this.sendEmailWithRetry({
         to: email,
         subject: `[Hikaflow] Regression Testing Report: ${data.repositoryInfo.repositoryName}`,
         template: './regression-testing-notification',
         context: {
-          authorName: data.authorName,
+          adminName: account.user.firstName,
           repositoryName: data.repositoryInfo.repositoryName,
           prNumber,
           regressionData: data.regressionData,
         },
       });
     } catch (error) {
-      console.error('Error sending regression testing notification:', error);
-      // Don't throw the error to prevent disrupting the PR workflow
+      this.logger.error(
+        `Failed to send regression testing notification: ${error.message}`,
+      );
+      // Don't throw to prevent disrupting the PR workflow
     }
   }
 
@@ -296,10 +330,10 @@ export class MailService {
     reportUrl: string;
   }) {
     try {
-      await this.mailerService.sendMail({
+      await this.sendEmailWithRetry({
         to: data.email,
-        subject: 'Repository Scan Complete',
-        template: 'repository-scan-complete',
+        subject: `[Hikaflow] Repository Scan Complete: ${data.repositoryName}`,
+        template: './repository-scan-complete',
         context: {
           adminName: data.adminName,
           repositoryName: data.repositoryName,
@@ -313,11 +347,10 @@ export class MailService {
         },
       });
     } catch (error) {
-      console.error(
-        'Error sending repository scan complete notification:',
-        error,
+      this.logger.error(
+        `Failed to send repository scan notification: ${error.message}`,
       );
-      throw error;
+      // Don't throw to prevent disrupting the scan workflow
     }
   }
 }

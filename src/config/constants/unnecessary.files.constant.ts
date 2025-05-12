@@ -58,9 +58,10 @@ export const ignoredFilesForFileScan = [
   'pnpm-lock.yaml',
   'README.md',
 ];
+
 export const ignoredExtensionsForFileScan = [
   '.ttf',
-  'woff',
+  '.woff',
   '.sql',
   '.md',
   '.png',
