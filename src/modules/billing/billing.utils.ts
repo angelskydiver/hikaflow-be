@@ -34,8 +34,8 @@ export async function trackUsage(
       return;
     }
 
-    // Log usage
-    await billingService.createUsageLog({
+    // Log usage with quota awareness
+    await billingService.trackUsageWithQuota({
       subscriptionId: subscription.id,
       organizationId,
       repositoryId,

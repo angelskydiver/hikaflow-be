@@ -230,7 +230,7 @@ export class WebhooksService {
         });
 
         if (repository) {
-          await this._billingService.createUsageLog({
+          await this._billingService.trackUsageWithQuota({
             organizationId: repository.organizationId,
             repositoryId: repository.id,
             type: 'PR_ANALYSIS',
@@ -392,20 +392,14 @@ export class WebhooksService {
 
       // Log PR evaluation usage for billing
       try {
-        const repository = await this._prismaService.repository.findUnique({
-          where: { repositoryId: data.repository.uuid },
+        await this._billingService.trackUsageWithQuota({
+          organizationId: isBaseBranchMatch.organizationId,
+          repositoryId: isBaseBranchMatch.id,
+          type: 'PR_ANALYSIS',
+          description: `PR Report: #${data.pullrequest.id} in ${data.repository.name}`,
         });
-
-        if (repository) {
-          await this._billingService.createUsageLog({
-            organizationId: repository.organizationId,
-            repositoryId: repository.id,
-            type: 'PR_ANALYSIS',
-            description: `PR Analysis: #${data.pullrequest.id} in ${data.repository.name}`,
-          });
-        }
       } catch (logError) {
-        console.error('Error logging PR analysis usage:', logError);
+        console.error('Error logging PR report usage:', logError);
       }
 
       return changes;
@@ -794,7 +788,7 @@ export class WebhooksService {
 
       // Log PR evaluation usage for billing
       try {
-        await this._billingService.createUsageLog({
+        await this._billingService.trackUsageWithQuota({
           organizationId: isBaseBranchMatch.organizationId,
           repositoryId: isBaseBranchMatch.id,
           type: 'PR_ANALYSIS',
@@ -1088,7 +1082,7 @@ export class WebhooksService {
 
       // Log PR evaluation usage for billing
       try {
-        await this._billingService.createUsageLog({
+        await this._billingService.trackUsageWithQuota({
           organizationId: isBaseBranchMatch.organizationId,
           repositoryId: isBaseBranchMatch.id,
           type: 'PR_ANALYSIS',
@@ -1391,7 +1385,7 @@ export class WebhooksService {
 
       // Log PR evaluation usage for billing
       try {
-        await this._billingService.createUsageLog({
+        await this._billingService.trackUsageWithQuota({
           organizationId: prInfo.organizationId,
           repositoryId: prInfo.repositoryId,
           type: 'PR_ANALYSIS',
@@ -1545,7 +1539,7 @@ export class WebhooksService {
 
       // Log PR evaluation usage for billing
       try {
-        await this._billingService.createUsageLog({
+        await this._billingService.trackUsageWithQuota({
           organizationId: prInfo.organizationId,
           repositoryId: prInfo.repositoryId,
           type: 'PR_ANALYSIS',

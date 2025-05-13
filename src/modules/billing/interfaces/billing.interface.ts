@@ -9,6 +9,8 @@ export interface IPricingPlan {
   planType: SubscriptionPlanType; // Use the proper enum type
   basePrice: number;
   evaluationPrice: number;
+  prAnalysisQuota: number; // Number of PR analyses included in plan
+  assistantQuota: number; // Number of assistant questions included in plan
   active: boolean;
   stripeProductId?: string;
   stripePriceId?: string;

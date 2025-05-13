@@ -52,6 +52,8 @@ export class BillingService {
         planType,
         basePrice,
         evaluationPrice,
+        prAnalysisQuota = 20, // Default to 20 if not provided
+        assistantQuota = 50, // Default to 50 if not provided
         active = true,
       } = data;
 
@@ -79,6 +81,8 @@ export class BillingService {
           planType,
           basePrice,
           evaluationPrice,
+          prAnalysisQuota,
+          assistantQuota,
           active,
           stripeProductId: '',
           stripePriceId: '',
@@ -577,12 +581,6 @@ export class BillingService {
         );
       }
 
-      // Calculate the total days in the billing period
-      // const totalDaysInPeriod = Math.ceil(
-      //   (options.toDate.getTime() - options.fromDate.getTime()) /
-      //     (1000 * 60 * 60 * 24),
-      // );
-
       const totalDaysInPeriod = 30;
 
       console.log(`Total days in billing period: ${totalDaysInPeriod}`);
@@ -612,6 +610,18 @@ export class BillingService {
           ...(options.toDate && { createdAt: { lte: options.toDate } }),
         },
       });
+
+      // Separate usage logs by type
+      const prAnalysisLogs = usageLogs.filter(
+        (log) => log.type === 'PR_ANALYSIS',
+      );
+      const assistantQuestionLogs = usageLogs.filter(
+        (log) => log.type === 'ASSISTANT_QUESTION',
+      );
+      const otherLogs = usageLogs.filter(
+        (log) =>
+          log.type !== 'PR_ANALYSIS' && log.type !== 'ASSISTANT_QUESTION',
+      );
 
       // Get all repositories for this organization with their creation dates
       const organizationRepositories =
@@ -652,7 +662,15 @@ export class BillingService {
         evalPrice = subscription.pricingPlan.evaluationPrice;
       }
 
+      // Get the quotas from the pricing plan
+      const prAnalysisQuota = subscription.pricingPlan.prAnalysisQuota || 20; // Default to 20 if not set
+      const assistantQuota = subscription.pricingPlan.assistantQuota || 50; // Default to 50 if not set
+
       console.log('check post 05');
+
+      // Initialize evaluation line items array and total
+      const evaluationLineItems = [];
+      let totalEvaluationsAmount = 0;
 
       // Process each repository to calculate prorated costs
       for (const repo of organizationRepositories) {
@@ -690,7 +708,8 @@ export class BillingService {
 
         // Calculate prorated amount - if connected for full period, charge full amount
         const proratedFactor = effectiveDaysConnected / totalDaysInPeriod;
-        const proratedAmount = basePrice * proratedFactor;
+        const dailyBasePrice = basePrice / totalDaysInPeriod;
+        const proratedAmount = dailyBasePrice * effectiveDaysConnected;
 
         console.log(
           `Repository ${repo.name} prorated amount: $${proratedAmount.toFixed(2)}`,
@@ -706,14 +725,115 @@ export class BillingService {
           amount: proratedAmount,
           type: 'PROJECT',
         });
+
+        // Get PR analysis logs for this repository
+        const repoAnalysisLogs = prAnalysisLogs.filter(
+          (log) => log.repositoryId === repo.id,
+        );
+
+        // Process PR analysis logs with quota
+        if (repoAnalysisLogs.length > 0) {
+          // Within quota (free)
+          const withinQuotaCount = Math.min(
+            repoAnalysisLogs.length,
+            prAnalysisQuota,
+          );
+
+          if (withinQuotaCount > 0) {
+            evaluationLineItems.push({
+              description: `PR Analyses for ${repo.name} (within quota)`,
+              quantity: withinQuotaCount,
+              unitPrice: 0,
+              amount: 0,
+              type: 'PR_ANALYSIS',
+            });
+          }
+
+          // Beyond quota (billable)
+          const beyondQuotaCount = Math.max(
+            0,
+            repoAnalysisLogs.length - prAnalysisQuota,
+          );
+
+          if (beyondQuotaCount > 0) {
+            const amount = beyondQuotaCount * evalPrice;
+            totalEvaluationsAmount += amount;
+
+            evaluationLineItems.push({
+              description: `PR Analyses for ${repo.name} (beyond quota)`,
+              quantity: beyondQuotaCount,
+              unitPrice: evalPrice,
+              amount,
+              type: 'PR_ANALYSIS',
+            });
+          }
+        }
+
+        // Get assistant question logs for this repository
+        const repoAssistantLogs = assistantQuestionLogs.filter(
+          (log) => log.repositoryId === repo.id,
+        );
+
+        // Process assistant question logs with quota
+        if (repoAssistantLogs.length > 0) {
+          // Within quota (free)
+          const withinQuotaCount = Math.min(
+            repoAssistantLogs.length,
+            assistantQuota,
+          );
+
+          if (withinQuotaCount > 0) {
+            evaluationLineItems.push({
+              description: `Assistant Questions for ${repo.name} (within quota)`,
+              quantity: withinQuotaCount,
+              unitPrice: 0,
+              amount: 0,
+              type: 'ASSISTANT_QUESTION',
+            });
+          }
+
+          // Beyond quota (billable at 1/3 the evaluation price)
+          const beyondQuotaCount = Math.max(
+            0,
+            repoAssistantLogs.length - assistantQuota,
+          );
+
+          if (beyondQuotaCount > 0) {
+            const amount = beyondQuotaCount * (evalPrice / 3);
+            totalEvaluationsAmount += amount;
+
+            evaluationLineItems.push({
+              description: `Assistant Questions for ${repo.name} (beyond quota)`,
+              quantity: beyondQuotaCount,
+              unitPrice: evalPrice / 3,
+              amount,
+              type: 'ASSISTANT_QUESTION',
+            });
+          }
+        }
       }
 
-      // Count evaluations
-      const evaluations = usageLogs.length;
-      const evaluationsAmount = evaluations * evalPrice;
+      // Process other evaluation logs (not repository-specific)
+      const otherEvaluationLogs = usageLogs.filter(
+        (log) =>
+          log.type !== 'PR_ANALYSIS' && log.type !== 'ASSISTANT_QUESTION',
+      );
+
+      if (otherEvaluationLogs.length > 0) {
+        const amount = otherEvaluationLogs.length * evalPrice;
+        totalEvaluationsAmount += amount;
+
+        evaluationLineItems.push({
+          description: `Other Evaluations`,
+          quantity: otherEvaluationLogs.length,
+          unitPrice: evalPrice,
+          amount,
+          type: 'OTHER_EVALUATION',
+        });
+      }
 
       // Calculate final amounts AT INVOICE TIME
-      const subtotal = totalRepositoryAmount + evaluationsAmount;
+      const subtotal = totalRepositoryAmount + totalEvaluationsAmount;
 
       console.log('check post 06: ', subtotal);
 
@@ -754,22 +874,9 @@ export class BillingService {
           status: InvoiceStatus.PENDING, // Initially PENDING until payment is processed
           dueDate: new Date(), // Due same day as creation
           stripeInvoiceId: '', // No Stripe invoice involved
-          description: `Invoice for ${organizationRepositories.length} projects (prorated) and ${evaluations} evaluations`,
+          description: `Invoice for ${organizationRepositories.length} repositories and various evaluations`,
           invoiceItems: {
-            create: [
-              ...repositoryLineItems,
-              ...(evaluations > 0
-                ? [
-                    {
-                      description: `Evaluations (${evaluations})`,
-                      quantity: evaluations,
-                      unitPrice: evalPrice,
-                      amount: evaluationsAmount,
-                      type: 'EVALUATION',
-                    },
-                  ]
-                : []),
-            ],
+            create: [...repositoryLineItems, ...evaluationLineItems],
           },
         },
       });
@@ -797,6 +904,7 @@ export class BillingService {
         }
       }
 
+      // Otherwise return the pending invoice
       return invoice;
     } catch (error) {
       console.error('Error generating invoice:', error);
@@ -966,24 +1074,32 @@ export class BillingService {
           planType: SubscriptionPlanType.TRIAL,
           basePrice: 0, // Free
           evaluationPrice: 0, // Free
+          prAnalysisQuota: 20, // Free PR analyses quota
+          assistantQuota: 50, // Free assistant questions quota
         },
         {
           name: 'Basic',
           planType: SubscriptionPlanType.BASIC,
           basePrice: 20, // $20 per project
           evaluationPrice: 0.5, // 50 cents per evaluation
+          prAnalysisQuota: 20, // PR analyses quota
+          assistantQuota: 50, // Assistant questions quota
         },
         {
           name: 'Standard',
           planType: SubscriptionPlanType.STANDARD,
           basePrice: 30, // $30 per project
           evaluationPrice: 0.25, // 25 cents per evaluation
+          prAnalysisQuota: 20, // PR analyses quota
+          assistantQuota: 50, // Assistant questions quota
         },
         {
           name: 'Premium',
           planType: SubscriptionPlanType.PREMIUM,
           basePrice: 50, // $50 per project
           evaluationPrice: 0.1, // 10 cents per evaluation
+          prAnalysisQuota: 20, // PR analyses quota
+          assistantQuota: 50, // Assistant questions quota
         },
       ];
 
@@ -1246,6 +1362,7 @@ export class BillingService {
     return { allowed: true };
   }
 
+  // Method to check if a user can ask a question
   async canAskQuestion(organizationId: string): Promise<{
     canAsk: boolean;
     reason?: string;
@@ -1273,22 +1390,20 @@ export class BillingService {
       });
 
       // Only apply limits for TRIAL plans
-      if (subscription.pricingPlan.planType !== SubscriptionPlanType.TRIAL) {
-        return { canAsk: true }; // No limits for non-trial plans
-      }
+      if (subscription.pricingPlan.planType === SubscriptionPlanType.TRIAL) {
+        // Get the limits
+        const limits = await this.getTrialLimits(subscription.id);
 
-      // Get the limits
-      const limits = await this.getTrialLimits(subscription.id);
+        if (limits.isTrialExpired) {
+          return { canAsk: false, reason: 'Trial period has expired' };
+        }
 
-      if (limits.isTrialExpired) {
-        return { canAsk: false, reason: 'Trial period has expired' };
-      }
-
-      if (limits.questionsToday >= limits.maxQuestionsPerDay) {
-        return {
-          canAsk: false,
-          reason: `Trial accounts are limited to ${limits.maxQuestionsPerDay} questions per day`,
-        };
+        if (limits.questionsToday >= limits.maxQuestionsPerDay) {
+          return {
+            canAsk: false,
+            reason: `Trial accounts are limited to ${limits.maxQuestionsPerDay} questions per day`,
+          };
+        }
       }
 
       return { canAsk: true };
@@ -1804,16 +1919,12 @@ export class BillingService {
 
       // Calculate current month's date range
       const now = new Date();
-      const startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-      const endDate = new Date(
-        now.getFullYear(),
-        now.getMonth() + 1,
-        0,
-        23,
-        59,
-        59,
-        999,
-      );
+      const startDate =
+        subscription.startDate ||
+        new Date(now.getFullYear(), now.getMonth(), 1);
+      const endDate =
+        subscription.endDate ||
+        new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
 
       // Get all repositories for this organization with their creation dates
       const repositories = await this._prismaService.repository.findMany({
@@ -1843,6 +1954,14 @@ export class BillingService {
       // For monthly plans, use 30 days as the total period
       const totalDaysInPeriod = 30;
 
+      // Get the quotas from the pricing plan
+      const prAnalysisQuota = subscription
+        ? subscription.pricingPlan.prAnalysisQuota || 20
+        : 20; // Default to 20 if not set
+      const assistantQuota = subscription
+        ? subscription.pricingPlan.assistantQuota || 50
+        : 50; // Default to 50 if not set
+
       // Calculate prorated repository costs
       let totalRepositoryCost = 0;
       const repositoryUsage = repositories.map((repo) => {
@@ -1850,11 +1969,14 @@ export class BillingService {
         const repoStartDate = new Date(
           Math.max(repo.createdAt.getTime(), startDate.getTime()),
         );
+        console.log('repoStartDate', repo.createdAt, startDate, repoStartDate);
 
         // Calculate how many days the repository was connected in this period
         const daysConnected = Math.ceil(
-          (endDate.getTime() - repoStartDate.getTime()) / (1000 * 60 * 60 * 24),
+          (now.getTime() - repoStartDate.getTime()) / (1000 * 60 * 60 * 24),
         );
+
+        console.log('daysConnected', daysConnected);
 
         // Ensure we don't have negative days or zero days (minimum 1 day)
         const effectiveDaysConnected = Math.max(
@@ -1862,16 +1984,62 @@ export class BillingService {
           Math.min(daysConnected, totalDaysInPeriod),
         );
 
+        console.log('effectiveDaysConnected', effectiveDaysConnected);
+
         // Calculate prorated amount - if connected for full period, charge full amount
         const proratedFactor = effectiveDaysConnected / totalDaysInPeriod;
-        const basePrice = subscription
-          ? (subscription.customBasePrice ||
-              subscription.pricingPlan.basePrice) / 30
+        const repoBasePrice = subscription
+          ? subscription.customBasePrice || subscription.pricingPlan.basePrice
           : 0;
-        const proratedAmount = basePrice * proratedFactor;
+        const dailyBasePrice = repoBasePrice / totalDaysInPeriod;
+        const proratedAmount = dailyBasePrice * effectiveDaysConnected;
+
+        console.log(
+          `Repository ${repo.name} prorated amount: $${proratedAmount.toFixed(2)}`,
+        );
+
+        // Add to total and create line item
         totalRepositoryCost += proratedAmount;
 
-        // Get usage for this repository
+        // Get PR analysis logs for this repository
+        const prAnalysisLogs = usageLogs.filter(
+          (log) => log.repositoryId === repo.id && log.type === 'PR_ANALYSIS',
+        );
+
+        // Get assistant question logs for this repository
+        const assistantLogs = usageLogs.filter(
+          (log) =>
+            log.repositoryId === repo.id && log.type === 'ASSISTANT_QUESTION',
+        );
+
+        // Calculate within and beyond quota counts for PR analyses
+        const prWithinQuota = Math.min(prAnalysisLogs.length, prAnalysisQuota);
+        const prBeyondQuota = Math.max(
+          0,
+          prAnalysisLogs.length - prAnalysisQuota,
+        );
+
+        // Calculate within and beyond quota counts for assistant questions
+        const assistantWithinQuota = Math.min(
+          assistantLogs.length,
+          assistantQuota,
+        );
+        const assistantBeyondQuota = Math.max(
+          0,
+          assistantLogs.length - assistantQuota,
+        );
+
+        // Calculate costs for evaluations beyond quota
+        const evaluationPrice = subscription
+          ? subscription.customEvalPrice ||
+            subscription.pricingPlan.evaluationPrice
+          : 0;
+
+        const prAnalysisOverageCost = prBeyondQuota * evaluationPrice;
+        const assistantOverageCost =
+          assistantBeyondQuota * (evaluationPrice / 3); // Assistant questions at 1/3 the price
+
+        // Get all types of evaluations for this repository
         const repoLogs = usageLogs.filter(
           (log) => log.repositoryId === repo.id,
         );
@@ -1888,21 +2056,43 @@ export class BillingService {
             type,
             count: count as number,
           })),
+          quotaUsage: {
+            prAnalysis: {
+              total: prAnalysisLogs.length,
+              withinQuota: prWithinQuota,
+              beyondQuota: prBeyondQuota,
+              quota: prAnalysisQuota,
+              overageCost: prAnalysisOverageCost,
+            },
+            assistantQuestions: {
+              total: assistantLogs.length,
+              withinQuota: assistantWithinQuota,
+              beyondQuota: assistantBeyondQuota,
+              quota: assistantQuota,
+              overageCost: assistantOverageCost,
+            },
+          },
           connectedDays: effectiveDaysConnected,
           proratedCost: proratedAmount,
+          totalCost:
+            proratedAmount + prAnalysisOverageCost + assistantOverageCost,
         };
       });
 
-      // Calculate evaluation costs
+      // Calculate evaluation overage costs
+      const totalEvaluationOverageCost = repositoryUsage.reduce(
+        (total, repo) =>
+          total +
+          repo.quotaUsage.prAnalysis.overageCost +
+          repo.quotaUsage.assistantQuestions.overageCost,
+        0,
+      );
+
+      // Calculate total evaluations
       const totalEvaluations = usageLogs.length;
-      const evaluationPrice = subscription
-        ? subscription.customEvalPrice ||
-          subscription.pricingPlan.evaluationPrice
-        : 0;
-      const totalEvaluationCost = totalEvaluations * evaluationPrice;
 
       // Calculate total cost
-      const totalCost = totalRepositoryCost + totalEvaluationCost;
+      const totalCost = totalRepositoryCost + totalEvaluationOverageCost;
 
       // Get all invoices for this organization
       const invoices = await this._prismaService.invoice.findMany({
@@ -1926,8 +2116,8 @@ export class BillingService {
             }
           : null,
         currentMonthUsage: {
-          startDate: startDate,
-          endDate: endDate,
+          startDate: subscription.startDate,
+          endDate: subscription.endDate,
           repositories: {
             total: repositories.length,
             list: repositoryUsage,
@@ -1936,7 +2126,7 @@ export class BillingService {
           totalCost,
           costBreakdown: {
             repositoryCost: totalRepositoryCost,
-            evaluationCost: totalEvaluationCost,
+            evaluationCost: totalEvaluationOverageCost,
           },
         },
         invoices,
@@ -2115,6 +2305,167 @@ export class BillingService {
       });
     } catch (error) {
       console.error('Error upgrading subscription:', error);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  // ================== QUOTA MANAGEMENT METHODS ==================
+
+  /**
+   * Get the usage counts for PR analyses and assistant questions
+   */
+  async getUsageCounts(
+    organizationId: string,
+    repositoryId?: string,
+    period?: { fromDate?: Date; toDate?: Date },
+  ): Promise<{
+    prAnalysisCount: number;
+    assistantQuestionCount: number;
+  }> {
+    try {
+      const whereClause: any = { organizationId };
+
+      // Add repository filter if specified
+      if (repositoryId) {
+        whereClause.repositoryId = repositoryId;
+      }
+
+      if (period) {
+        whereClause.createdAt = {};
+        if (period.fromDate) {
+          whereClause.createdAt.gte = period.fromDate;
+        }
+        if (period.toDate) {
+          whereClause.createdAt.lte = period.toDate;
+        }
+      }
+
+      // Count PR analyses
+      const prAnalysisCount = await this._prismaService.usageLog.count({
+        where: {
+          ...whereClause,
+          type: 'PR_ANALYSIS',
+        },
+      });
+
+      // Count assistant questions
+      const assistantQuestionCount = await this._prismaService.usageLog.count({
+        where: {
+          ...whereClause,
+          type: 'ASSISTANT_QUESTION',
+        },
+      });
+
+      return {
+        prAnalysisCount,
+        assistantQuestionCount,
+      };
+    } catch (error) {
+      console.error('Error getting usage counts:', error);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  /**
+   * Calculate the billing rate based on current usage
+   */
+  async calculateBillingRate(
+    organizationId: string,
+    type: 'PR_ANALYSIS' | 'ASSISTANT_QUESTION',
+    repositoryId?: string,
+  ): Promise<{
+    withinQuota: boolean;
+    rate: number;
+  }> {
+    try {
+      // Get active subscription
+      const subscription = await this._prismaService.subscription.findFirst({
+        where: {
+          organizationId,
+          isActive: true,
+        },
+        include: {
+          pricingPlan: true,
+        },
+      });
+
+      if (!subscription) {
+        throw new NotFoundException('No active subscription found');
+      }
+
+      // Get current month's date range
+      const now = new Date();
+      const startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      const endDate = new Date(
+        now.getFullYear(),
+        now.getMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+        999,
+      );
+
+      // Get usage counts for the current month for this specific repository
+      const { prAnalysisCount, assistantQuestionCount } =
+        await this.getUsageCounts(organizationId, repositoryId, {
+          fromDate: startDate,
+          toDate: endDate,
+        });
+
+      // Determine base evaluation price
+      const evaluationPrice =
+        subscription.customEvalPrice ||
+        subscription.pricingPlan.evaluationPrice;
+
+      // Get the quotas from the pricing plan
+      const prAnalysisQuota = subscription.pricingPlan.prAnalysisQuota;
+      const assistantQuota = subscription.pricingPlan.assistantQuota;
+
+      if (type === 'PR_ANALYSIS') {
+        return {
+          withinQuota: prAnalysisCount < prAnalysisQuota,
+          rate: evaluationPrice, // PR analysis always uses the full evaluation rate
+        };
+      } else {
+        // Assistant question uses 1/3 of the evaluation rate
+        return {
+          withinQuota: assistantQuestionCount < assistantQuota,
+          rate: evaluationPrice / 3,
+        };
+      }
+    } catch (error) {
+      console.error('Error calculating billing rate:', error);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  /**
+   * Track usage with quota awareness
+   */
+  async trackUsageWithQuota(data: CreateUsageLogDto): Promise<IUsageLog> {
+    try {
+      const { organizationId, type, repositoryId } = data;
+
+      // Calculate current rate based on quota for this specific repository
+      const rateInfo = await this.calculateBillingRate(
+        organizationId,
+        type as any,
+        repositoryId,
+      );
+
+      // Update description to indicate if this was within quota
+      const descriptionPrefix = rateInfo.withinQuota
+        ? '[Within Quota] '
+        : '[Billable] ';
+
+      // Create the usage log with updated description
+      return this.createUsageLog({
+        ...data,
+        description: `${descriptionPrefix}${data.description}`,
+      });
+    } catch (error) {
+      console.error('Error tracking usage with quota:', error);
       throw new BadRequestException(error.message);
     }
   }

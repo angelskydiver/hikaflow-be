@@ -239,28 +239,6 @@ export class RepositoryScanService {
         },
       );
 
-      // Send email notification
-      await this._mailService.repositoryScanCompleteNotification({
-        email: scan.account.user.email,
-        adminName: scan.account.user.firstName,
-        repositoryName: repository.name,
-        totalFiles: scan.totalFiles,
-        issuesFound: securityIssues.commentCount + codeSmells.commentCount,
-        securityIssues: securityIssues.commentCount,
-        codeSmells: codeSmells.commentCount,
-        topSecurityIssues: securityIssues.comments.slice(0, 5).map((issue) => ({
-          severity: issue.severity,
-          title: issue.issue,
-          description: issue.content,
-        })),
-        topCodeIssues: codeSmells.comments.slice(0, 5).map((issue) => ({
-          severity: issue.severity,
-          title: issue.issue,
-          description: issue.content,
-        })),
-        reportUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/${repository.id}/${repository.organizationId}`,
-      });
-
       // Update scan status as COMPLETED
       await this.prisma.repositoryScan.update({
         where: { id: repositoryScanId },
@@ -270,6 +248,28 @@ export class RepositoryScanService {
           completedAt: new Date(),
         },
       });
+
+      // Send email notification
+      // await this._mailService.repositoryScanCompleteNotification({
+      //   email: scan.account.user.email,
+      //   adminName: scan.account.user.firstName,
+      //   repositoryName: repository.name,
+      //   totalFiles: scan.totalFiles,
+      //   issuesFound: securityIssues.commentCount + codeSmells.commentCount,
+      //   securityIssues: securityIssues.commentCount,
+      //   codeSmells: codeSmells.commentCount,
+      //   topSecurityIssues: securityIssues.comments.slice(0, 5).map((issue) => ({
+      //     severity: issue.severity,
+      //     title: issue.issue,
+      //     description: issue.content,
+      //   })),
+      //   topCodeIssues: codeSmells.comments.slice(0, 5).map((issue) => ({
+      //     severity: issue.severity,
+      //     title: issue.issue,
+      //     description: issue.content,
+      //   })),
+      //   reportUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/${repository.id}/${repository.organizationId}`,
+      // });
 
       return analyzedFiles;
     } catch (error) {
@@ -976,7 +976,7 @@ export class RepositoryScanService {
 
             // After creating the assistedQuestions record, log the usage
             try {
-              await this._billingService.createUsageLog({
+              await this._billingService.trackUsageWithQuota({
                 organizationId: repository.organizationId,
                 repositoryId,
                 type: 'ASSISTANT_QUESTION',
@@ -1234,7 +1234,7 @@ export class RepositoryScanService {
 
         // After creating the assistedQuestions record, log the usage
         try {
-          await this._billingService.createUsageLog({
+          await this._billingService.trackUsageWithQuota({
             organizationId: repository.organizationId,
             repositoryId,
             type: 'ASSISTANT_QUESTION',
