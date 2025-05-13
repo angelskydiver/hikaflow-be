@@ -509,6 +509,8 @@ model PricingPlan {
   planType        SubscriptionPlanType
   basePrice       Float // Base price per project
   evaluationPrice Float // Price per evaluation
+  prAnalysisQuota Int                  @default(20)
+  assistantQuota  Int                  @default(50)
   active          Boolean              @default(true)
   stripeProductId String? // Stripe product ID
   stripePriceId   String? // Stripe price ID

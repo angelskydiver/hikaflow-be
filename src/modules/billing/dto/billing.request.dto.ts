@@ -21,6 +21,14 @@ export class CreatePricingPlanDto {
   @IsNumber()
   evaluationPrice: number; // Price per evaluation
 
+  @IsNumber()
+  @IsOptional()
+  prAnalysisQuota?: number = 20; // Number of PR analyses included in plan
+
+  @IsNumber()
+  @IsOptional()
+  assistantQuota?: number = 50; // Number of assistant questions included in plan
+
   @IsBoolean()
   @IsOptional()
   active?: boolean;
