@@ -11,6 +11,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Public } from 'src/decorators/public';
 import {
+  CreateCustomFlagsRequestDto,
   GithubRepository,
   GithubRepositoryBranches,
   RegisterRepositoryRequestDto,
@@ -145,6 +146,18 @@ export class RepositoryController {
     console.log('hllo');
     return await this._repositoryService.bitbucketRepositoryBranches(
       data.repoSlug,
+    );
+  }
+
+  @Public()
+  @Post('/createRepositorySetting/:repositoryId')
+  async CreateRepositorySetting(
+    @Param('repositoryId') repositoryId: string,
+    @Body() data: CreateCustomFlagsRequestDto[],
+  ) {
+    return await this._repositoryService.createRepositorySetting(
+      repositoryId,
+      data,
     );
   }
 }

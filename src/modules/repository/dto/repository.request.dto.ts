@@ -52,3 +52,23 @@ export class UpdateRepositorySettingsPromptRequestDto {
   @ApiProperty({ example: 'optional', required: false })
   prompt: string;
 }
+
+export class CreateCustomFlagsRequestDto {
+  @ApiProperty({ example: 'Magic Numbers', required: true })
+  key: string;
+
+  @ApiProperty({ example: 'optional', required: false })
+  prompt: string;
+
+  @ApiProperty({ example: 'optional', required: false })
+  description: string;
+
+  @ApiProperty({ example: 'optional', required: false })
+  priority: string;
+
+  @ApiProperty({ example: 'optional', required: false })
+  active: boolean;
+
+  @ApiProperty({ example: 'optional', required: false })
+  category: string;
+}
