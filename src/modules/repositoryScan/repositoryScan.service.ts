@@ -27,11 +27,7 @@ import {
 } from 'src/config/helpers/repositories/github.helper';
 import { MailService } from 'src/mail/mail.service';
 import { PrismaService } from 'src/prisma/prisma.service';
-import {
-  queueChangedFilesScan,
-  queueOnDemandFileScan,
-  repositoryScanQueue,
-} from 'src/queue/repository.scan.queue';
+import { repositoryScanQueue } from 'src/queue/repository.scan.queue';
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
 import { BillingService } from '../billing/billing.service';
 import { CommentService } from '../comment/comment.service';
@@ -1368,9 +1364,6 @@ export class RepositoryScanService {
         fileDocumentation = await this.prisma.fileDocumentation.findMany({
           where: {
             repositoryScanId: repositoryScan.id,
-            fullPath: {
-              in: changedFiles.map((file) => file.filename),
-            },
           },
         });
       }
@@ -1420,6 +1413,28 @@ export class RepositoryScanService {
         }
       });
 
+      // Get test files from the repository to understand test coverage
+      const testFiles = fileDocumentation.filter(
+        (doc) => doc.fileType && doc.fileType.includes('TEST'),
+      );
+      const testFilePaths = testFiles.map((file) => file.fullPath);
+
+      // Define type for enhanced file
+      type EnhancedFile = {
+        filename: string;
+        patch: string;
+        documentation: any;
+        functions: any;
+        imports: any[];
+        exports: any[];
+        impactedBy: any[];
+        impacts: any[];
+        previousContent: string;
+        currentContent: string;
+        testCoverage: any[];
+        modifiedFunctions?: any[];
+      };
+
       // Prepare enhanced file data with content and metadata
       const enhancedChangedFiles = await Promise.all(
         changedFiles.map(async (file) => {
@@ -1430,7 +1445,7 @@ export class RepositoryScanService {
           }
 
           // Prepare file content and metadata
-          const enhancedFile = {
+          const enhancedFile: EnhancedFile = {
             filename: file.filename,
             patch: file.patch || '',
             documentation: fileDocMap[file.filename] || null,
@@ -1441,6 +1456,16 @@ export class RepositoryScanService {
             impacts: dependencyMap.impacts[file.filename] || [],
             previousContent: file.previousContent || '',
             currentContent: file.currentContent || '',
+            testCoverage: testFilePaths.filter(
+              (testPath) =>
+                testPath.includes(file.filename.replace(/\.[^/.]+$/, '')) ||
+                testPath.includes(
+                  file.filename
+                    .split('/')
+                    .pop()
+                    .replace(/\.[^/.]+$/, ''),
+                ),
+            ),
           };
 
           // If content isn't already provided, fetch it from the repository
@@ -1481,12 +1506,25 @@ export class RepositoryScanService {
             enhancedFile.currentContent || '',
           );
 
+          // Analyze diff to identify exact function changes
+          if (enhancedFile.previousContent && enhancedFile.currentContent) {
+            const previousFunctions = this._extractFunctions(
+              enhancedFile.previousContent,
+            );
+            enhancedFile.modifiedFunctions = this._identifyModifiedFunctions(
+              previousFunctions,
+              enhancedFile.functions,
+            );
+          }
+
           return enhancedFile;
         }),
       );
 
       // Filter out null entries
-      const filteredFiles = enhancedChangedFiles.filter(Boolean);
+      const filteredFiles = enhancedChangedFiles.filter(
+        Boolean,
+      ) as EnhancedFile[];
 
       // Identify affected flows based on dependencies
       const affectedFlows = await this._identifyAffectedFlows(
@@ -1495,13 +1533,28 @@ export class RepositoryScanService {
         dependencyMap,
       );
 
-      // Analyze variable usage to detect undefined variables
+      // Analyze variable usage to detect undefined variables and find pattern changes
       const variableAnalysis = filteredFiles.map((file) => {
         const fileExtension = file.filename.split('.').pop()?.toLowerCase();
         const language = this._detectLanguage(file.currentContent || '');
-        const variableUsage = this._analyzeVariableUsage(
+        const previousVariableUsage = file.previousContent
+          ? this._analyzeVariableUsage(file.previousContent)
+          : { defined: new Set(), used: new Set() };
+        const currentVariableUsage = this._analyzeVariableUsage(
           file.currentContent || '',
         );
+
+        // Identify changes in variable usage patterns
+        const newVariables = Array.from(currentVariableUsage.defined).filter(
+          (v) => !previousVariableUsage.defined.has(v as string),
+        );
+        const removedVariables = Array.from(
+          previousVariableUsage.defined,
+        ).filter((v) => !currentVariableUsage.defined.has(v as string));
+        const newUsages = Array.from(currentVariableUsage.used).filter(
+          (v) => !previousVariableUsage.used.has(v as string),
+        );
+
         const docType = this.mapFileTypeToDocumentationType(
           file.filename.split('.').pop() || '',
         );
@@ -1510,9 +1563,16 @@ export class RepositoryScanService {
           filename: file.filename,
           language,
           variables: {
-            defined: Array.from(variableUsage.defined),
-            used: Array.from(variableUsage.used),
+            defined: Array.from(currentVariableUsage.defined),
+            used: Array.from(currentVariableUsage.used),
+            newlyDefined: newVariables,
+            removed: removedVariables,
+            newUsages: newUsages,
           },
+          potentialUndefined: this._detectUndefinedVariables(
+            file.currentContent || '',
+            file.imports || [],
+          ),
         };
       });
 
@@ -1523,6 +1583,32 @@ export class RepositoryScanService {
         dependencyMap,
       );
 
+      // Identify API changes that could break consumers
+      const apiChanges = this._identifyAPIChanges(
+        filteredFiles,
+        fileDocumentation,
+      );
+
+      // Generate test requirements based on the changes
+      const testRequirements = [];
+      for (const flow of Object.keys(affectedFlows.flows || {})) {
+        const flowFiles = affectedFlows.flows[flow] || [];
+        const requirements = this._generateTestRequirements(
+          flow,
+          flowFiles,
+          variableAnalysis,
+          filteredFiles.flatMap((f) => f.modifiedFunctions || []),
+        );
+        if (Array.isArray(requirements)) {
+          testRequirements.push(...requirements);
+        } else if (requirements) {
+          // If it's an object with a details array, add those details
+          if (requirements.details && Array.isArray(requirements.details)) {
+            testRequirements.push(...requirements.details);
+          }
+        }
+      }
+
       // Use DeepSeek AI for regression analysis
       const deepseekAI = new DeepSeek();
       const geminiAI = new Gemini(); // Gemini as potential fallback
@@ -1531,25 +1617,96 @@ export class RepositoryScanService {
         `Performing regression analysis on ${filteredFiles.length} files`,
       );
 
+      // Break analysis into manageable chunks to avoid context window limitations
+      const MAX_FILES_PER_CHUNK = 5;
+      const fileChunks = [];
+      for (let i = 0; i < filteredFiles.length; i += MAX_FILES_PER_CHUNK) {
+        fileChunks.push(filteredFiles.slice(i, i + MAX_FILES_PER_CHUNK));
+      }
+
+      // Process analysis in chunks
       let regressionAnalysis = null;
       try {
-        regressionAnalysis = await deepseekAI.analyzeRegressionImpact(
-          filteredFiles.map((file) => ({
-            filename: file.filename,
-            patch: file.patch,
-            previousContent: file.previousContent || '',
-            currentContent: file.currentContent || '',
-            functions: file.functions || [],
-            imports: file.imports || [],
-            exports: file.exports || [],
-            impactedBy: file.impactedBy || [],
-            impacts: file.impacts || [],
-            affectedFlows: affectedFlows.fileFlowMap[file.filename] || [],
-          })),
-        );
+        if (fileChunks.length > 1) {
+          console.log(
+            `Breaking analysis into ${fileChunks.length} chunks due to size`,
+          );
+
+          // Process each chunk separately
+          const chunkResults = await this._analyzeRegressionImpactChunked(
+            fileChunks,
+            variableAnalysis,
+            affectedFlows,
+            affectedDependencies,
+          );
+
+          // Merge results
+          regressionAnalysis = this._mergeChunkResults(
+            chunkResults,
+            fileChunks,
+          );
+        } else {
+          // For small changes, analyze everything at once
+          regressionAnalysis = await deepseekAI.analyzeRegressionImpact(
+            filteredFiles.map((file) => ({
+              filename: file.filename,
+              patch: file.patch,
+              previousContent: file.previousContent || '',
+              currentContent: file.currentContent || '',
+              functions: file.functions || [],
+              imports: file.imports || [],
+              exports: file.exports || [],
+              impactedBy: file.impactedBy || [],
+              impacts: file.impacts || [],
+              affectedFlows: affectedFlows.fileFlowMap[file.filename] || [],
+              testCoverage: file.testCoverage || [],
+              modifiedFunctions: file.modifiedFunctions || [],
+            })),
+          );
+        }
       } catch (error) {
         console.error('Error with DeepSeek analysis:', error);
-        // Handle error, potentially implement fallback to Gemini here
+
+        // Fallback to Gemini if DeepSeek fails
+        try {
+          console.log('Falling back to Gemini for analysis');
+          regressionAnalysis = await geminiAI.analyzeRegressionImpact(
+            filteredFiles.map((file) => ({
+              filename: file.filename,
+              patch: file.patch,
+              previousContent: file.previousContent || '',
+              currentContent: file.currentContent || '',
+              functions: file.functions || [],
+              imports: file.imports || [],
+              exports: file.exports || [],
+              affectedFlows: affectedFlows.fileFlowMap[file.filename] || [],
+            })),
+          );
+        } catch (geminiError) {
+          console.error('Both AI analyses failed:', geminiError);
+          // Continue with partial results
+        }
+      }
+
+      // Add confidence scores to results
+      if (regressionAnalysis) {
+        regressionAnalysis.confidenceScores = {
+          overall: this._calculateConfidenceScore(
+            filteredFiles,
+            variableAnalysis,
+            affectedFlows,
+            testRequirements,
+          ),
+          byFlow: Object.keys(affectedFlows.flows || {}).reduce((acc, flow) => {
+            acc[flow] = this._calculateFlowConfidenceScore(
+              flow,
+              affectedFlows.flows[flow] || [],
+              testRequirements,
+              variableAnalysis,
+            );
+            return acc;
+          }, {}),
+        };
       }
 
       // Create a report in the database
@@ -1561,7 +1718,7 @@ export class RepositoryScanService {
             status: 'COMPLETED',
             summary: regressionAnalysis?.summary || 'Analysis failed',
             impactedFlows: regressionAnalysis?.impactedFlows || [],
-            testCases: regressionAnalysis?.testCases || [],
+            testCases: regressionAnalysis?.testCases || testRequirements || [],
             potentialBreakages: regressionAnalysis?.potentialBreakages || [],
             changedBehavior: regressionAnalysis?.changedBehavior || [],
             organizationId: repository.organizationId,
@@ -1571,12 +1728,411 @@ export class RepositoryScanService {
 
       return {
         reportId: regressionTestingReport.id,
+        confidenceScores: regressionAnalysis?.confidenceScores || {
+          overall: 0.5,
+        },
         ...regressionAnalysis,
       };
     } catch (error) {
       console.error('Error in analyzeRegressionImpactEnhanced:', error);
       throw new BadRequestException(error.message);
     }
+  }
+
+  /**
+   * Analyzes regression impact in chunks to avoid context window limitations
+   * @param fileChunks Arrays of files split into manageable chunks
+   * @param variableAnalysis Variable usage analysis
+   * @param affectedFlows Flow information
+   * @param affectedDependencies Dependency information
+   * @returns Combined analysis results
+   */
+  private async _analyzeRegressionImpactChunked(
+    fileChunks: any[][],
+    variableAnalysis: any[],
+    affectedFlows: any,
+    affectedDependencies: any,
+  ) {
+    const deepseekAI = new DeepSeek();
+    const results = [];
+
+    // Create compact file representations to reduce context size
+    const compactFileChunks = fileChunks.map((chunk) =>
+      chunk.map((file) =>
+        this._createCompactFileRepresentation(
+          file,
+          variableAnalysis.find((v) => v.filename === file.filename),
+          affectedFlows.fileFlowMap[file.filename] || [],
+          affectedDependencies[file.filename] || {},
+        ),
+      ),
+    );
+
+    // Analyze each chunk
+    for (let i = 0; i < compactFileChunks.length; i++) {
+      try {
+        console.log(`Analyzing chunk ${i + 1}/${compactFileChunks.length}`);
+        const chunkResult = await deepseekAI.analyzeRegressionImpact(
+          compactFileChunks[i],
+        );
+        results.push(chunkResult);
+      } catch (error) {
+        console.error(`Error analyzing chunk ${i + 1}:`, error);
+        // Continue with other chunks
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Merges results from chunked analysis
+   * @param chunkResults Results from each analyzed chunk
+   * @param fileChunks Original file chunks
+   * @returns Combined analysis
+   */
+  private _mergeChunkResults(chunkResults: any[], fileChunks: any[][]) {
+    // Start with empty result structure
+    const merged = {
+      summary: '',
+      impactedFlows: [],
+      testCases: [],
+      potentialBreakages: [],
+      changedBehavior: [],
+    };
+
+    // Merge each section
+    chunkResults.forEach((result, index) => {
+      if (!result) return;
+
+      // Merge arrays with deduplication
+      merged.impactedFlows = this._deduplicateByField(
+        [...merged.impactedFlows, ...(result.impactedFlows || [])],
+        'flow',
+      );
+
+      merged.testCases = this._deduplicateByField(
+        [...merged.testCases, ...(result.testCases || [])],
+        'scenario',
+      );
+
+      merged.potentialBreakages = this._deduplicateByField(
+        [...merged.potentialBreakages, ...(result.potentialBreakages || [])],
+        'description',
+      );
+
+      merged.changedBehavior = this._deduplicateByField(
+        [...merged.changedBehavior, ...(result.changedBehavior || [])],
+        'description',
+      );
+    });
+
+    // Generate a combined summary
+    const summaries = chunkResults
+      .filter((r) => r && r.summary)
+      .map((r) => r.summary);
+
+    merged.summary = this._generateCombinedSummary(summaries, fileChunks);
+
+    return merged;
+  }
+
+  /**
+   * Generates a unified summary from chunk summaries
+   * @param summaries Individual chunk summaries
+   * @param fileChunks Original file chunks
+   * @returns Combined summary
+   */
+  private _generateCombinedSummary(summaries: string[], fileChunks: any[][]) {
+    if (summaries.length === 0) return 'No analysis results available.';
+    if (summaries.length === 1) return summaries[0];
+
+    // Count total files analyzed
+    const totalFiles = fileChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+
+    // Extract key points from each summary
+    const keyPoints = summaries.flatMap((summary) => {
+      const lines = summary
+        .split('\n')
+        .filter((line) => line.trim().length > 0);
+      return lines.filter(
+        (line) =>
+          !line.toLowerCase().startsWith('analyzed') &&
+          !line.toLowerCase().startsWith('this pr') &&
+          line.length > 15,
+      );
+    });
+
+    // Deduplicate points
+    const uniquePoints = Array.from(new Set(keyPoints));
+
+    // Construct combined summary
+    return (
+      `Analysis of ${totalFiles} changed files across multiple chunks:\n\n` +
+      uniquePoints.slice(0, 10).join('\n\n') +
+      (uniquePoints.length > 10
+        ? '\n\n...additional findings omitted for brevity'
+        : '')
+    );
+  }
+
+  /**
+   * Deduplicates items in an array based on a field value
+   * @param items Array of items to deduplicate
+   * @param field Field to check for uniqueness
+   * @returns Deduplicated array
+   */
+  private _deduplicateByField(items: any[], field: string): any[] {
+    const seen = new Set();
+    return items.filter((item) => {
+      const value = item[field];
+      if (seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+  }
+
+  /**
+   * Creates a compact representation of a file to reduce context size
+   * @param file Full file data
+   * @param variableAnalysis Variable analysis for the file
+   * @param affectedFlows Flows affected by this file
+   * @param dependencyInfo Dependency information
+   * @returns Compact representation
+   */
+  private _createCompactFileRepresentation(
+    file: any,
+    variableAnalysis: any,
+    affectedFlows: any[],
+    dependencyInfo: any,
+  ): any {
+    // Extract just the changed parts from the diff
+    const patchLines = file.patch?.split('\n') || [];
+    const changedContext = patchLines
+      .filter((line) => line.startsWith('+') || line.startsWith('-'))
+      .join('\n');
+
+    // Extract the most relevant parts of the file content
+    const modifiedFunctions = file.modifiedFunctions || [];
+    const modifiedFunctionBodies = modifiedFunctions
+      .map((fn) => `${fn.name || 'anonymous'}:\n${fn.body || ''}`)
+      .join('\n\n');
+
+    return {
+      filename: file.filename,
+      functions: file.functions || [],
+      imports: file.imports || [],
+      exports: file.exports || [],
+      impactedBy: file.impactedBy || [],
+      impacts: file.impacts || [],
+      affectedFlows: affectedFlows,
+      patchSummary: changedContext,
+      modifiedFunctions: modifiedFunctionBodies,
+      variableChanges: variableAnalysis
+        ? {
+            newlyDefined: variableAnalysis.variables?.newlyDefined || [],
+            removed: variableAnalysis.variables?.removed || [],
+            newUsages: variableAnalysis.variables?.newUsages || [],
+          }
+        : {},
+      dependsOn: dependencyInfo.dependsOn || [],
+      dependedOnBy: dependencyInfo.dependedOnBy || [],
+    };
+  }
+
+  /**
+   * Identifies changes in APIs that could affect consumers
+   * @param files Changed files with their content
+   * @param fileDocumentation Documentation for all files
+   * @returns API changes that might break consumers
+   */
+  private _identifyAPIChanges(files: any[], fileDocumentation: any[]) {
+    const apiChanges = [];
+
+    files.forEach((file) => {
+      // Skip files without both previous and current content
+      if (!file.previousContent || !file.currentContent) return;
+
+      const previousFunctions = this._extractFunctions(file.previousContent);
+      const currentFunctions = this._extractFunctions(file.currentContent);
+
+      // Find consumers of this file
+      const consumers = this._findImportersOfFile(
+        file.filename,
+        fileDocumentation,
+      );
+
+      // If this file is imported by others, check for API changes
+      if (consumers.length > 0) {
+        // Check for removed functions
+        previousFunctions.forEach((prevFn) => {
+          const stillExists = currentFunctions.some(
+            (currFn) => currFn.name === prevFn.name,
+          );
+
+          if (!stillExists) {
+            apiChanges.push({
+              type: 'REMOVED_FUNCTION',
+              file: file.filename,
+              name: prevFn.name,
+              consumers: consumers,
+              risk: 'HIGH',
+            });
+          }
+        });
+
+        // Check for changed function signatures
+        previousFunctions.forEach((prevFn) => {
+          const currentFn = currentFunctions.find(
+            (fn) => fn.name === prevFn.name,
+          );
+
+          if (currentFn && prevFn.params !== currentFn.params) {
+            apiChanges.push({
+              type: 'CHANGED_SIGNATURE',
+              file: file.filename,
+              name: prevFn.name,
+              consumers: consumers,
+              previousParams: prevFn.params,
+              currentParams: currentFn.params,
+              risk: 'HIGH',
+            });
+          }
+        });
+      }
+    });
+
+    return apiChanges;
+  }
+
+  /**
+   * Identifies modified functions between two sets of function definitions
+   * @param previousFunctions Functions from previous version
+   * @param currentFunctions Functions from current version
+   * @returns Modified functions with details about changes
+   */
+  private _identifyModifiedFunctions(
+    previousFunctions: any[],
+    currentFunctions: any[],
+  ) {
+    const modifiedFunctions = [];
+
+    // Map functions by name for easier lookup
+    const prevFunctionMap = {};
+    previousFunctions.forEach((fn) => {
+      if (fn.name) prevFunctionMap[fn.name] = fn;
+    });
+
+    // Find modified functions
+    currentFunctions.forEach((currFn) => {
+      if (!currFn.name) return; // Skip anonymous functions
+
+      const prevFn = prevFunctionMap[currFn.name];
+
+      // New function
+      if (!prevFn) {
+        modifiedFunctions.push({
+          ...currFn,
+          changeType: 'ADDED',
+        });
+        return;
+      }
+
+      // Check if function body or parameters changed
+      if (prevFn.body !== currFn.body || prevFn.params !== currFn.params) {
+        modifiedFunctions.push({
+          ...currFn,
+          changeType: 'MODIFIED',
+          previousBody: prevFn.body,
+          previousParams: prevFn.params,
+        });
+      }
+    });
+
+    // Find removed functions
+    previousFunctions.forEach((prevFn) => {
+      if (!prevFn.name) return; // Skip anonymous functions
+
+      const stillExists = currentFunctions.some(
+        (fn) => fn.name === prevFn.name,
+      );
+
+      if (!stillExists) {
+        modifiedFunctions.push({
+          ...prevFn,
+          changeType: 'REMOVED',
+        });
+      }
+    });
+
+    return modifiedFunctions;
+  }
+
+  /**
+   * Calculates overall confidence score for the regression analysis
+   * @param files Changed files
+   * @param variableAnalysis Variable analysis results
+   * @param affectedFlows Flow analysis results
+   * @param testRequirements Generated test requirements
+   * @returns Confidence score between 0 and 1
+   */
+  private _calculateConfidenceScore(
+    files: any[],
+    variableAnalysis: any[],
+    affectedFlows: any,
+    testRequirements: any[],
+  ) {
+    let score = 0.5; // Default middle score
+
+    // Factors that increase confidence
+    if (testRequirements.length > 0) score += 0.1;
+    if (files.every((f) => f.previousContent && f.currentContent)) score += 0.1;
+
+    // Factors that decrease confidence
+    const flowCount = Object.keys(affectedFlows.flows || {}).length;
+    if (flowCount > 5) score -= 0.1;
+
+    const undefinedVars = variableAnalysis.flatMap((v) =>
+      Array.from(v.potentialUndefined || []),
+    ).length;
+    if (undefinedVars > 0) score -= 0.05;
+
+    return Math.min(Math.max(score, 0.1), 0.95); // Keep between 0.1 and 0.95
+  }
+
+  /**
+   * Calculates confidence score for a specific flow
+   * @param flow Flow name
+   * @param flowFiles Files in the flow
+   * @param testRequirements Generated test requirements
+   * @param variableAnalysis Variable analysis results
+   * @returns Confidence score between 0 and 1
+   */
+  private _calculateFlowConfidenceScore(
+    flow: string,
+    flowFiles: string[],
+    testRequirements: any[],
+    variableAnalysis: any[],
+  ) {
+    let score = 0.5; // Default middle score
+
+    // Factors that increase confidence
+    const flowTests = testRequirements.filter(
+      (test) => test.flow === flow || test.relatedFlows?.includes(flow),
+    );
+    if (flowTests.length > 0) score += 0.15;
+
+    // Factors that decrease confidence
+    const flowVarAnalysis = variableAnalysis.filter((v) =>
+      flowFiles.includes(v.filename),
+    );
+
+    const undefinedVars = flowVarAnalysis.flatMap((v) =>
+      Array.from(v.potentialUndefined || []),
+    ).length;
+    if (undefinedVars > 0) score -= 0.1;
+
+    return Math.min(Math.max(score, 0.1), 0.95); // Keep between 0.1 and 0.95
   }
 
   /**
@@ -3102,331 +3658,77 @@ export class RepositoryScanService {
     return importers;
   }
 
-  /**
-   * Processes large PRs by chunking files and analyzing them in batches
-   * This ensures we stay within AI context limits (60k tokens for Deepseek)
-   */
-  private async _analyzeRegressionImpactChunked(
-    enhancedChangedFiles: any[],
-    variableAnalysis: any[],
-    affectedFlows: any,
-    affectedDependencies: any,
+  // Add this method as a temporary placeholder since it's being called
+  async scanOnDemand(
+    repositoryId: string,
+    filePath: string,
+    accountId: string,
   ) {
-    console.log('Using chunked regression analysis strategy for large PR');
-    const deepseekAI = new DeepSeek();
-    const geminiAI = new Gemini();
+    try {
+      console.log(`On-demand scan requested for ${filePath}`);
 
-    // Constants for chunking
-    const MAX_FILES_PER_CHUNK = 3; // Adjusted down to ensure we stay well under token limits
-    const MAX_CONTENT_LENGTH = 15000; // ~7k tokens, much less than DeepSeek's context
+      // Try to get existing file documentation first
+      const fileDocumentation = await this.prisma.fileDocumentation.findFirst({
+        where: {
+          repositoryId,
+          fullPath: filePath,
+        },
+        include: {
+          repository: true,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
 
-    // Sort files by importance - changed files first, then importers
-    const sortedFiles = [...enhancedChangedFiles].sort((a, b) => {
-      // Direct changes are more important than importers
-      if (a.importerOnly && !b.importerOnly) return 1;
-      if (!a.importerOnly && b.importerOnly) return -1;
-
-      // Files with missing variables are most important
-      const aAnalysis = variableAnalysis.find((v) => v.filename === a.filename);
-      const bAnalysis = variableAnalysis.find((v) => v.filename === b.filename);
-
-      const aMissingVars = aAnalysis?.missingVariables?.length || 0;
-      const bMissingVars = bAnalysis?.missingVariables?.length || 0;
-
-      if (aMissingVars !== bMissingVars) return bMissingVars - aMissingVars;
-
-      // Finally sort by number of flows affected
-      const aFlows = (affectedFlows.fileFlowMap[a.filename] || []).length;
-      const bFlows = (affectedFlows.fileFlowMap[b.filename] || []).length;
-      return bFlows - aFlows;
-    });
-
-    console.log('Sorted files by importance for chunked analysis');
-
-    // Create chunks of files
-    const fileChunks: any[][] = [];
-    let currentChunk: any[] = [];
-    let currentChunkSize = 0;
-
-    for (const file of sortedFiles) {
-      // Estimate content length (this is approximate)
-      const fileContentLength =
-        (file.filename?.length || 0) +
-        (file.previousContent?.length || 0) +
-        (file.currentContent?.length || 0);
-
-      // If adding this file would exceed our chunk size, start a new chunk
-      if (
-        currentChunk.length >= MAX_FILES_PER_CHUNK ||
-        currentChunkSize + fileContentLength > MAX_CONTENT_LENGTH
-      ) {
-        if (currentChunk.length > 0) {
-          fileChunks.push(currentChunk);
-        }
-        currentChunk = [file];
-        currentChunkSize = fileContentLength;
-      } else {
-        currentChunk.push(file);
-        currentChunkSize += fileContentLength;
+      if (fileDocumentation) {
+        return fileDocumentation;
       }
+
+      // If we don't have documentation, throw an error
+      throw new NotFoundException(`File not found: ${filePath}`);
+    } catch (error) {
+      console.error(`Error in scanOnDemand: ${error.message}`);
+      throw error;
     }
-
-    // Add the last chunk if it has files
-    if (currentChunk.length > 0) {
-      fileChunks.push(currentChunk);
-    }
-
-    console.log(`Created ${fileChunks.length} chunks for analysis`);
-
-    // Process each chunk with the AI
-    const chunkAnalysisResults = await Promise.all(
-      fileChunks.map(async (chunk, index) => {
-        console.log(
-          `Processing chunk ${index + 1}/${fileChunks.length} with ${chunk.length} files`,
-        );
-
-        // For each chunk, create a more compact representation to send to AI
-        const compactChunk = chunk.map((file) => {
-          // Create a more concise representation with just essential data
-          const compactFile = {
-            filename: file.filename,
-            patch: file.patch?.substring(0, 500) || '',
-            previousContent: file.previousContent?.substring(0, 1000) || '',
-            currentContent: file.currentContent?.substring(0, 1000) || '',
-            functions: (file.functions || []).slice(0, 5),
-            imports: (file.imports || []).slice(0, 5),
-            exports: (file.exports || []).slice(0, 5),
-            variableInfo:
-              variableAnalysis.find((v) => v.filename === file.filename) || {},
-            affectedFlows: (
-              affectedFlows.fileFlowMap[file.filename] || []
-            ).slice(0, 3),
-            dependencyInfo: affectedDependencies[file.filename] || {
-              importedChangedFiles: [],
-              exportedToFiles: [],
-            },
-          };
-
-          return compactFile;
-        });
-
-        // Try DeepSeek first, if it fails due to token limits, use Gemini
-        try {
-          console.log(`Analyzing chunk ${index + 1} with DeepSeek`);
-          return await deepseekAI.analyzeRegressionImpact(compactChunk);
-        } catch (error) {
-          console.error(
-            `DeepSeek analysis failed for chunk ${index + 1}:`,
-            error.message,
-          );
-          console.log(`Falling back to Gemini for chunk ${index + 1}`);
-          return await geminiAI.analyzeRegressionImpact(compactChunk);
-        }
-      }),
-    );
-
-    console.log(`Successfully analyzed ${chunkAnalysisResults.length} chunks`);
-
-    // Merge the results from each chunk
-    return this._mergeChunkResults(chunkAnalysisResults, fileChunks);
-  }
-
-  /**
-   * Merge results from multiple chunk analyses into a single coherent report
-   */
-  private _mergeChunkResults(chunkResults: any[], fileChunks: any[][]): any {
-    console.log('Merging chunk analysis results');
-
-    // Initialize merged result structure
-    const mergedResult = {
-      summary: '',
-      impactedFlows: [],
-      testCases: [],
-      potentialBreakages: [],
-      changedBehavior: [],
-    };
-
-    // Generate combined summary
-    const summaries = chunkResults
-      .map((result) => result.summary || '')
-      .filter(Boolean);
-    mergedResult.summary = this._generateCombinedSummary(summaries, fileChunks);
-
-    // Merge arrays from each chunk result
-    chunkResults.forEach((result, index) => {
-      // Merge impacted flows
-      if (Array.isArray(result.impactedFlows)) {
-        mergedResult.impactedFlows.push(...result.impactedFlows);
-      }
-
-      // Merge test cases
-      if (Array.isArray(result.testCases)) {
-        mergedResult.testCases.push(...result.testCases);
-      }
-
-      // Merge potential breakages
-      if (Array.isArray(result.potentialBreakages)) {
-        mergedResult.potentialBreakages.push(...result.potentialBreakages);
-      }
-
-      // Merge behavior changes
-      if (Array.isArray(result.changedBehavior)) {
-        mergedResult.changedBehavior.push(...result.changedBehavior);
-      }
-    });
-
-    // Deduplicate results to avoid repetition
-    mergedResult.impactedFlows = this._deduplicateByField(
-      mergedResult.impactedFlows,
-      'flowName',
-    );
-    mergedResult.testCases = this._deduplicateByField(
-      mergedResult.testCases,
-      'testName',
-    );
-    mergedResult.potentialBreakages = this._deduplicateByField(
-      mergedResult.potentialBreakages,
-      'area',
-    );
-    mergedResult.changedBehavior = this._deduplicateByField(
-      mergedResult.changedBehavior,
-      'component',
-    );
-
-    console.log('Finished merging chunk results');
-    return mergedResult;
-  }
-
-  /**
-   * Generate a combined summary from individual chunk summaries
-   */
-  private _generateCombinedSummary(
-    summaries: string[],
-    fileChunks: any[][],
-  ): string {
-    // Count total files analyzed
-    const totalFiles = fileChunks.reduce((sum, chunk) => sum + chunk.length, 0);
-
-    // Create an intro sentence
-    const intro = `Analysis of ${totalFiles} changed files revealed the following key impacts:`;
-
-    // Extract key points from each summary
-    let keyPoints: string[] = [];
-    summaries.forEach((summary) => {
-      // Split summary into sentences and take the most important ones
-      const sentences = summary.split(/\.\s+/);
-      const importantSentences = sentences
-        .filter(
-          (s) =>
-            s.toLowerCase().includes('impact') ||
-            s.toLowerCase().includes('change') ||
-            s.toLowerCase().includes('break') ||
-            s.toLowerCase().includes('risk'),
-        )
-        .slice(0, 2);
-
-      keyPoints.push(...importantSentences);
-    });
-
-    // Remove duplicates and limit to top 5 points
-    keyPoints = [...new Set(keyPoints)].slice(0, 5);
-
-    // Format key points as bullet points
-    const bulletPoints = keyPoints.map((point) => `• ${point}`).join('\n');
-
-    // Create a summary from intro and bullet points
-    return `${intro}\n\n${bulletPoints}`;
-  }
-
-  /**
-   * Deduplicate array items by a specific field
-   */
-  private _deduplicateByField(items: any[], field: string): any[] {
-    const uniqueMap = new Map();
-
-    items.forEach((item) => {
-      const key = item[field];
-      if (key && !uniqueMap.has(key)) {
-        uniqueMap.set(key, item);
-      }
-    });
-
-    return Array.from(uniqueMap.values());
-  }
-
-  /**
-   * Create a compact file representation for AI analysis
-   */
-  private _createCompactFileRepresentation(
-    file: any,
-    variableAnalysis: any,
-    affectedFlows: any[],
-    dependencyInfo: any,
-  ): any {
-    return {
-      filename: file.filename,
-      patch: file.patch,
-      previousContent: file.previousContent?.substring(0, 1500) || '',
-      currentContent: file.currentContent?.substring(0, 1500) || '',
-      functions: (file.functions || []).slice(0, 5),
-      imports: (file.imports || []).slice(0, 5),
-      exports: (file.exports || []).slice(0, 5),
-      variableInfo: variableAnalysis || {},
-      affectedFlows: affectedFlows || [],
-      dependencyInfo: dependencyInfo || {
-        importedChangedFiles: [],
-        exportedToFiles: [],
-      },
-    };
   }
 
   /**
    * Retrieves regression testing reports for a repository with pagination
    * @param repositoryId Repository ID
-   * @param options Pagination options
+   * @param options Pagination and filtering options
    * @returns Paginated list of regression reports
    */
   async getRegressionReports(
     repositoryId: string,
-    options: {
-      page: number;
-      limit: number;
-      status?: string;
-    },
+    options: { page: number; limit: number; status?: string },
   ) {
     try {
-      const { page, limit, status } = options;
+      const { page = 1, limit = 10, status } = options;
       const skip = (page - 1) * limit;
 
-      // Build the where clause based on the provided filters
-      const whereClause: any = {
-        repositoryId,
-      };
+      // Build the where clause for the query
+      const where: any = { repositoryId };
 
+      // Add status filter if provided
       if (status) {
-        whereClause.status = status;
+        where.status = status;
       }
 
-      // Count total matching records for pagination info
-      const totalCount = await this.prisma.regressionReport.count({
-        where: whereClause,
-      });
+      // Get the total count for pagination
+      const totalCount = await this.prisma.regressionReport.count({ where });
 
-      // Get the data with pagination
+      // Fetch the paginated reports
       const reports = await this.prisma.regressionReport.findMany({
-        where: whereClause,
-        orderBy: {
-          createdAt: 'desc', // Most recent first
-        },
+        where,
         skip,
-        // @ts-ignore
-        take: parseInt(limit),
+        take: parseInt(limit.toString()),
+        orderBy: { createdAt: 'desc' },
         include: {
           repository: {
             select: {
               name: true,
               owner: true,
-              baseBranch: true,
             },
           },
         },
@@ -3434,6 +3736,8 @@ export class RepositoryScanService {
 
       // Calculate pagination metadata
       const totalPages = Math.ceil(totalCount / limit);
+      const hasNextPage = page < totalPages;
+      const hasPreviousPage = page > 1;
 
       return {
         data: reports.map((report) => ({
@@ -3456,31 +3760,31 @@ export class RepositoryScanService {
             : Object.keys(report.potentialBreakages || {}).length,
         })),
         pagination: {
-          total: totalCount,
           page,
           limit,
+          totalCount,
           totalPages,
-          hasNext: page < totalPages,
-          hasPrevious: page > 1,
+          hasNextPage,
+          hasPreviousPage,
         },
       };
     } catch (error) {
       console.error('Error retrieving regression reports:', error);
-      throw new BadRequestException(error.message);
+      throw new BadRequestException(
+        error.message || 'Failed to retrieve regression reports',
+      );
     }
   }
 
   /**
-   * Retrieves a specific regression report by ID
-   * @param reportId Regression report ID
-   * @returns Detailed regression report
+   * Retrieves a specific regression report by ID with detailed information
+   * @param reportId The ID of the regression report to retrieve
+   * @returns Detailed regression report information
    */
   async getRegressionReportDetail(reportId: string) {
     try {
       const report = await this.prisma.regressionReport.findUnique({
-        where: {
-          id: reportId,
-        },
+        where: { id: reportId },
         include: {
           repository: {
             select: {
@@ -3488,6 +3792,7 @@ export class RepositoryScanService {
               name: true,
               owner: true,
               baseBranch: true,
+              repositoryId: true,
             },
           },
         },
@@ -3495,100 +3800,110 @@ export class RepositoryScanService {
 
       if (!report) {
         throw new NotFoundException(
-          `Regression report with ID "${reportId}" not found`,
+          `Regression report with ID ${reportId} not found`,
         );
       }
 
-      // Convert JSON fields for better readability
-      return {
-        id: report.id,
-        repositoryId: report.repositoryId,
-        repository: report.repository,
-        prNumber: report.prNumber,
-        status: report.status,
-        summary: report.summary,
-        impactedFlows: report.impactedFlows,
-        testCases: report.testCases,
-        potentialBreakages: report.potentialBreakages,
-        changedBehavior: report.changedBehavior,
-        createdAt: report.createdAt,
-        updatedAt: report.updatedAt,
+      // Parse JSON fields to return structured data
+      const parsedReport = {
+        ...report,
+        impactedFlows:
+          typeof report.impactedFlows === 'string'
+            ? JSON.parse(report.impactedFlows as string)
+            : report.impactedFlows,
+        changedBehavior:
+          typeof report.changedBehavior === 'string'
+            ? JSON.parse(report.changedBehavior as string)
+            : report.changedBehavior,
+        potentialBreakages:
+          typeof report.potentialBreakages === 'string'
+            ? JSON.parse(report.potentialBreakages as string)
+            : report.potentialBreakages,
+        testCases:
+          typeof report.testCases === 'string'
+            ? JSON.parse(report.testCases as string)
+            : report.testCases,
       };
+
+      return parsedReport;
     } catch (error) {
       console.error('Error retrieving regression report detail:', error);
       if (error instanceof NotFoundException) {
         throw error;
       }
-      throw new BadRequestException(error.message);
+      throw new BadRequestException(
+        error.message || 'Failed to retrieve regression report detail',
+      );
     }
   }
 
   /**
-   * Rescans missing files from repositories that were scanned the previous day
-   * This should be called via a cron job that runs daily
-   * Processes work through the BullMQ worker queue
+   * Rescans files that were missing or failed in previous scans
+   * This function is called by the cron job and the controller
+   * @returns Object containing success status and details about rescanned files
    */
   async rescanMissingFiles() {
     try {
-      console.log('Starting daily rescan of missing files...');
+      console.log('Starting rescan of missing files...');
 
-      // Get repositories that were scanned in the last 24 hours
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
+      // Get repositories with completed scans in the last 24 hours
+      const oneDayAgo = new Date();
+      oneDayAgo.setDate(oneDayAgo.getDate() - 1);
 
       const recentScans = await this.prisma.repositoryScan.findMany({
         where: {
-          createdAt: {
-            gte: yesterday,
+          status: ScanStatus.COMPLETED,
+          completedAt: {
+            gte: oneDayAgo,
           },
-          status: ScanStatus.COMPLETED, // Only consider completed scans
+        },
+        orderBy: {
+          completedAt: 'desc',
         },
         include: {
           repository: true,
-          account: true,
         },
-        orderBy: {
-          createdAt: 'desc',
-        },
+        distinct: ['repositoryId'],
       });
-
-      console.log(
-        `Found ${recentScans.length} recent repository scans to check for missing files`,
-      );
 
       if (recentScans.length === 0) {
-        return { success: true, message: 'No recent scans to process' };
+        return {
+          success: true,
+          message: 'No repositories with recent scans found',
+          rescannedFiles: [],
+        };
       }
 
-      // Group scans by repository to avoid duplicate work
-      // Take the latest scan for each repository
-      const latestScanByRepo: Record<string, any> = {};
-      recentScans.forEach((scan) => {
-        if (
-          !latestScanByRepo[scan.repositoryId] ||
-          new Date(scan.createdAt) >
-            new Date(latestScanByRepo[scan.repositoryId].createdAt)
-        ) {
-          latestScanByRepo[scan.repositoryId] = scan;
-        }
-      });
-
-      // Process each repository's latest scan
+      // Track results for each repository
       const rescannedFiles = [];
 
-      for (const scan of Object.values(latestScanByRepo)) {
-        const typedScan = scan as any; // Type assertion for TypeScript
-        const repo = typedScan.repository;
-        const accountId = typedScan.accountId;
-
-        console.log(`Processing repository: ${repo.name} (ID: ${repo.id})`);
-
+      // Process each repository
+      for (const scan of recentScans) {
         try {
-          // Get account credentials for repository access
-          const accountCredentials =
-            await this.accountCredentialService.getAccountToken({ accountId });
+          const repo = scan.repository;
+          if (!repo) continue;
 
-          // Fetch complete file structure from the repository
+          // Check if total files scanned matches total files
+          // This would indicate a complete scan with no missing files
+          if (scan.totalFilesScanned === scan.totalFiles) {
+            console.log(`Repository ${repo.name}: All files already scanned`);
+            continue;
+          }
+
+          // Get account credentials for the repository
+          const accountCredentials =
+            await this.accountCredentialService.getAccountToken({
+              accountId: scan.accountId,
+            });
+
+          if (!accountCredentials) {
+            console.log(
+              `Repository ${repo.name}: No account credentials found`,
+            );
+            continue;
+          }
+
+          // Get the file structure for this repository
           let repositoryStructure;
           if (
             accountCredentials.accountType ===
@@ -3609,118 +3924,98 @@ export class RepositoryScanService {
             });
           }
 
-          console.log(
-            `Found ${repositoryStructure.length} files in repository structure`,
-          );
-
-          // Get all files that have been documented for this repository
-          const documentedFiles = await this.prisma.fileDocumentation.findMany({
+          // Get files that have already been scanned
+          const scannedFiles = await this.prisma.fileDocumentation.findMany({
             where: {
-              repositoryId: repo.id,
+              repositoryScanId: scan.id,
             },
             select: {
               fullPath: true,
             },
           });
 
-          const documentedPaths = new Set(
-            documentedFiles.map((f) => f.fullPath),
-          );
+          const scannedFilePaths = new Set(scannedFiles.map((f) => f.fullPath));
 
-          console.log(`Found ${documentedPaths.size} already documented files`);
-
-          // Find files that exist in repository but aren't documented
+          // Identify missing files
           const missingFiles = repositoryStructure.filter((file) => {
-            // Skip files that are already documented
-            if (documentedPaths.has(file.fileRelativePath)) {
-              return false;
-            }
-
-            // Skip unsupported file types (bin, images, etc.)
-            const fileName = file.fileRelativePath.split('/').pop() || '';
-            const fileExtension = fileName.includes('.')
-              ? fileName.substring(fileName.lastIndexOf('.')).toLowerCase()
-              : '';
-
-            // List of supported extensions for scanning
-            // const supportedExtensions = [
-            //   '.js',
-            //   '.jsx',
-            //   '.ts',
-            //   '.tsx',
-            //   '.py',
-            //   '.rb',
-            //   '.java',
-            //   '.c',
-            //   '.cpp',
-            //   '.h',
-            //   '.cs',
-            //   '.php',
-            //   '.go',
-            //   '.rs',
-            //   '.swift',
-            //   '.kt',
-            //   '.html',
-            //   '.css',
-            //   '.scss',
-            //   '.json',
-            //   '.xml',
-            //   '.yaml',
-            //   '.yml',
-            //   '.md',
-            //   '.txt',
-            // ];
-
-            // Skip if extension is not supported
+            const fileExtension = fetchFileExtension(file.name);
+            // Skip files with ignored extensions
             if (ignoredExtensionsForFileScan.includes(fileExtension)) {
               return false;
             }
-
-            return true;
+            // Keep files that haven't been scanned yet
+            return !scannedFilePaths.has(file.fileRelativePath);
           });
 
-          console.log(`Found ${missingFiles.length} missing files to scan`);
-
-          // Process missing files using the BullMQ queue
-          if (missingFiles.length > 0) {
-            // Convert file objects to file paths for the queue
-            const filePaths = missingFiles.map((file) => file.fileRelativePath);
-
-            // Add a job to the BullMQ queue
-            const jobsAdded = await queueChangedFilesScan(
-              repo.id,
-              filePaths,
-              accountId,
-            );
-
-            // Update scan logs with the queued information
-            await this.prisma.repositoryScan.update({
-              where: { id: typedScan.id },
-              data: {
-                logs: {
-                  set: `${typedScan.logs || ''}${new Date().toISOString()} - Queued ${jobsAdded} missing files for scanning\n`,
-                },
-              },
-            });
-
-            rescannedFiles.push({
-              repositoryId: repo.id,
-              repositoryName: repo.name,
-              missingFilesCount: missingFiles.length,
-              queuedFilesCount: jobsAdded,
-              scanId: typedScan.id,
-            });
+          if (missingFiles.length === 0) {
+            console.log(`Repository ${repo.name}: No missing files to scan`);
+            continue;
           }
+
+          console.log(
+            `Repository ${repo.name}: Found ${missingFiles.length} missing files to scan`,
+          );
+
+          // Scan missing files in batches
+          const analyzedFiles = await this._processInBatches(
+            missingFiles,
+            25, // Batch size
+            async (fileData) => {
+              try {
+                return await this.analyzeFiles(
+                  fileData,
+                  accountCredentials.decryptedToken,
+                  repo.id,
+                  scan.id,
+                  repo,
+                );
+              } catch (fileError) {
+                console.error(
+                  `Error analyzing file ${fileData.filePath}:`,
+                  fileError,
+                );
+                return null;
+              }
+            },
+          );
+
+          // Filter out nulls (failed files)
+          const successfullyScanned = analyzedFiles.filter(
+            (file) => file !== null,
+          );
+
+          // Update scan status
+          await this.prisma.repositoryScan.update({
+            where: { id: scan.id },
+            data: {
+              totalFilesScanned: {
+                increment: successfullyScanned.length,
+              },
+            },
+          });
+
+          // Generate embeddings for newly scanned files
+          await this.embedChangedFiles(scan.id);
+
+          // Record results
+          rescannedFiles.push({
+            repositoryId: repo.id,
+            repositoryName: repo.name,
+            scanId: scan.id,
+            missingFilesCount: missingFiles.length,
+            successfullyScannedCount: successfullyScanned.length,
+          });
         } catch (repoError) {
-          console.error(`Error processing repository ${repo.name}:`, repoError);
-          // Continue to next repository
+          console.error(
+            `Error rescanning repository ${scan.repository?.name || scan.repositoryId}:`,
+            repoError,
+          );
+          // Continue with next repository
         }
       }
 
-      console.log('Completed daily rescan setup - files queued for processing');
       return {
         success: true,
-        message: `Processed ${Object.keys(latestScanByRepo).length} repositories`,
         rescannedFiles,
       };
     } catch (error) {
@@ -3728,168 +4023,8 @@ export class RepositoryScanService {
       return {
         success: false,
         message: `Failed to rescan missing files: ${error.message}`,
+        error: error,
       };
-    }
-  }
-
-  /**
-   * Embeds specific files instead of the entire repository
-   * @param repositoryId Repository ID
-   * @param filePaths Array of file paths to embed
-   * @returns Success status
-   */
-  async embedSpecificFiles(repositoryId: string, filePaths: string[]) {
-    try {
-      if (!filePaths || filePaths.length === 0) {
-        return { success: true, message: 'No files to embed' };
-      }
-
-      // Get documentation for the specific files
-      const fileDocs = await this.prisma.fileDocumentation.findMany({
-        where: {
-          repositoryId,
-          fullPath: {
-            in: filePaths,
-          },
-        },
-      });
-
-      console.log(`Found ${fileDocs.length} files to embed`);
-
-      const gemini = new Gemini();
-
-      // Process files in smaller batches for embedding
-      const batchSize = 10;
-      for (let i = 0; i < fileDocs.length; i += batchSize) {
-        const batch = fileDocs.slice(i, i + batchSize);
-        await Promise.all(
-          batch.map(async (doc) => {
-            if (!doc.summary) return;
-
-            try {
-              // Convert the summary string to embeddings - ensure it's a string
-              const embedding = await gemini.getEmbeddings(
-                typeof doc.summary === 'string'
-                  ? doc.summary
-                  : String(doc.summary),
-              );
-
-              // Store embeddings using raw SQL to update the vector field directly
-              await this.prisma.$executeRaw`
-                UPDATE "FileDocumentation"
-                SET "summaryEmbedding" = ${embedding}::vector
-                WHERE id = ${doc.id}
-              `;
-            } catch (err) {
-              console.error(`Error embedding file doc ${doc.id}:`, err);
-            }
-          }),
-        );
-      }
-
-      return { success: true, filesEmbedded: fileDocs.length };
-    } catch (error) {
-      console.error('Error embedding specific files:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
-   * Scans a specific file when requested during document retrieval
-   * Used when a file is requested but not found in the database
-   * Processes directly for API responses
-   */
-  async scanOnDemand(
-    repositoryId: string,
-    filePath: string,
-    accountId: string,
-  ) {
-    try {
-      // First check if the file already exists (just in case it was created since)
-      const existingFile = await this.prisma.fileDocumentation.findFirst({
-        where: {
-          repositoryId,
-          fullPath: filePath,
-        },
-        orderBy: {
-          createdAt: 'desc',
-        },
-      });
-
-      if (existingFile) {
-        console.log(
-          `File documentation already exists for ${filePath}, returning existing documentation`,
-        );
-        return existingFile;
-      }
-
-      // Check if repository exists
-      const repository = await this.prisma.repository.findUnique({
-        where: { id: repositoryId },
-        include: {
-          repositorySettings: true,
-        },
-      });
-
-      if (!repository) {
-        throw new NotFoundException(
-          `Repository with ID ${repositoryId} not found`,
-        );
-      }
-
-      // Get account credentials for repository access
-      const accountCredentials =
-        await this.accountCredentialService.getAccountToken({ accountId });
-
-      // Process the file directly to ensure quick API response
-      console.log(
-        `Processing file directly: ${filePath} in repository ${repositoryId}`,
-      );
-
-      const result = await queueOnDemandFileScan(
-        repositoryId,
-        filePath,
-        accountId,
-        true, // Process directly
-        this.prisma,
-        repository,
-        accountCredentials,
-      );
-
-      if (!result.success) {
-        console.error(
-          `Direct processing failed for ${filePath}: ${result.error}`,
-        );
-        throw new BadRequestException(result.error || 'Failed to process file');
-      }
-
-      // Return the processed file documentation
-      if (result.fileDoc) {
-        return result.fileDoc;
-      }
-
-      // If we got a success but no fileDoc (should not happen), check if it's in the database now
-      const processedDoc = await this.prisma.fileDocumentation.findFirst({
-        where: {
-          repositoryId,
-          fullPath: filePath,
-        },
-        orderBy: {
-          createdAt: 'desc',
-        },
-      });
-
-      if (processedDoc) {
-        return processedDoc;
-      }
-
-      // If somehow we still don't have the document, provide a reasonable error response
-      throw new BadRequestException(
-        'File was processed but documentation not found. Please try again.',
-      );
-    } catch (error) {
-      console.error(`Error in scanOnDemand for file ${filePath}:`, error);
-      throw error;
     }
   }
 }
