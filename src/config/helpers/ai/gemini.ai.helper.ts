@@ -1,5 +1,20 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
+const apiKey = ***REMOVED_SECRET***;
+const genAI = new GoogleGenerativeAI(apiKey);
+
+const model = genAI.getGenerativeModel({
+  model: 'gemini-1.5-flash',
+});
+
+const generationConfig = {
+  temperature: 0,
+  topP: 0.95,
+  topK: 40,
+  maxOutputTokens: 8192,
+  responseMimeType: 'application/json',
+};
+
 /**
  * Gemini AI helper for analysis and embeddings
  */
@@ -232,12 +247,61 @@ Return ONLY the fixed JSON with no other text, explanations, or code formatting.
 
     // Simple implementation that just returns all files
     // In production, replace with actual relevance filtering
-    return {
-      output: files.slice(0, 5).map((file) => ({
-        fileName: file.fileName || file.name,
-        relevance: 0.8,
-      })),
-    };
+    try {
+      const prompt = `
+      You are an AI code assistant helping technical team members understand a codebase.  
+      
+      Your task is to analyze the query and filter the file list to only include the most relevant files that would best answer the question.
+      
+      Query types to consider:
+      1. For project purpose, domain, or target users questions: Prioritize README files, configuration files, and core service definitions
+      2. For technical implementation questions: Select files directly related to the specific feature mentioned
+      3. For bug/task assistance: Prioritize files that implement the functionality related to the issue
+      4. For questions about specific services or modules: Include both the implementation file and related models/interfaces
+      5. For file-specific questions: Ensure you include that file and its most closely related dependencies
+      
+      File selection criteria:
+      - Return at least 1 and at most 5 files
+      - For questions about project architecture, consider including multiple key service files
+      - For specific feature questions, focus on the primary file implementing that feature
+      - Exclude test files unless the query is specifically about testing
+      - For each file, assess its relevance based on file name, path structure, file type tags, and summary
+    
+      Provide a response in the following JSON format with no extra text:
+      
+      [{
+        "fileName": "<file name that is most relevant to answering the query>",
+      }]
+      I want exact JSON response No '''json  '''.
+      Query: ${query}
+      Files: ${JSON.stringify(files)}
+      `;
+
+      let resp: any = await model.generateContent([prompt]);
+      resp = this.extractCleanJSON(
+        resp.response.candidates[0].content.parts[0].text,
+      );
+
+      return {
+        output: resp,
+      };
+    } catch (err) {
+      console.error('filterRelevantFiles error:', err.message);
+      throw new Error('Failed to filter relevant files');
+    }
+  }
+
+  extractCleanJSON(rawText: string): any {
+    // Match inside triple backticks or fallback to entire text
+    const match = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    const jsonString = match ? match[1] : rawText;
+
+    try {
+      return JSON.parse(jsonString);
+    } catch (e) {
+      console.error('Failed to parse JSON:', jsonString);
+      throw new Error('Invalid JSON format from Gemini');
+    }
   }
 
   /**
@@ -1201,5 +1265,71 @@ test('API returns correct response', async () => {
       seen.add(value);
       return true;
     });
+  }
+
+  /**
+   * Categorize a query into one of three main types to determine the best approach to answer it
+   * @param query The user's query
+   * @returns The categorized query type (PROJECT_LEVEL, FUNCTION_TRACE, or USER_FLOW)
+   */
+  async categorizeQueryType(query: string): Promise<string> {
+    try {
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-1.5-flash',
+      });
+
+      const prompt = `
+You are an AI assistant that helps categorize user questions about codebases into one of three types:
+
+1. PROJECT_LEVEL: Questions about the overall project, its structure, purpose, technologies used, database schema, models, tables, or high-level architecture. Examples:
+   - "What is the purpose of this project?"
+   - "What are the main tables in this project?"
+   - "How is this project organized?"
+   - "What database does this project use?"
+   - "What frameworks are used in this project?"
+   - "Explain the database schema"
+   - "What are the main entities in this system?"
+
+2. FUNCTION_TRACE: Questions about specific functions, methods, APIs, implementations, or code tracing. Examples:
+   - "How is the login functionality implemented?"
+   - "Where is the 'createUser' function defined?"
+   - "What API endpoints are available for user management?"
+   - "How does the application authenticate requests?"
+   - "Show me where the payment processing happens"
+   - "How do I use the caching mechanism?"
+
+3. USER_FLOW: Questions about user journeys, workflows, or sequences of actions. Examples:
+   - "What happens when a user signs up?"
+   - "What is the checkout process?"
+   - "How does the login flow work?"
+   - "What's the user registration journey?"
+   - "Walk me through the authentication flow"
+   - "What's the process for submitting a form?"
+
+Based on the query below, categorize it into exactly ONE of these types: PROJECT_LEVEL, FUNCTION_TRACE, or USER_FLOW.
+Respond with ONLY the category name, nothing else.
+
+Query: ${query}
+`;
+
+      const resp = await model.generateContent([prompt]);
+      const categoryType = resp.response.text().trim();
+
+      // Validate the response is one of the expected categories
+      if (
+        !['PROJECT_LEVEL', 'FUNCTION_TRACE', 'USER_FLOW'].includes(categoryType)
+      ) {
+        console.warn(
+          `Unexpected category type returned: ${categoryType}, defaulting to PROJECT_LEVEL`,
+        );
+        return 'PROJECT_LEVEL';
+      }
+
+      return categoryType;
+    } catch (err) {
+      console.error('Error categorizing query:', err.message);
+      // Default to PROJECT_LEVEL if categorization fails
+      return 'PROJECT_LEVEL';
+    }
   }
 }

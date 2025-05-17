@@ -733,6 +733,7 @@ export class RepositoryScanService {
     accountId: string,
   ) {
     try {
+      console.log(`[testAnalyzeAssistance] Processing query: "${query}"`);
       // Get the organization ID for the repository
       const repositoryBasic = await this.prisma.repository.findUnique({
         where: { id: repositoryId },
@@ -760,12 +761,6 @@ export class RepositoryScanService {
 
       if (!repository)
         throw new Error(`Repository "${repositoryId}" not found.`);
-
-      // Enhanced check for project-level/domain-level questions with more patterns
-      const isProjectLevelQuestion =
-        /project|purpose|domain|target|user|customer|unique|feature|high[ -]level|overview|goal|aim|objective|what|why|how|main|core|key|primary|functionality|architecture|structure|design|pattern|flow|process/i.test(
-          query,
-        );
 
       const accountCredentials =
         await this.accountCredentialService.getAccountToken({ accountId });
@@ -799,19 +794,441 @@ export class RepositoryScanService {
         repositoryScanId,
       );
 
-      const usedTags = uniqueTags.map((data) => data.tag).join(', ');
-
       const gemini = new Gemini();
+
+      // Use Gemini to categorize the query type instead of regex patterns
+      const queryType = await gemini.categorizeQueryType(query);
+      console.log(`[testAnalyzeAssistance] Query categorized as: ${queryType}`);
 
       const embedding = await gemini.getEmbeddings(query);
       const vectorQuery = `[${embedding.join(',')}]`;
 
-      // For project-level questions, we'll focus on key files based on tags first
-      let projectContext;
+      // Extract function names if needed for FUNCTION_TRACE queries
+      let functionNames = [];
+      if (queryType === 'FUNCTION_TRACE') {
+        // Simple extraction of potential function names
+        const functionMatches = query.match(
+          /["']([^"']+)["']|\b(\w+)\b(?=\s*function|\s*method|\s*api|\s*endpoint|\s*call)|\bget\s+(\w+)|\bfetch\s+(\w+)|\baccess\s+(\w+)|\bretrieve\s+(\w+)|\buse\s+(\w+)|\bcall\s+(\w+)|\bimport\s+(\w+)/gi,
+        );
 
-      if (isProjectLevelQuestion) {
+        if (functionMatches) {
+          functionNames = functionMatches.map((match) =>
+            match
+              .replace(/["']/g, '')
+              .replace(/\s*(function|method|api|endpoint|call)$/i, '')
+              .trim(),
+          );
+        }
+      }
+
+      // Handle different query types based on AI categorization
+      if (queryType === 'USER_FLOW') {
+        console.log(`[testAnalyzeAssistance] Handling as USER FLOW question`);
+        // For user flow questions, prioritize controllers, routes, auth files, and UI components
+        const userFlowFiles = await this.prisma.fileDocumentation.findMany({
+          where: {
+            repositoryScanId,
+            OR: [
+              {
+                fileType: {
+                  hasSome: [
+                    'CONTROLLER',
+                    'ROUTER',
+                    'API',
+                    'COMPONENT',
+                    'SERVICE',
+                  ],
+                },
+              },
+              { fullPath: { contains: 'auth', mode: 'insensitive' } },
+              { fullPath: { contains: 'user', mode: 'insensitive' } },
+              { fullPath: { contains: 'login', mode: 'insensitive' } },
+              { fullPath: { contains: 'signup', mode: 'insensitive' } },
+              { fullPath: { contains: 'register', mode: 'insensitive' } },
+              { fullPath: { contains: 'profile', mode: 'insensitive' } },
+              { fullPath: { contains: 'account', mode: 'insensitive' } },
+              { fullPath: { contains: 'route', mode: 'insensitive' } },
+              { fullPath: { contains: 'flow', mode: 'insensitive' } },
+              { name: { contains: 'auth', mode: 'insensitive' } },
+              { name: { contains: 'user', mode: 'insensitive' } },
+              { name: { contains: 'login', mode: 'insensitive' } },
+              { name: { contains: 'signup', mode: 'insensitive' } },
+              { name: { contains: 'register', mode: 'insensitive' } },
+              { name: { contains: 'profile', mode: 'insensitive' } },
+              { name: { contains: 'account', mode: 'insensitive' } },
+              { name: { contains: 'route', mode: 'insensitive' } },
+              { name: { contains: 'flow', mode: 'insensitive' } },
+            ],
+          },
+        });
+
+        // Look for main app file and entry points
+        const entryPointFiles = await this.prisma.fileDocumentation.findMany({
+          where: {
+            repositoryScanId,
+            OR: [
+              { name: { contains: 'main', mode: 'insensitive' } },
+              { name: { contains: 'app', mode: 'insensitive' } },
+              { name: { contains: 'index', mode: 'insensitive' } },
+              { name: { contains: 'server', mode: 'insensitive' } },
+            ],
+          },
+        });
+
+        // Combine relevant files but limit to a reasonable number
+        let relevantFiles = [...userFlowFiles, ...entryPointFiles];
+
+        console.log(
+          'relevantFiles',
+          relevantFiles.map((data) => ({
+            name: data.name,
+            fullPath: data.fullPath,
+          })),
+        );
+
+        // Get file content and prepare data for AI
+        const fileQuickInfo = relevantFiles.map((data) => {
+          const mappedData = this.mapDocumentFields(data);
+          return {
+            fileName: mappedData.fileName,
+            filePath: mappedData.filePath,
+            fileSummary: mappedData.summary,
+            fileTags: mappedData.fileType,
+            functions: data.functions || [],
+            imports: data.imports || [],
+            exports: data.exports || [],
+          };
+        });
+
+        // Use gemini to filter the most relevant files
+        const filteredFiles = await gemini.filterRelevantFiles(
+          query,
+          fileQuickInfo,
+        );
+
+        console.log('filteredFiles', filteredFiles.output);
+
+        // Keep only the filtered files
+        relevantFiles = relevantFiles.filter((data) => {
+          const mappedData = this.mapDocumentFields(data);
+          return filteredFiles.output.some(
+            (file) => file.fileName === mappedData.fileName,
+          );
+        });
+
+        // Fetch file contents
+        const sourceCodeResponses = await this._fetchSourceCodeForFiles(
+          relevantFiles,
+          documentedFile,
+          accountCredentials,
+        );
+
+        const filesWithCode = sourceCodeResponses.map((res, index) => ({
+          summary: relevantFiles[index].summary,
+          fileName: relevantFiles[index].name,
+          sourceCode: res.data,
+          functions: relevantFiles[index].functions || [],
+          imports: relevantFiles[index].imports || [],
+          exports: relevantFiles[index].exports || [],
+        }));
+
+        // Generate answer focused on user flow - with emphasis on actual implementation analysis
+        const queryResponse = await gemini.generateAnswer(
+          `Analyze the actual code implementation to explain exactly how ${query.replace(/\?/g, '')} - not what should happen theoretically, but what DOES happen based on the code. Follow the execution path through the files, identify the exact functions called, database operations performed, and any conditional logic followed. Include file names, line numbers, function names, and show the precise sequence of operations. DO NOT speculate about what "would" happen - analyze what DOES happen based on the actual code in these files.`,
+          filesWithCode,
+        );
+
+        return await this._createAssistanceResponse(
+          query,
+          queryResponse,
+          repositoryId,
+          repositoryScanId,
+          accountId,
+          repository,
+        );
+      } else if (queryType === 'FUNCTION_TRACE') {
+        console.log(
+          `[testAnalyzeAssistance] Handling as FUNCTION TRACE question`,
+        );
+
+        // Check if query is directly asking about a specific file
+        const filePathMatch = query.match(
+          /explain\s+(\S+\.[a-z]+)|\bfile\s+(\S+\.[a-z]+)/i,
+        );
+        const filePath = filePathMatch
+          ? filePathMatch[1] || filePathMatch[2]
+          : null;
+
+        console.log('filePath: ', filePath);
+
+        // Detect API-related queries for better context
+        const isApiQuery =
+          query.toLowerCase().includes('api') ||
+          query.toLowerCase().includes('endpoint') ||
+          query.toLowerCase().includes('route');
+
+        let relevantFiles = [];
+
+        // 1. PRIORITY: If asking about a specific file, find it directly
+        if (filePath) {
+          console.log(`Looking for specific file: ${filePath}`);
+
+          // Try exact match first
+          const exactFile = await this.prisma.fileDocumentation.findFirst({
+            where: {
+              repositoryScanId,
+              OR: [
+                { fullPath: filePath },
+                { name: filePath },
+                { fullPath: { contains: filePath, mode: 'insensitive' } },
+                { name: { contains: filePath, mode: 'insensitive' } },
+              ],
+            },
+          });
+
+          if (exactFile) {
+            relevantFiles = [exactFile];
+          }
+        }
+
+        // 2. If no specific file found or requested, use semantic search
+        if (relevantFiles.length === 0) {
+          console.log(`Using semantic search to find relevant files`);
+
+          // Perform semantic search to find the most relevant files
+          const semanticSearchResults = (await this.prisma.$queryRaw`
+            SELECT id, name, "fullPath", summary 
+            FROM "FileDocumentation" 
+            WHERE "repositoryScanId" = ${repositoryScanId}
+            ORDER BY "summaryEmbedding" <=> ${vectorQuery}::vector 
+            LIMIT 5
+          `) as any[];
+
+          console.log(
+            'semanticSearchResults: ',
+            semanticSearchResults.map((result) => ({
+              name: result.name,
+              fullPath: result.fullPath,
+            })),
+          );
+
+          if (semanticSearchResults.length > 0) {
+            // Get full documentation for semantic search results
+            relevantFiles = await this.prisma.fileDocumentation.findMany({
+              where: {
+                id: {
+                  in: semanticSearchResults.map((result) => result.id),
+                },
+              },
+            });
+          }
+        }
+
+        if (relevantFiles.length === 0) {
+          return {
+            answer:
+              "I couldn't find relevant files to answer your question about this code.",
+            context: [],
+          };
+        }
+
+        // 3. Find ONE LEVEL of imported/exported files for better context
+        console.log(`Finding imported and exported files (one level)`);
+
+        // Collect file names from imports and exports
+        const importedFileNames = new Set<string>();
+        const filesThatMightImport = new Set<string>();
+
+        console.log(
+          'relevantFiles: ',
+          relevantFiles.map((data) => ({ name: data.name })),
+        );
+
+        relevantFiles.forEach((file) => {
+          // Track imports this file has
+          if (Array.isArray(file.imports)) {
+            file.imports.forEach((imp) => {
+              if (typeof imp === 'string') {
+                const filename = imp.split('/').pop();
+                if (filename) importedFileNames.add(filename);
+              }
+            });
+          }
+
+          // Track files that might import this file
+          if (file.name) {
+            filesThatMightImport.add(file.name);
+          }
+        });
+
+        console.log('importedFileNames: ', importedFileNames);
+        console.log('filesThatMightImport: ', filesThatMightImport);
+
+        // Find files that this imports or that import this
+        if (importedFileNames.size > 0 || filesThatMightImport.size > 0) {
+          console.log(
+            `ppp: `,
+            JSON.stringify(
+              {
+                repositoryScanId,
+                OR: [
+                  // Files that are imported by our relevant files
+                  { name: { in: Array.from(importedFileNames) } },
+                  // Files that import our relevant files
+                  {
+                    imports: {
+                      hasSome: Array.from(filesThatMightImport),
+                    },
+                  },
+                ],
+              },
+              null,
+              2,
+            ),
+          );
+          const relatedFiles = await this.prisma.fileDocumentation.findMany({
+            where: {
+              repositoryScanId,
+              OR: [
+                // Files that are imported by our relevant files
+                { name: { in: Array.from(importedFileNames) } },
+                // Files that import our relevant files
+                {
+                  imports: {
+                    hasSome: Array.from(filesThatMightImport),
+                  },
+                },
+              ],
+            },
+          });
+
+          console.log('relatedFiles: ', relatedFiles);
+
+          // Add related files without duplicates
+          const existingIds = new Set(relevantFiles.map((f) => f.id));
+          relatedFiles.forEach((file) => {
+            if (!existingIds.has(file.id)) {
+              relevantFiles.push(file);
+            }
+          });
+
+          console.log(
+            'relevantFiles after: ',
+            relevantFiles.map((file) => file.name),
+          );
+          // Limit to a reasonable number of files
+          relevantFiles = relevantFiles.slice(0, 6);
+        }
+
+        console.log(
+          'Found relevant files:',
+          relevantFiles.map((file) => file.name),
+        );
+
+        // 4. Get file content for all files
+        const sourceCodeResponses = await this._fetchSourceCodeForFiles(
+          relevantFiles,
+          documentedFile,
+          accountCredentials,
+        );
+
+        const filesWithCode = sourceCodeResponses.map((res, index) => ({
+          summary: relevantFiles[index].summary,
+          fileName: relevantFiles[index].name,
+          sourceCode: res.data,
+          functions: relevantFiles[index].functions || [],
+          imports: relevantFiles[index].imports || [],
+          exports: relevantFiles[index].exports || [],
+        }));
+
+        // 5. Generate the appropriate prompt based on query type
+        let functionSpecificPrompt;
+
+        if (filePath) {
+          // Explaining a specific file
+          functionSpecificPrompt = `
+You are explaining a specific file in this codebase. Answer directly and practically.
+
+Provide a clear explanation of ${filePath} including:
+1. The file's purpose and role 
+2. Key functions/classes/components and what they do
+3. Direct dependencies (imports and files that import it)
+4. How the code is used in the application
+
+Include only the most important code snippets that help explain the file's functionality.
+Don't list every import/export or mention "context provided" - focus on practical explanation.
+
+Make your answer immediately useful to a developer trying to understand this file.
+`;
+        } else if (isApiQuery) {
+          // API/endpoint question
+          functionSpecificPrompt = `
+You are answering a question about an API endpoint. Answer directly and practically.
+
+The question is: "${query}"
+
+Trace the complete API implementation showing:
+1. The controller endpoint (route, HTTP method, handler)
+2. The service methods it calls
+3. Database operations or external service calls
+4. The complete request-to-response flow
+
+Include specific file names, function names, and important code snippets.
+Don't list every import/export or mention "context provided" - focus on the actual code flow.
+
+Your answer should help the developer understand exactly how this endpoint works.
+`;
+        } else {
+          // General code question
+          functionSpecificPrompt = `
+You are answering a coding question. Answer directly and practically.
+
+The question is: "${query}"
+
+Focus on providing a clear, helpful explanation that directly addresses this question.
+1. Explain the relevant code and how it works
+2. Show specific examples from the codebase
+3. Identify the key files and functions involved
+4. Trace execution flow where relevant
+
+Include specific file names, function names, and important code snippets.
+Don't list every import/export or mention "context provided" - focus on practical explanation.
+
+Your answer should be immediately useful to someone trying to understand this code.
+`;
+        }
+
+        // 6. Generate the answer using the enhanced prompt
+        const queryResponse = await gemini.generateAnswer(
+          functionSpecificPrompt,
+          filesWithCode,
+        );
+
+        return await this._createAssistanceResponse(
+          query,
+          queryResponse,
+          repositoryId,
+          repositoryScanId,
+          accountId,
+          repository,
+        );
+      } else {
+        // PROJECT_LEVEL (default case)
+        console.log(
+          `[testAnalyzeAssistance] Handling as PROJECT LEVEL question`,
+        );
+        // Enhanced project-level question handling
+        // Check if this is a schema/model specific question
+        const isSchemaModelQuestion =
+          /schema|model|database|db|table|entity|field|column|type|relation|prisma/i.test(
+            query,
+          );
+        console.log(
+          `[testAnalyzeAssistance] Schema/model detection: ${isSchemaModelQuestion}`,
+        );
+
         // Define broader set of tags for project-level understanding
-        projectContext = {
+        const projectContext = {
           output: {
             context: 'User is asking about project purpose or domain',
             tag: 'CONFIG',
@@ -833,7 +1250,7 @@ export class RepositoryScanService {
           },
         };
 
-        // Start with the tag-based approach instead of README files
+        // Start with getting important project structure files
         let tagBasedFiles = await this.prisma.fileDocumentation.findMany({
           where: {
             repositoryScanId,
@@ -845,6 +1262,40 @@ export class RepositoryScanService {
             },
           },
         });
+
+        // If this is a schema/model question, specially prioritize schema files
+        if (isSchemaModelQuestion) {
+          const schemaModelFiles = await this.prisma.fileDocumentation.findMany(
+            {
+              where: {
+                repositoryScanId,
+                OR: [
+                  { name: { contains: 'schema', mode: 'insensitive' } },
+                  { name: { contains: 'model', mode: 'insensitive' } },
+                  { name: { contains: 'entity', mode: 'insensitive' } },
+                  { name: { contains: 'prisma', mode: 'insensitive' } },
+                  { fullPath: { contains: 'schema', mode: 'insensitive' } },
+                  { fullPath: { contains: 'model', mode: 'insensitive' } },
+                  { fullPath: { contains: 'entity', mode: 'insensitive' } },
+                  { fullPath: { contains: 'types', mode: 'insensitive' } },
+                  { fullPath: { contains: 'db', mode: 'insensitive' } },
+                  { fullPath: { contains: 'database', mode: 'insensitive' } },
+                  { fullPath: { contains: 'prisma', mode: 'insensitive' } },
+                ] as any[],
+              },
+            },
+          );
+
+          // Prioritize schema files by adding them first
+          tagBasedFiles = [...schemaModelFiles, ...tagBasedFiles];
+          // Remove duplicates
+          tagBasedFiles = Array.from(
+            new Map(tagBasedFiles.map((file) => [file.id, file])).values(),
+          );
+        }
+
+        // Rest of the PROJECT_LEVEL implementation remains the same...
+        // ... existing code ...
 
         if (tagBasedFiles.length > 0) {
           // Process files based on tags and map fields correctly
@@ -870,397 +1321,283 @@ export class RepositoryScanService {
             );
           });
 
-          // Only if we don't find enough tag-based files, look at README files
-          if (tagBasedFiles.length < 3) {
-            const readmeFiles = await this.prisma.fileDocumentation.findMany({
-              where: {
-                repositoryScanId,
-                OR: [
-                  { name: { contains: 'README', mode: 'insensitive' } },
-                  {
-                    name: { contains: 'package.json', mode: 'insensitive' },
-                  },
-                  { name: { contains: 'config', mode: 'insensitive' } },
-                  { fullPath: { contains: 'README', mode: 'insensitive' } },
-                ],
-              },
-            });
+          // Get essential project-definition files regardless of filtering
+          const essentialFiles = await this.prisma.fileDocumentation.findMany({
+            where: {
+              repositoryScanId,
+              OR: [
+                { name: { equals: 'README.md', mode: 'insensitive' } },
+                { name: { equals: 'package.json', mode: 'insensitive' } },
+                { name: { equals: 'schema.prisma', mode: 'insensitive' } },
+                { name: { equals: 'tsconfig.json', mode: 'insensitive' } },
+                { fullPath: { endsWith: 'README.md', mode: 'insensitive' } },
+              ] as any[],
+            },
+          });
 
-            // Add README files to the result set if they exist
-            if (readmeFiles.length > 0) {
-              tagBasedFiles = [...tagBasedFiles, ...readmeFiles];
-            }
-          }
-
-          // Get source code for the files - Fix for the fullPath access
-          let sourceCodeMapping;
-          if (
-            accountCredentials.accountType ===
-            AccountCredentialsType.GITHUB_TOKEN
-          ) {
-            sourceCodeMapping = tagBasedFiles.map((data) => {
-              const mappedData = this.mapDocumentFields(data);
-              return axios.get(
-                `https://raw.githubusercontent.com/${documentedFile[0].repository.owner}/${documentedFile[0].repository.name}/${documentedFile[0].repository.baseBranch}/${mappedData.filePath}`,
-                {
-                  headers: {
-                    Authorization: `Bearer ${accountCredentials.decryptedToken}`,
-                  },
-                },
-              );
-            });
-          } else {
-            sourceCodeMapping = tagBasedFiles.map((data) => {
-              const mappedData = this.mapDocumentFields(data);
-              const payload = {
-                workspace: accountCredentials.payload.workspace.replace(
-                  ' ',
-                  '-',
-                ),
-                repo: documentedFile[0].repository.name.replace(' ', '-'),
-                branch: documentedFile[0].repository.baseBranch.replace(
-                  ' ',
-                  '-',
-                ),
-                token: accountCredentials.decryptedToken,
-              };
-              return axios.get(
-                `https://api.bitbucket.org/2.0/repositories/${payload.workspace}/${payload.repo}/src/${payload.branch}/${mappedData.filePath}`,
-                {
-                  headers: {
-                    Authorization: `${accountCredentials.decryptedToken}`,
-                  },
-                },
-              );
-            });
-          }
-
-          try {
-            const sourceCodeResponses = await Promise.all(sourceCodeMapping);
-            const filesWithCode = sourceCodeResponses.map((res, index) => ({
-              summary: tagBasedFiles[index].summary,
-              fileName: tagBasedFiles[index].name,
-              sourceCode: res.data,
-            }));
-
-            const queryResponse = await gemini.generateAnswer(
-              query,
-              filesWithCode,
+          // Add essential files to the result set if they exist and aren't already included
+          if (essentialFiles.length > 0) {
+            const existingIds = new Set(tagBasedFiles.map((file) => file.id));
+            const newEssentialFiles = essentialFiles.filter(
+              (file) => !existingIds.has(file.id),
             );
-
-            const assistedQuestionPayload = {
-              question: query,
-              answer: {
-                response:
-                  queryResponse.output.response.candidates[0].content.parts[0]
-                    .text,
-                filteredFiles: queryResponse.filesReferenced.map((data) => ({
-                  name: data.fileName,
-                  content:
-                    typeof data.sourceCode === 'string'
-                      ? data.sourceCode
-                      : JSON.stringify(data.sourceCode),
-                })),
-              },
-              repositoryId: repositoryId,
-              scanId: repositoryScanId,
-              tokenUtilized:
-                queryResponse.output.response.usageMetadata.totalTokenCount,
-              accountId,
-            };
-
-            const assistedQuestions =
-              await this.prisma.assistedQuestions.create({
-                data: assistedQuestionPayload,
-              });
-
-            // After creating the assistedQuestions record, log the usage
-            try {
-              await this._billingService.trackUsageWithQuota({
-                organizationId: repository.organizationId,
-                repositoryId,
-                type: 'ASSISTANT_QUESTION',
-                description: `Question: ${query.substring(0, 50)}${query.length > 50 ? '...' : ''}`,
-              });
-            } catch (logError) {
-              console.error('Error logging question usage:', logError);
-            }
-
-            return {
-              id: assistedQuestions.id,
-              response:
-                queryResponse.output.response.candidates[0].content.parts[0]
-                  .text,
-              filteredFiles: queryResponse.filesReferenced.map((data) => ({
-                name: data.fileName,
-                content:
-                  typeof data.sourceCode === 'string'
-                    ? data.sourceCode
-                    : JSON.stringify(data.sourceCode, null, 2),
-              })),
-            };
-          } catch (error) {
-            console.log('Error processing tag-based files:', error);
-            // Continue with normal processing if tag-based file handling fails
+            tagBasedFiles = [...tagBasedFiles, ...newEssentialFiles];
           }
-        }
 
-        // Fallback to existing README approach if tag-based approach fails
-      } else {
-        projectContext = await gemini.getQueryContext(query, usedTags);
+          // Get source code for the files
+          const sourceCodeResponses = await this._fetchSourceCodeForFiles(
+            tagBasedFiles,
+            documentedFile,
+            accountCredentials,
+          );
+
+          const filesWithCode = sourceCodeResponses.map((res, index) => ({
+            summary: tagBasedFiles[index].summary,
+            fileName: tagBasedFiles[index].name,
+            sourceCode: res.data,
+          }));
+
+          const queryResponse = await gemini.generateAnswer(
+            query,
+            filesWithCode,
+          );
+
+          return await this._createAssistanceResponse(
+            query,
+            queryResponse,
+            repositoryId,
+            repositoryScanId,
+            accountId,
+            repository,
+          );
+        }
       }
 
-      if (!projectContext.output.context || !projectContext.output.tag) {
-        let result: any[] = await this.prisma.$queryRaw`
-          SELECT
-            name as fileName,
-            summary,
-            "fullPath" as filePath,
-            imports,
-            exports,
-            functions,
-            classes,
-            components,
-            "fileType" as fileType,
-            1 - ("summaryEmbedding" <=> ${vectorQuery}::vector) as similarity
-          FROM "FileDocumentation"
-          WHERE 1 - ("summaryEmbedding" <=> ${vectorQuery}::vector) > 0.3
-            AND "repositoryScanId" = ${repositoryScanId}
-          ORDER BY similarity DESC
-          LIMIT 15;
-        `;
+      // Fallback semantic search if no specific handling worked
+      console.log(
+        `[testAnalyzeAssistance] Falling back to semantic search for query`,
+      );
 
-        const fileQuickInfo = result.map((data) => ({
-          ...data,
-          fileName: data.fileName,
-          filePath: data.filepath,
-          fileSummary: data.summary,
-        }));
+      // Perform semantic search directly
+      const relevantFilesByEmbedding = (await this.prisma.$queryRaw`
+        SELECT id, name, "fullPath", summary 
+        FROM "FileDocumentation" 
+        WHERE "repositoryScanId" = ${repositoryScanId}
+        ORDER BY "summaryEmbedding" <=> ${vectorQuery}::vector 
+        LIMIT 5
+      `) as any[];
 
-        // TODO: need to work here
-
-        const filteredFiles = await gemini.filterRelevantFiles(
-          query,
-          fileQuickInfo,
-        );
-
-        result = result.filter((data) =>
-          filteredFiles.output.some((file) => file.fileName === data.filename),
-        );
-
-        let sourceCodeMapping;
-
-        if (
-          accountCredentials.accountType === AccountCredentialsType.GITHUB_TOKEN
-        ) {
-          sourceCodeMapping = result.map((data) => {
-            return axios.get(
-              `https://raw.githubusercontent.com/${documentedFile[0].repository.owner}/${documentedFile[0].repository.name}/${documentedFile[0].repository.baseBranch}/${data.filepath}`,
-              {
-                headers: {
-                  Authorization: `Bearer ${accountCredentials.decryptedToken}`,
-                },
-              },
-            );
-          });
-        } else {
-          sourceCodeMapping = result.map((data) => {
-            const payload = {
-              workspace: accountCredentials.payload.workspace.replace(' ', '-'),
-              repo: documentedFile[0].repository.name.replace(' ', '-'),
-              branch: documentedFile[0].repository.baseBranch.replace(' ', '-'),
-              token: accountCredentials.decryptedToken,
-            };
-            return axios.get(
-              `https://api.bitbucket.org/2.0/repositories/${payload.workspace}/${payload.repo}/src/${payload.branch}/${data.filepath}`,
-              {
-                headers: {
-                  Authorization: `${accountCredentials.decryptedToken}`,
-                },
-              },
-            );
-          });
-        }
-
-        const sourceCodeResponses = await Promise.all(sourceCodeMapping);
-        result = sourceCodeResponses.map((res, index) => ({
-          ...result[index],
-          sourceCode: res.data,
-        }));
-
-        const queryResponse = await gemini.generateAnswer(query, result);
-
-        const assistedQuestionPayload = {
-          question: query,
-          answer: {
-            response:
-              queryResponse.output.response.candidates[0].content.parts[0].text,
-            filteredFiles: queryResponse.filesReferenced.map((data) => ({
-              name: data.fileName,
-              content:
-                typeof data.sourceCode === 'string'
-                  ? data.sourceCode
-                  : JSON.stringify(data.sourceCode),
-            })),
-          },
-          repositoryId: repositoryId,
-          scanId: repositoryScanId,
-          tokenUtilized:
-            queryResponse.output.response.usageMetadata.totalTokenCount,
-          accountId,
-        };
-
-        const assistedQuestions = await this.prisma.assistedQuestions.create({
-          data: assistedQuestionPayload,
-        });
+      if (relevantFilesByEmbedding.length === 0) {
         return {
-          id: assistedQuestions.id,
-          response:
-            queryResponse.output.response.candidates[0].content.parts[0].text,
-          filteredFiles: queryResponse.filesReferenced.map((data) => ({
-            name: data.fileName,
-            content:
-              typeof data.sourceCode === 'string'
-                ? data.sourceCode
-                : JSON.stringify(data.sourceCode, null, 2),
-          })),
+          answer:
+            "I couldn't find relevant information to answer your question. The repository may not have been fully scanned or indexed yet.",
+          context: [],
         };
-      } else {
-        // all unique Tags used in project documentation
-        let result: any = await this.prisma.fileDocumentation.findMany({
-          where: {
-            repositoryScanId,
-            fileType: {
-              hasSome: [
-                ...projectContext.output.relatedTags,
-                projectContext.output.tag,
-              ],
+      }
+
+      // Get complete file data for the top results
+      const topFiles = await this.prisma.fileDocumentation.findMany({
+        where: {
+          id: {
+            in: relevantFilesByEmbedding.map((file: any) => file.id),
+          },
+        },
+      });
+
+      // Get file content for the top files
+      const sourceCodeResponses = await this._fetchSourceCodeForFiles(
+        topFiles,
+        documentedFile,
+        accountCredentials,
+      );
+
+      const filesWithCode = sourceCodeResponses.map((res, index) => ({
+        summary: topFiles[index].summary,
+        fileName: topFiles[index].name,
+        sourceCode: res.data,
+      }));
+
+      const queryResponse = await gemini.generateAnswer(query, filesWithCode);
+
+      return await this._createAssistanceResponse(
+        query,
+        queryResponse,
+        repositoryId,
+        repositoryScanId,
+        accountId,
+        repository,
+      );
+    } catch (error) {
+      console.error('Error in testAnalyzeAssistance:', error);
+      throw new BadRequestException(
+        `Failed to analyze repository assistance. ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Helper method to fetch source code for files
+   */
+  private async _fetchSourceCodeForFiles(
+    files: any[],
+    documentedFile: any[],
+    accountCredentials: any,
+    pathField: string = 'fullPath',
+  ) {
+    let sourceCodeMapping;
+
+    if (
+      accountCredentials.accountType === AccountCredentialsType.GITHUB_TOKEN
+    ) {
+      sourceCodeMapping = files.map((data) => {
+        const mappedData = this.mapDocumentFields(data);
+        const filePath = data[pathField] || mappedData.filePath;
+        return axios.get(
+          `https://raw.githubusercontent.com/${documentedFile[0].repository.owner}/${documentedFile[0].repository.name}/${documentedFile[0].repository.baseBranch}/${filePath}`,
+          {
+            headers: {
+              Authorization: `Bearer ${accountCredentials.decryptedToken}`,
             },
           },
-        });
-        const fileQuickInfo = result.map((data) => ({
-          fileName: data.name,
-          filePath: data.fullPath,
-          fileSummary: data.summary,
-          fileTags: data.tags,
-        }));
-
-        // TODO: need to work here
-
-        const filteredFiles = await gemini.filterRelevantFiles(
-          query,
-          fileQuickInfo,
         );
-
-        result = result.filter((data) =>
-          filteredFiles.output.some((file) => file.fileName === data.name),
-        );
-
-        let sourceCodeMapping;
-
-        if (
-          accountCredentials.accountType === AccountCredentialsType.GITHUB_TOKEN
-        ) {
-          sourceCodeMapping = result.map((data) => {
-            return axios.get(
-              `https://raw.githubusercontent.com/${documentedFile[0].repository.owner}/${documentedFile[0].repository.name}/${documentedFile[0].repository.baseBranch}/${data.fullPath}`,
-              {
-                headers: {
-                  Authorization: `Bearer ${accountCredentials.decryptedToken}`,
-                },
-              },
-            );
-          });
-        } else {
-          sourceCodeMapping = result.map((data) => {
-            const payload = {
-              workspace: accountCredentials.payload.workspace.replace(' ', '-'),
-              repo: documentedFile[0].repository.name.replace(' ', '-'),
-              branch: documentedFile[0].repository.baseBranch.replace(' ', '-'),
-              token: accountCredentials.decryptedToken,
-            };
-            return axios.get(
-              `https://api.bitbucket.org/2.0/repositories/${payload.workspace}/${payload.repo}/src/${payload.branch}/${data.fullPath}`,
-              {
-                headers: {
-                  Authorization: `${accountCredentials.decryptedToken}`,
-                },
-              },
-            );
-          });
-        }
-
-        const sourceCodeResponses = await Promise.all(sourceCodeMapping);
-        result = sourceCodeResponses.map((res, index) => ({
-          ...result[index],
-          sourceCode: res.data,
-        }));
-
-        result = result.map((data) => ({
-          summary: data.summary,
-          fileName: data.name,
-          sourceCode: data.sourceCode,
-        }));
-
-        const queryResponse = await gemini.generateAnswer(query, result);
-        // console.log(
-        //   'queryResponse: ',
-        //   JSON.stringify(queryResponse.output.response, null, 2),
-        // );
-
-        const assistedQuestionPayload = {
-          question: query,
-          answer: {
-            response:
-              queryResponse.output.response.candidates[0].content.parts[0].text,
-            filteredFiles: queryResponse.filesReferenced.map((data) => ({
-              name: data.fileName,
-              content:
-                typeof data.sourceCode === 'string'
-                  ? data.sourceCode
-                  : JSON.stringify(data.sourceCode),
-            })),
+      });
+    } else {
+      sourceCodeMapping = files.map((data) => {
+        const mappedData = this.mapDocumentFields(data);
+        const filePath = data[pathField] || mappedData.filePath;
+        const payload = {
+          workspace: accountCredentials.payload.workspace.replace(' ', '-'),
+          repo: documentedFile[0].repository.name.replace(' ', '-'),
+          branch: documentedFile[0].repository.baseBranch.replace(' ', '-'),
+          token: accountCredentials.decryptedToken,
+        };
+        return axios.get(
+          `https://api.bitbucket.org/2.0/repositories/${payload.workspace}/${payload.repo}/src/${payload.branch}/${filePath}`,
+          {
+            headers: {
+              Authorization: `${accountCredentials.decryptedToken}`,
+            },
           },
-          repositoryId: repositoryId,
-          scanId: repositoryScanId,
-          tokenUtilized:
-            queryResponse.output.response.usageMetadata.totalTokenCount,
-          accountId,
-        };
-
-        const assistedQuestions = await this.prisma.assistedQuestions.create({
-          data: assistedQuestionPayload,
-        });
-
-        // After creating the assistedQuestions record, log the usage
-        try {
-          await this._billingService.trackUsageWithQuota({
-            organizationId: repository.organizationId,
-            repositoryId,
-            type: 'ASSISTANT_QUESTION',
-            description: `Question: ${query.substring(0, 50)}${query.length > 50 ? '...' : ''}`,
-          });
-        } catch (logError) {
-          console.error('Error logging question usage:', logError);
-        }
-
-        return {
-          id: assistedQuestions.id,
-          response:
-            queryResponse.output.response.candidates[0].content.parts[0].text,
-          filteredFiles: queryResponse.filesReferenced.map((data) => ({
-            name: data.fileName,
-            content:
-              typeof data.sourceCode === 'string'
-                ? data.sourceCode
-                : JSON.stringify(data.sourceCode, null, 2),
-          })), // Assuming you want to return the file name and content
-        };
-      }
-    } catch (error) {
-      console.log(error);
-      throw new BadRequestException(error.message);
+        );
+      });
     }
+
+    try {
+      return await Promise.all(sourceCodeMapping);
+    } catch (error) {
+      console.error('Error fetching source code:', error.message);
+      // Return placeholder data on error to avoid breaking the flow
+      return files.map(() => ({ data: 'Error fetching file content' }));
+    }
+  }
+
+  /**
+   * Helper method to create and record an assistance response
+   */
+  private async _createAssistanceResponse(
+    query: string,
+    queryResponse: any,
+    repositoryId: string,
+    repositoryScanId: string,
+    accountId: string,
+    repository: any,
+  ) {
+    // Improve response formatting by removing common patterns that sound robotic
+    let responseText = queryResponse?.output;
+
+    if (responseText && typeof responseText === 'string') {
+      // Remove phrases that make the response sound templated
+      responseText = responseText
+        .replace(/based on the provided code/gi, '')
+        .replace(/the provided code shows/gi, '')
+        .replace(/looking at the code/gi, '')
+        .replace(/in this codebase/gi, '')
+        .replace(/based on the code snippets provided/gi, '')
+        .replace(/in the provided code/gi, '')
+        .replace(/from the code analysis/gi, '')
+        .replace(/according to the codebase/gi, '')
+        .trim();
+
+      // Set the improved response
+      queryResponse.output = responseText;
+    }
+
+    const assistedQuestionPayload = {
+      question: query,
+      answer: {
+        response:
+          queryResponse.output.response.candidates[0].content.parts[0].text,
+        filteredFiles: queryResponse.filesReferenced.map((data) => ({
+          name: data.fileName,
+          content:
+            typeof data.sourceCode === 'string'
+              ? data.sourceCode
+              : JSON.stringify(data.sourceCode, null, 2),
+        })),
+      },
+      repositoryId: repositoryId,
+      scanId: repositoryScanId,
+      tokenUtilized:
+        queryResponse.output.response.usageMetadata.totalTokenCount,
+      accountId,
+    };
+
+    const assistedQuestions = await this.prisma.assistedQuestions.create({
+      data: assistedQuestionPayload,
+    });
+
+    // Track usage with quota
+    try {
+      await this._billingService.trackUsageWithQuota({
+        organizationId: repository.organizationId,
+        repositoryId,
+        type: 'ASSISTANT_QUESTION',
+        description: `Question: ${query.substring(0, 50)}${query.length > 50 ? '...' : ''}`,
+      });
+    } catch (logError) {
+      console.error('Error logging question usage:', logError);
+    }
+
+    // Format the response to be direct and concise
+    let formattedResponse =
+      queryResponse.output.response.candidates[0].content.parts[0].text;
+
+    // Remove all common academic/analytical prefixes
+    formattedResponse = formattedResponse
+      .replace(
+        /^(Based on |Looking at |From |According to |In |The |After analyzing |From the |Upon examining |As shown in |When looking at |Analysis of |Reviewing |Based on analysis of )(the |these |your |this |those )?(provided |available |given |present |analyzed |examined |supplied )?(code|files|source|codebase|implementation|source code|file structure|components|modules)/i,
+        '',
+      )
+      .trim();
+
+    // Also remove phrases about imports/exports/dependencies analysis
+    formattedResponse = formattedResponse
+      .replace(
+        /^(Here's |This is |I've prepared |Following is |Below is |The following is )?(a |an |my |the )?(analysis|breakdown|overview|exploration|examination|look|summary) of (the |these |your |this |those )?(imports|exports|dependencies|file relationships|connections|module relationships)/i,
+        '',
+      )
+      .trim();
+
+    // Clean up any punctuation or spaces left at the beginning
+    formattedResponse = formattedResponse.replace(/^[,:\s]+/, '').trim();
+
+    // If response starts with lowercase letter after cleaning, capitalize it
+    if (/^[a-z]/.test(formattedResponse)) {
+      formattedResponse =
+        formattedResponse.charAt(0).toUpperCase() + formattedResponse.slice(1);
+    }
+
+    return {
+      id: assistedQuestions.id,
+      response: formattedResponse,
+      filteredFiles: queryResponse.filesReferenced.map((data) => ({
+        name: data.fileName,
+        content:
+          typeof data.sourceCode === 'string'
+            ? data.sourceCode
+            : JSON.stringify(data.sourceCode, null, 2),
+      })),
+    };
   }
 
   async fetchedSavedQuestions(repositoryId: string) {
@@ -2887,13 +3224,12 @@ export class RepositoryScanService {
   }
 
   private mapDocumentFields(data: any): any {
-    // Implement the logic to map document fields based on your data structure
-    // This is a placeholder and should be replaced with the actual implementation
+    // Map document fields based on the data structure
     return {
-      fileName: data.name,
-      filePath: data.fullPath,
-      fileSummary: data.summary,
-      fileType: data.fileType,
+      fileName: data.name || '',
+      filePath: data.fullPath || '',
+      summary: data.summary || '',
+      fileType: data.fileType || [],
     };
   }
 
