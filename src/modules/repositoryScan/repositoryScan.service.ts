@@ -35,7 +35,6 @@ import {
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
 import { BillingService } from '../billing/billing.service';
 import { CommentService } from '../comment/comment.service';
-import { CommentRequestType } from '../comment/dto/comment.request.dto';
 
 @Injectable()
 export class RepositoryScanService {
@@ -52,9 +51,6 @@ export class RepositoryScanService {
    */
   async queueRepositoryScan(repositoryId: string, accountId: string) {
     try {
-      const accountCredentials =
-        await this.accountCredentialService.getAccountToken({ accountId });
-
       const repository = await this.prisma.repository.findFirst({
         where: { id: repositoryId },
       });
@@ -122,9 +118,6 @@ export class RepositoryScanService {
     repositoryScanId: string,
   ) {
     try {
-      const accountCredentials =
-        await this.accountCredentialService.getAccountToken({ accountId });
-
       const repository = await this.prisma.repository.findFirst({
         where: { name: repositoryName },
         include: {
@@ -136,6 +129,8 @@ export class RepositoryScanService {
         throw new Error(`Repository "${repositoryName}" not found.`);
 
       let repositoryStructure;
+      const accountCredentials =
+        await this.accountCredentialService.getAccountToken({ accountId });
       if (
         accountCredentials.accountType === AccountCredentialsType.GITHUB_TOKEN
       ) {
@@ -217,28 +212,6 @@ export class RepositoryScanService {
         },
       });
 
-      // Get security and code issues
-      const securityIssues = await this._commentService.fetchRepositoryComments(
-        scan.accountId,
-        {
-          repositoryId: repository.id,
-          category: CommentRequestType.SECURITY_ISSUES,
-          currentPage: '1',
-          pageSize: '5',
-          prId: '', // Empty string for non-PR comments
-        },
-      );
-      const codeSmells = await this._commentService.fetchRepositoryComments(
-        scan.accountId,
-        {
-          repositoryId: repository.id,
-          category: CommentRequestType.CODE_ISSUES,
-          currentPage: '1',
-          pageSize: '5',
-          prId: '', // Empty string for non-PR comments
-        },
-      );
-
       // Update scan status as COMPLETED
       await this.prisma.repositoryScan.update({
         where: { id: repositoryScanId },
@@ -249,27 +222,17 @@ export class RepositoryScanService {
         },
       });
 
-      // Send email notification
-      // await this._mailService.repositoryScanCompleteNotification({
-      //   email: scan.account.user.email,
-      //   adminName: scan.account.user.firstName,
-      //   repositoryName: repository.name,
-      //   totalFiles: scan.totalFiles,
-      //   issuesFound: securityIssues.commentCount + codeSmells.commentCount,
-      //   securityIssues: securityIssues.commentCount,
-      //   codeSmells: codeSmells.commentCount,
-      //   topSecurityIssues: securityIssues.comments.slice(0, 5).map((issue) => ({
-      //     severity: issue.severity,
-      //     title: issue.issue,
-      //     description: issue.content,
-      //   })),
-      //   topCodeIssues: codeSmells.comments.slice(0, 5).map((issue) => ({
-      //     severity: issue.severity,
-      //     title: issue.issue,
-      //     description: issue.content,
-      //   })),
-      //   reportUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/${repository.id}/${repository.organizationId}`,
-      // });
+      if (!scan.account.user.sendEmail) {
+        return analyzedFiles;
+      }
+
+      // Send simple email notification
+      await this._mailService.repositoryScanCompleteNotification({
+        email: scan.account.user.email,
+        adminName: scan.account.user.firstName,
+        repositoryName: repository.name,
+        reportUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/${repository.id}/${repository.organizationId}`,
+      });
 
       return analyzedFiles;
     } catch (error) {
@@ -1721,7 +1684,7 @@ Your answer should be immediately useful to someone trying to understand this co
 
       // Fetch the latest commit from the PR and its parent to get proper "before" and "after" versions
       let latestCommitSha = 'HEAD';
-      let parentCommitSha = null;
+      let parentCommitSha = repository.baseBranch;
 
       try {
         // Get the latest commit from the PR
@@ -2214,7 +2177,7 @@ Your answer should be immediately useful to someone trying to understand this co
 
       // Fetch the latest commit from the PR and its parent to get proper "before" and "after" versions
       let latestCommitSha = 'HEAD';
-      let parentCommitSha = null;
+      let parentCommitSha = repository.baseBranch;
 
       try {
         // Get the latest commit from the PR

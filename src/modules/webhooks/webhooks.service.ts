@@ -1056,26 +1056,25 @@ export class WebhooksService {
         }
 
         // Get the latest version of files from both branches for comparison
-        // const regressionAnalysis =
-        //   await this._repositoryScanService.analyzeRegressionImpactEnhanced(
-        //     repository.id,
-        //     data.pullrequest.id,
-        //     filteredFiles,
-        //     accountId,
-        //   );
+        const regressionAnalysis =
+          await this._repositoryScanService.analyzeRegressionImpactEnhanced(
+            repository.id,
+            data.pullrequest.id,
+            filteredFiles,
+            accountId,
+          );
 
-        // if (regressionAnalysis) {
-        //   // Send notification email about the regression test results
-        //   await this._mailService.sendRegressionTestingNotification({
-        //     accountId,
-        //     authorName: data.actor.display_name,
-        //     repositoryInfo: {
-        //       repositoryName: data.repository.name,
-        //     },
-        //     regressionData: regressionAnalysis,
-        //     prNumber: data.pullrequest.id,
-        //   });
-        // }
+        if (regressionAnalysis) {
+          await this._mailService.sendRegressionTestingNotification({
+            accountId,
+            authorName: data.actor.display_name,
+            repositoryInfo: {
+              repositoryName: data.repository.name,
+            },
+            regressionData: regressionAnalysis,
+            prNumber: data.pullrequest.id,
+          });
+        }
       } catch (error) {
         console.error('Error in regression analysis:', error);
       }
