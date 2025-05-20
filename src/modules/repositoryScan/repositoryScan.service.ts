@@ -1712,6 +1712,19 @@ Your answer should be immediately useful to someone trying to understand this co
         parentCommitSha = repository.baseBranch;
       }
 
+      // Add this after line ~1691 where commitInfo is retrieved
+      if (
+        accountCredentials.accountType !== AccountCredentialsType.GITHUB_TOKEN
+      ) {
+        // For Bitbucket, swap the values since they're reversed
+        const temp = latestCommitSha;
+        latestCommitSha = parentCommitSha;
+        parentCommitSha = temp;
+        console.log(
+          `[Bitbucket] Swapped commit SHAs - now using latest=${latestCommitSha}, parent=${parentCommitSha}`,
+        );
+      }
+
       // Create a map of file documentation for quick lookup
       const fileDocMap = {};
       fileDocumentation.forEach((doc) => {
@@ -1749,7 +1762,7 @@ Your answer should be immediately useful to someone trying to understand this co
               enhancedFile.previousContent = await this._fetchFileContent(
                 repository,
                 file.filename,
-                parentCommitSha,
+                parentCommitSha, // Changed from latestCommitSha
                 accountCredentials,
               );
             } catch (error) {
@@ -1765,7 +1778,7 @@ Your answer should be immediately useful to someone trying to understand this co
               enhancedFile.currentContent = await this._fetchFileContent(
                 repository,
                 file.filename,
-                latestCommitSha,
+                latestCommitSha, // Changed from parentCommitSha
                 accountCredentials,
               );
             } catch (error) {
@@ -1796,32 +1809,32 @@ Your answer should be immediately useful to someone trying to understand this co
       );
 
       // Analyze variable usage to detect undefined variables
-      const variableAnalysis = filteredFiles.map((file) => {
-        const fileExtension = file.filename.split('.').pop()?.toLowerCase();
-        const language = this._detectLanguage(file.currentContent || '');
-        const variableUsage = this._analyzeVariableUsage(
-          file.currentContent || '',
-        );
-        const docType = this.mapFileTypeToDocumentationType(
-          file.filename.split('.').pop() || '',
-        );
+      // const variableAnalysis = filteredFiles.map((file) => {
+      //   const fileExtension = file.filename.split('.').pop()?.toLowerCase();
+      //   const language = this._detectLanguage(file.currentContent || '');
+      //   const variableUsage = this._analyzeVariableUsage(
+      //     file.currentContent || '',
+      //   );
+      //   const docType = this.mapFileTypeToDocumentationType(
+      //     file.filename.split('.').pop() || '',
+      //   );
 
-        return {
-          filename: file.filename,
-          language,
-          variables: {
-            defined: Array.from(variableUsage.defined),
-            used: Array.from(variableUsage.used),
-          },
-        };
-      });
+      //   return {
+      //     filename: file.filename,
+      //     language,
+      //     variables: {
+      //       defined: Array.from(variableUsage.defined),
+      //       used: Array.from(variableUsage.used),
+      //     },
+      //   };
+      // });
 
-      // Analyze dependencies across files to find potential breakages
-      const affectedDependencies = this._analyzeAffectedDependencies(
-        filteredFiles,
-        filteredFiles.map((f) => f.filename),
-        dependencyMap,
-      );
+      // // Analyze dependencies across files to find potential breakages
+      // const affectedDependencies = this._analyzeAffectedDependencies(
+      //   filteredFiles,
+      //   filteredFiles.map((f) => f.filename),
+      //   dependencyMap,
+      // );
 
       // Use DeepSeek AI for regression analysis
       const deepseekAI = new DeepSeek();
@@ -2205,6 +2218,19 @@ Your answer should be immediately useful to someone trying to understand this co
         parentCommitSha = repository.baseBranch;
       }
 
+      // Add this after line ~1691 where commitInfo is retrieved
+      if (
+        accountCredentials.accountType !== AccountCredentialsType.GITHUB_TOKEN
+      ) {
+        // For Bitbucket, swap the values since they're reversed
+        const temp = latestCommitSha;
+        latestCommitSha = parentCommitSha;
+        parentCommitSha = temp;
+        console.log(
+          `[Bitbucket] Swapped commit SHAs - now using latest=${latestCommitSha}, parent=${parentCommitSha}`,
+        );
+      }
+
       // Enhanced file content retrieval - fetch from specific commits
       const enhancedChangedFiles = await Promise.all(
         changedFiles.map(async (file) => {
@@ -2230,7 +2256,7 @@ Your answer should be immediately useful to someone trying to understand this co
             fileWithContent.previousContent = await this._fetchFileContent(
               repository,
               file.filename,
-              parentCommitSha,
+              parentCommitSha, // Changed from latestCommitSha
               accountCredentials,
             );
           }
@@ -2243,7 +2269,7 @@ Your answer should be immediately useful to someone trying to understand this co
             fileWithContent.currentContent = await this._fetchFileContent(
               repository,
               file.filename,
-              latestCommitSha,
+              latestCommitSha, // Changed from parentCommitSha
               accountCredentials,
             );
           }
@@ -2251,10 +2277,6 @@ Your answer should be immediately useful to someone trying to understand this co
           return fileWithContent;
         }),
       );
-
-      console.log('enhancedChangedFiles', enhancedChangedFiles);
-      console.log('fileDocumentation', fileDocumentation);
-      console.log('dependencyMap', dependencyMap);
 
       // Calculate affected flows based on dependencies
       const affectedFlows = await this._identifyAffectedFlows(
@@ -2280,8 +2302,6 @@ Your answer should be immediately useful to someone trying to understand this co
           affectedFlows: affectedFlows.fileFlowMap[file.filename] || [],
         })),
       );
-
-      console.log('regressionAnalysis', regressionAnalysis);
 
       // Include organization information for report creation
       const organizationId = repository.organizationId;
@@ -2587,12 +2607,6 @@ Your answer should be immediately useful to someone trying to understand this co
               `Error extracting current functions for ${file.filename}:`,
               currError,
             );
-          }
-
-          // Only log if both extractions were successful
-          if (previousFunctions && currentFunctions) {
-            console.log('previousFunctions', previousFunctions);
-            console.log('currentFunctions', currentFunctions);
           }
 
           // Compare the functions to find changes - with safe handling of null/undefined
