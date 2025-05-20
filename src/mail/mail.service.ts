@@ -313,20 +313,6 @@ export class MailService {
     email: string;
     adminName: string;
     repositoryName: string;
-    totalFiles: number;
-    issuesFound: number;
-    securityIssues: number;
-    codeSmells: number;
-    topSecurityIssues: Array<{
-      severity: string;
-      title: string;
-      description: string;
-    }>;
-    topCodeIssues: Array<{
-      severity: string;
-      title: string;
-      description: string;
-    }>;
     reportUrl: string;
   }) {
     try {
@@ -337,12 +323,6 @@ export class MailService {
         context: {
           adminName: data.adminName,
           repositoryName: data.repositoryName,
-          totalFiles: data.totalFiles,
-          issuesFound: data.issuesFound,
-          securityIssues: data.securityIssues,
-          codeSmells: data.codeSmells,
-          topSecurityIssues: data.topSecurityIssues,
-          topCodeIssues: data.topCodeIssues,
           reportUrl: data.reportUrl,
         },
       });
