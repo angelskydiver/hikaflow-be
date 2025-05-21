@@ -310,7 +310,7 @@ Return ONLY the fixed JSON with no other text, explanations, or code formatting.
    * @param files Relevant files with their content
    * @returns AI response with references
    */
-  async generateAnswer(input: string, result) {
+  async generateAnswer(input: string, result, previousQuestions?: string) {
     const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
     try {
@@ -354,6 +354,10 @@ END OF CONTEXT BLOCK
 START QUESTION
 ${input}
 END OF QUESTION
+
+CONTEXT OF PREVIOUS QUESTIONS
+${previousQuestions || 'No previous questions'}
+END OF PREVIOUS QUESTIONS
 `;
 
       const resp = await model.generateContent([prompt]);
@@ -1268,18 +1272,21 @@ test('API returns correct response', async () => {
   }
 
   /**
-   * Categorize a query into one of three main types to determine the best approach to answer it
-   * @param query The user's query
-   * @returns The categorized query type (PROJECT_LEVEL, FUNCTION_TRACE, or USER_FLOW)
+   * Categorizes a query type to help determine the most appropriate handling
+   * @param query The user query text
+   * @returns The query category (USER_FLOW, FUNCTION_TRACE, or PROJECT_LEVEL)
    */
-  async categorizeQueryType(query: string): Promise<string> {
+  async categorizeQueryType(
+    query: string,
+    hasThreadId: boolean = false,
+  ): Promise<string> {
     try {
       const model = this.genAI.getGenerativeModel({
         model: 'gemini-1.5-flash',
       });
 
       const prompt = `
-You are an AI assistant that helps categorize user questions about codebases into one of three types:
+You are an AI assistant that helps categorize user questions about codebases into one of four types:
 
 1. PROJECT_LEVEL: Questions about the overall project, its structure, purpose, technologies used, database schema, models, tables, or high-level architecture. Examples:
    - "What is the purpose of this project?"
@@ -1306,7 +1313,15 @@ You are an AI assistant that helps categorize user questions about codebases int
    - "Walk me through the authentication flow"
    - "What's the process for submitting a form?"
 
-Based on the query below, categorize it into exactly ONE of these types: PROJECT_LEVEL, FUNCTION_TRACE, or USER_FLOW.
+4. FOLLOW_UP: Questions that reference or build upon previous questions/answers in the conversation. Examples:
+   - "Can you explain that part in more detail?"
+   - "What about the other functions it calls?"
+   - "How does that relate to what you showed earlier?"
+   - "Could you show me more examples of this?"
+   - "Why does it work that way?"
+   - "What else is connected to this?"
+
+Based on the query below, categorize it into exactly ONE of these types: PROJECT_LEVEL, FUNCTION_TRACE, USER_FLOW, or FOLLOW_UP.
 Respond with ONLY the category name, nothing else.
 
 Query: ${query}
@@ -1315,9 +1330,19 @@ Query: ${query}
       const resp = await model.generateContent([prompt]);
       const categoryType = resp.response.text().trim();
 
+      // If it's a FOLLOW_UP type but no threadId is provided, default to PROJECT_LEVEL
+      if (categoryType === 'FOLLOW_UP' && !hasThreadId) {
+        console.warn(
+          'Query categorized as FOLLOW_UP but no threadId provided, defaulting to PROJECT_LEVEL',
+        );
+        return 'PROJECT_LEVEL';
+      }
+
       // Validate the response is one of the expected categories
       if (
-        !['PROJECT_LEVEL', 'FUNCTION_TRACE', 'USER_FLOW'].includes(categoryType)
+        !['PROJECT_LEVEL', 'FUNCTION_TRACE', 'USER_FLOW', 'FOLLOW_UP'].includes(
+          categoryType,
+        )
       ) {
         console.warn(
           `Unexpected category type returned: ${categoryType}, defaulting to PROJECT_LEVEL`,
@@ -1330,6 +1355,53 @@ Query: ${query}
       console.error('Error categorizing query:', err.message);
       // Default to PROJECT_LEVEL if categorization fails
       return 'PROJECT_LEVEL';
+    }
+  }
+
+  /**
+   * Generates a concise summary of an answer for threading context
+   * @param content The content to summarize (either the answer or a prompt with the answer)
+   * @returns A concise summary focusing on key technical details
+   */
+  async generateSummary(content: string): Promise<string> {
+    try {
+      // Create generative model
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-1.5-flash',
+        generationConfig: {
+          temperature: 0,
+          maxOutputTokens: 1024,
+        },
+      });
+
+      // Generate summary
+      const prompt = `
+Create a concise, factual summary of this technical response. Focus only on extracting the most important:
+- Technical concepts mentioned
+- File names and paths
+- Function names and methods
+- Data structures or models mentioned
+- Key findings or solutions
+
+Make the summary useful for maintaining context in a thread of technical questions.
+Keep it under 250 words and don't add any commentary or explanations.
+
+${content}
+`;
+
+      const result = await model.generateContent(prompt);
+      let summary = result.response.text().trim();
+
+      // // Ensure it's not too long (max 500 chars)
+      // if (summary.length > 500) {
+      //   summary = summary.substring(0, 497) + '...';
+      // }
+
+      return summary;
+    } catch (error) {
+      console.error('Error generating summary:', error);
+      // Return a shortened version of the original as fallback
+      return content.substring(0, 200) + (content.length > 200 ? '...' : '');
     }
   }
 }

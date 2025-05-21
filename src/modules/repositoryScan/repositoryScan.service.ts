@@ -694,6 +694,7 @@ export class RepositoryScanService {
     repositoryId: string,
     query: string,
     accountId: string,
+    threadId?: string,
   ) {
     try {
       console.log(`[testAnalyzeAssistance] Processing query: "${query}"`);
@@ -748,19 +749,37 @@ export class RepositoryScanService {
         },
       });
 
-      const uniqueTags = await this.prisma.$queryRawUnsafe<{ tag: string }[]>(
-        `
-        SELECT DISTINCT unnest("fileType") AS tag
-        FROM "FileDocumentation"
-        WHERE "repositoryScanId" = $1
-      `,
-        repositoryScanId,
-      );
+      let enhancedQuery = '';
+
+      if (threadId) {
+        const thread = await this.prisma.thread.findUnique({
+          where: { id: threadId },
+          include: {
+            questions: true,
+          },
+        });
+
+        if (thread) {
+          enhancedQuery += `\n\nPrevious Questions:\n`;
+          thread.questions
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+            .slice(0, 10)
+            .forEach(
+              (q) =>
+                (enhancedQuery += `\n Question: ${q.question}\n Answer: ${q.summary || q.answer}`),
+            );
+        }
+      }
+
+      enhancedQuery += `\n\nNew Question: ${query}`;
 
       const gemini = new Gemini();
 
       // Use Gemini to categorize the query type instead of regex patterns
-      const queryType = await gemini.categorizeQueryType(query);
+      let queryType = await gemini.categorizeQueryType(
+        enhancedQuery,
+        !!threadId,
+      );
       console.log(`[testAnalyzeAssistance] Query categorized as: ${queryType}`);
 
       const embedding = await gemini.getEmbeddings(query);
@@ -784,8 +803,122 @@ export class RepositoryScanService {
         }
       }
 
+      if (queryType === 'FOLLOW_UP' || threadId) {
+        console.log(`[testAnalyzeAssistance] Handling as FOLLOW UP question`);
+
+        // Get previous chat messages with more detail
+        let previousMessages = [];
+        if (threadId) {
+          const thread = await this.prisma.thread.findUnique({
+            where: { id: threadId },
+            include: {
+              questions: {
+                orderBy: {
+                  createdAt: 'desc',
+                },
+                take: 10,
+              },
+            },
+          });
+
+          if (thread) {
+            // Get last 5 messages with full detail
+            const recentMessages = thread.questions.slice(0, 5);
+            // Get next 5 messages for summary only
+            const olderMessages = thread.questions.slice(5, 10);
+
+            previousMessages = [
+              ...recentMessages.map((q) => ({
+                question: q.question,
+                answer: q.answer,
+                summary: q.summary,
+                isDetailed: true,
+              })),
+              ...olderMessages.map((q) => ({
+                question: q.question,
+                summary: q.summary || q.answer,
+                isDetailed: false,
+              })),
+            ];
+
+            // Perform semantic search based on the most recent relevant answer
+            const mostRecentAnswer = recentMessages[0]?.answer || '';
+            const followUpEmbedding = await gemini.getEmbeddings(
+              mostRecentAnswer + ' ' + query,
+            );
+            const followUpVectorQuery = `[${followUpEmbedding.join(',')}]`;
+
+            // Get relevant files based on the combined context
+            const semanticSearchResults = (await this.prisma.$queryRaw`
+              SELECT id, name, "fullPath", summary 
+              FROM "FileDocumentation" 
+              WHERE "repositoryScanId" = ${repositoryScanId}
+              ORDER BY "summaryEmbedding" <=> ${followUpVectorQuery}::vector 
+              LIMIT 5
+            `) as any[];
+
+            if (semanticSearchResults.length > 0) {
+              const relevantFiles =
+                await this.prisma.fileDocumentation.findMany({
+                  where: {
+                    id: { in: semanticSearchResults.map((r) => r.id) },
+                  },
+                });
+
+              // Fetch file contents
+              const sourceCodeResponses = await this._fetchSourceCodeForFiles(
+                relevantFiles,
+                documentedFile,
+                accountCredentials,
+              );
+
+              const filesWithCode = sourceCodeResponses.map((res, index) => ({
+                summary: relevantFiles[index].summary,
+                fileName: relevantFiles[index].name,
+                sourceCode: res.data,
+                functions: relevantFiles[index].functions || [],
+                imports: relevantFiles[index].imports || [],
+                exports: relevantFiles[index].exports || [],
+              }));
+
+              // Generate answer with focus on previous context
+              const queryResponse = await gemini.generateAnswer(
+                `Based on the previous conversation context and the new question, analyze the code to explain: ${query}
+
+Previous conversation context:
+${previousMessages
+  .map((msg) =>
+    msg.isDetailed
+      ? `Q: ${msg.question}\nA: ${msg.answer}\n`
+      : `Q: ${msg.question}\nSummary: ${msg.summary}\n`,
+  )
+  .join('\n')}
+
+Focus on connecting the new question to the previous context while analyzing the actual code implementation.`,
+                filesWithCode,
+                enhancedQuery,
+              );
+
+              return await this._createAssistanceResponse(
+                query,
+                queryResponse,
+                repositoryId,
+                repositoryScanId,
+                accountId,
+                repository,
+                threadId,
+              );
+            }
+          }
+        }
+
+        // If we couldn't process as FOLLOW_UP, fall back to PROJECT_LEVEL
+        console.log('Falling back to PROJECT_LEVEL handling');
+        queryType = 'PROJECT_LEVEL';
+      }
+
       // Handle different query types based on AI categorization
-      if (queryType === 'USER_FLOW') {
+      else if (queryType === 'USER_FLOW') {
         console.log(`[testAnalyzeAssistance] Handling as USER FLOW question`);
         // For user flow questions, prioritize controllers, routes, auth files, and UI components
         const userFlowFiles = await this.prisma.fileDocumentation.findMany({
@@ -865,7 +998,7 @@ export class RepositoryScanService {
 
         // Use gemini to filter the most relevant files
         const filteredFiles = await gemini.filterRelevantFiles(
-          query,
+          enhancedQuery, // query
           fileQuickInfo,
         );
 
@@ -899,6 +1032,7 @@ export class RepositoryScanService {
         const queryResponse = await gemini.generateAnswer(
           `Analyze the actual code implementation to explain exactly how ${query.replace(/\?/g, '')} - not what should happen theoretically, but what DOES happen based on the code. Follow the execution path through the files, identify the exact functions called, database operations performed, and any conditional logic followed. Include file names, line numbers, function names, and show the precise sequence of operations. DO NOT speculate about what "would" happen - analyze what DOES happen based on the actual code in these files.`,
           filesWithCode,
+          enhancedQuery,
         );
 
         return await this._createAssistanceResponse(
@@ -908,6 +1042,7 @@ export class RepositoryScanService {
           repositoryScanId,
           accountId,
           repository,
+          threadId,
         );
       } else if (queryType === 'FUNCTION_TRACE') {
         console.log(
@@ -1165,6 +1300,7 @@ Your answer should be immediately useful to someone trying to understand this co
         const queryResponse = await gemini.generateAnswer(
           functionSpecificPrompt,
           filesWithCode,
+          enhancedQuery,
         );
 
         return await this._createAssistanceResponse(
@@ -1174,9 +1310,9 @@ Your answer should be immediately useful to someone trying to understand this co
           repositoryScanId,
           accountId,
           repository,
+          threadId,
         );
-      } else {
-        // PROJECT_LEVEL (default case)
+      } else if (queryType === 'PROJECT_LEVEL') {
         console.log(
           `[testAnalyzeAssistance] Handling as PROJECT LEVEL question`,
         );
@@ -1273,7 +1409,7 @@ Your answer should be immediately useful to someone trying to understand this co
           });
 
           const filteredFiles = await gemini.filterRelevantFiles(
-            query,
+            enhancedQuery, // query
             fileQuickInfo,
           );
 
@@ -1323,6 +1459,7 @@ Your answer should be immediately useful to someone trying to understand this co
           const queryResponse = await gemini.generateAnswer(
             query,
             filesWithCode,
+            enhancedQuery,
           );
 
           return await this._createAssistanceResponse(
@@ -1332,64 +1469,65 @@ Your answer should be immediately useful to someone trying to understand this co
             repositoryScanId,
             accountId,
             repository,
+            threadId,
           );
         }
       }
 
       // Fallback semantic search if no specific handling worked
-      console.log(
-        `[testAnalyzeAssistance] Falling back to semantic search for query`,
-      );
+      // console.log(
+      //   `[testAnalyzeAssistance] Falling back to semantic search for query`,
+      // );
 
-      // Perform semantic search directly
-      const relevantFilesByEmbedding = (await this.prisma.$queryRaw`
-        SELECT id, name, "fullPath", summary 
-        FROM "FileDocumentation" 
-        WHERE "repositoryScanId" = ${repositoryScanId}
-        ORDER BY "summaryEmbedding" <=> ${vectorQuery}::vector 
-        LIMIT 5
-      `) as any[];
+      // // Perform semantic search directly
+      // const relevantFilesByEmbedding = (await this.prisma.$queryRaw`
+      //   SELECT id, name, "fullPath", summary
+      //   FROM "FileDocumentation"
+      //   WHERE "repositoryScanId" = ${repositoryScanId}
+      //   ORDER BY "summaryEmbedding" <=> ${vectorQuery}::vector
+      //   LIMIT 5
+      // `) as any[];
 
-      if (relevantFilesByEmbedding.length === 0) {
-        return {
-          answer:
-            "I couldn't find relevant information to answer your question. The repository may not have been fully scanned or indexed yet.",
-          context: [],
-        };
-      }
+      // if (relevantFilesByEmbedding.length === 0) {
+      //   return {
+      //     answer:
+      //       "I couldn't find relevant information to answer your question. The repository may not have been fully scanned or indexed yet.",
+      //     context: [],
+      //   };
+      // }
 
-      // Get complete file data for the top results
-      const topFiles = await this.prisma.fileDocumentation.findMany({
-        where: {
-          id: {
-            in: relevantFilesByEmbedding.map((file: any) => file.id),
-          },
-        },
-      });
+      // // Get complete file data for the top results
+      // const topFiles = await this.prisma.fileDocumentation.findMany({
+      //   where: {
+      //     id: {
+      //       in: relevantFilesByEmbedding.map((file: any) => file.id),
+      //     },
+      //   },
+      // });
 
-      // Get file content for the top files
-      const sourceCodeResponses = await this._fetchSourceCodeForFiles(
-        topFiles,
-        documentedFile,
-        accountCredentials,
-      );
+      // // Get file content for the top files
+      // const sourceCodeResponses = await this._fetchSourceCodeForFiles(
+      //   topFiles,
+      //   documentedFile,
+      //   accountCredentials,
+      // );
 
-      const filesWithCode = sourceCodeResponses.map((res, index) => ({
-        summary: topFiles[index].summary,
-        fileName: topFiles[index].name,
-        sourceCode: res.data,
-      }));
+      // const filesWithCode = sourceCodeResponses.map((res, index) => ({
+      //   summary: topFiles[index].summary,
+      //   fileName: topFiles[index].name,
+      //   sourceCode: res.data,
+      // }));
 
-      const queryResponse = await gemini.generateAnswer(query, filesWithCode);
+      // const queryResponse = await gemini.generateAnswer(query, filesWithCode);
 
-      return await this._createAssistanceResponse(
-        query,
-        queryResponse,
-        repositoryId,
-        repositoryScanId,
-        accountId,
-        repository,
-      );
+      // return await this._createAssistanceResponse(
+      //   query,
+      //   queryResponse,
+      //   repositoryId,
+      //   repositoryScanId,
+      //   accountId,
+      //   repository,
+      // );
     } catch (error) {
       console.error('Error in testAnalyzeAssistance:', error);
       throw new BadRequestException(
@@ -1464,6 +1602,7 @@ Your answer should be immediately useful to someone trying to understand this co
     repositoryScanId: string,
     accountId: string,
     repository: any,
+    threadId?: string,
   ) {
     // Improve response formatting by removing common patterns that sound robotic
     let responseText = queryResponse?.output;
@@ -1485,6 +1624,22 @@ Your answer should be immediately useful to someone trying to understand this co
       queryResponse.output = responseText;
     }
 
+    if (!threadId) {
+      const thread = await this.prisma.thread.create({
+        data: {
+          title: query,
+          repositoryId: repositoryId,
+        },
+      });
+
+      threadId = thread.id;
+    }
+
+    const gemini = new Gemini();
+    let responseSummary = await gemini.generateSummary(
+      queryResponse.output.response.candidates[0].content.parts[0].text,
+    );
+
     const assistedQuestionPayload = {
       question: query,
       answer: {
@@ -1503,6 +1658,8 @@ Your answer should be immediately useful to someone trying to understand this co
       tokenUtilized:
         queryResponse.output.response.usageMetadata.totalTokenCount,
       accountId,
+      summary: responseSummary,
+      threadId: threadId,
     };
 
     const assistedQuestions = await this.prisma.assistedQuestions.create({
@@ -1551,6 +1708,7 @@ Your answer should be immediately useful to someone trying to understand this co
     }
 
     return {
+      threadId: threadId,
       id: assistedQuestions.id,
       response: formattedResponse,
       filteredFiles: queryResponse.filesReferenced.map((data) => ({
