@@ -101,6 +101,7 @@ export class RepositoryScanController {
       repositoryId,
       body.query,
       req.user.accountId,
+      body.threadId,
     );
   }
 
@@ -257,6 +258,76 @@ export class RepositoryScanController {
       console.error('Error triggering rescan:', error);
       throw new BadRequestException(
         error.message || 'Failed to trigger rescan',
+      );
+    }
+  }
+
+  @ApiBearerAuth()
+  @Get('/threads/:repositoryId')
+  async GetThreads(@Param('repositoryId') repositoryId: string) {
+    try {
+      // Get all threads for the repository
+      const threads = await this._prismaService.thread.findMany({
+        where: { repositoryId },
+        orderBy: { updatedAt: 'desc' },
+        include: {
+          questions: {
+            orderBy: { createdAt: 'desc' },
+            take: 1, // Include only the most recent question for each thread
+          },
+        },
+      });
+
+      return threads.map((thread) => ({
+        id: thread.id,
+        title: thread.title,
+        createdAt: thread.createdAt,
+        updatedAt: thread.updatedAt,
+        lastQuestion: thread.questions[0]?.question || null,
+        lastQuestionDate: thread.questions[0]?.createdAt || null,
+      }));
+    } catch (error) {
+      console.error('Error getting threads:', error);
+      throw new BadRequestException(error.message || 'Failed to get threads');
+    }
+  }
+
+  @ApiBearerAuth()
+  @Get('/thread/:threadId')
+  async GetThreadDetails(@Param('threadId') threadId: string) {
+    try {
+      // Get thread with all its questions
+      const thread = await this._prismaService.thread.findUnique({
+        where: { id: threadId },
+        include: {
+          questions: {
+            orderBy: { createdAt: 'desc' },
+          },
+        },
+      });
+
+      if (!thread) {
+        throw new NotFoundException(`Thread with ID ${threadId} not found`);
+      }
+
+      return {
+        id: thread.id,
+        title: thread.title,
+        createdAt: thread.createdAt,
+        updatedAt: thread.updatedAt,
+        questions: thread.questions.map((q) => ({
+          id: q.id,
+          isStarred: q.saved,
+          question: q.question,
+          answer: q.answer,
+          summary: q.summary,
+          createdAt: q.createdAt,
+        })),
+      };
+    } catch (error) {
+      console.error('Error getting thread details:', error);
+      throw new BadRequestException(
+        error.message || 'Failed to get thread details',
       );
     }
   }
