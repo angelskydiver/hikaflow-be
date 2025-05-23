@@ -764,10 +764,10 @@ export class RepositoryScanService {
           thread.questions
             .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
             .slice(0, 10)
-            .forEach(
-              (q) =>
-                (enhancedQuery += `\n Question: ${q.question}\n Answer: ${q.summary || q.answer}`),
-            );
+            .forEach((q, index) => {
+              // @ts-ignore
+              enhancedQuery += `\n Question: ${q.question}\n Answer: ${index < 4 ? q.answer?.response : q.answer?.summary} `;
+            });
         }
       }
 
@@ -803,7 +803,7 @@ export class RepositoryScanService {
         }
       }
 
-      if (queryType === 'FOLLOW_UP' || threadId) {
+      if (queryType === 'FOLLOW_UP') {
         console.log(`[testAnalyzeAssistance] Handling as FOLLOW UP question`);
 
         // Get previous chat messages with more detail
@@ -1584,7 +1584,17 @@ Your answer should be immediately useful to someone trying to understand this co
     }
 
     try {
-      return await Promise.all(sourceCodeMapping);
+      return await (
+        await Promise.allSettled(sourceCodeMapping)
+      )
+        .map((r) => {
+          if (r.status === 'fulfilled') {
+            return r.value;
+          } else {
+            return null;
+          }
+        })
+        .filter((r) => r !== null);
     } catch (error) {
       console.error('Error fetching source code:', error.message);
       // Return placeholder data on error to avoid breaking the flow
@@ -1618,6 +1628,27 @@ Your answer should be immediately useful to someone trying to understand this co
         .replace(/in the provided code/gi, '')
         .replace(/from the code analysis/gi, '')
         .replace(/according to the codebase/gi, '')
+        .replace(/analyzing the code/gi, '')
+        .replace(/after reviewing the code/gi, '')
+        .replace(/examining the code/gi, '')
+        .replace(/the code implements/gi, '')
+        .replace(/the implementation shows/gi, '')
+        .replace(/as implemented in the code/gi, '')
+        .replace(/the source code demonstrates/gi, '')
+        .replace(/based on the implementation/gi, '')
+        .replace(/looking at the implementation/gi, '')
+        .replace(/the current implementation/gi, '')
+        .replace(/reviewing the implementation/gi, '')
+        .replace(/examining the implementation/gi, '')
+        .replace(/analyzing the implementation/gi, '')
+        .replace(/as shown in the implementation/gi, '')
+        .replace(/the code base/gi, '')
+        .replace(/in the source code/gi, '')
+        .replace(/from the source code/gi, '')
+        .replace(/based on the source/gi, '')
+        .replace(/looking at the source/gi, '')
+        .replace(/the source shows/gi, '')
+        .replace(/as shown in the source/gi, '')
         .trim();
 
       // Set the improved response
