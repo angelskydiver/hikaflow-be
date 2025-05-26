@@ -6,6 +6,7 @@ import {
 import {
   AccountCredentialsType,
   CommentType,
+  PrismaClient,
   ScanStatus,
 } from '@prisma/client';
 import axios from 'axios';
@@ -1826,10 +1827,6 @@ Your answer should be immediately useful to someone trying to understand this co
     accountId: string,
   ) {
     try {
-      console.log(
-        `Analyzing regression impact for PR #${prNumber} with ${changedFiles.length} files`,
-      );
-
       const repository = await this.prisma.repository.findUnique({
         where: { id: repositoryId },
         include: {
@@ -1838,7 +1835,7 @@ Your answer should be immediately useful to someone trying to understand this co
       });
 
       if (!repository) {
-        throw new Error(`Repository not found with ID ${repositoryId}`);
+        throw new Error(`Repository "${repositoryId}" not found.`);
       }
 
       // Fetch documentation for context information
@@ -1997,45 +1994,15 @@ Your answer should be immediately useful to someone trying to understand this co
         dependencyMap,
       );
 
-      // Analyze variable usage to detect undefined variables
-      // const variableAnalysis = filteredFiles.map((file) => {
-      //   const fileExtension = file.filename.split('.').pop()?.toLowerCase();
-      //   const language = this._detectLanguage(file.currentContent || '');
-      //   const variableUsage = this._analyzeVariableUsage(
-      //     file.currentContent || '',
-      //   );
-      //   const docType = this.mapFileTypeToDocumentationType(
-      //     file.filename.split('.').pop() || '',
-      //   );
-
-      //   return {
-      //     filename: file.filename,
-      //     language,
-      //     variables: {
-      //       defined: Array.from(variableUsage.defined),
-      //       used: Array.from(variableUsage.used),
-      //     },
-      //   };
-      // });
-
-      // // Analyze dependencies across files to find potential breakages
-      // const affectedDependencies = this._analyzeAffectedDependencies(
-      //   filteredFiles,
-      //   filteredFiles.map((f) => f.filename),
-      //   dependencyMap,
-      // );
-
-      // Use DeepSeek AI for regression analysis
       const deepseekAI = new DeepSeek();
-      const geminiAI = new Gemini(); // Gemini as potential fallback
 
       console.log(
         `Performing regression analysis on ${filteredFiles.length} files`,
       );
 
-      let regressionAnalysis = null;
+      let analysisResult = null;
       try {
-        regressionAnalysis = await deepseekAI.analyzeRegressionImpact(
+        analysisResult = await deepseekAI.analyzeRegressionImpact(
           filteredFiles.map((file) => ({
             filename: file.filename,
             patch: file.patch,
@@ -2061,23 +2028,194 @@ Your answer should be immediately useful to someone trying to understand this co
             repositoryId,
             prNumber,
             status: 'COMPLETED',
-            summary: regressionAnalysis?.summary || 'Analysis failed',
-            impactedFlows: regressionAnalysis?.impactedFlows || [],
-            testCases: regressionAnalysis?.testCases || [],
-            potentialBreakages: regressionAnalysis?.potentialBreakages || [],
-            changedBehavior: regressionAnalysis?.changedBehavior || [],
+            summary: analysisResult?.summary || 'Analysis failed',
+            impactedFlows: analysisResult?.impactedFlows || [],
+            testCases: analysisResult?.testCases || [],
+            potentialBreakages: analysisResult?.potentialBreakages || [],
+            changedBehavior: analysisResult?.changedBehavior || [],
             organizationId: repository.organizationId,
           },
         },
       );
 
+      // Get or create collaborator record
+      const prAuthorInfo = await this._fetchPrAuthorInfo(
+        repository,
+        prNumber,
+        accountCredentials,
+      );
+
+      const collaborator = await this.prisma.$transaction(
+        async (prisma: PrismaClient) => {
+          let existingCollaborator = await prisma.collaborator.findFirst({
+            where: {
+              OR: [
+                { githubUsername: prAuthorInfo.username },
+                { bitbucketUsername: prAuthorInfo.username },
+              ],
+            },
+          });
+
+          if (!existingCollaborator) {
+            existingCollaborator = await prisma.collaborator.create({
+              data: {
+                name: prAuthorInfo.name || prAuthorInfo.username,
+                email: prAuthorInfo.email,
+                githubUsername:
+                  accountCredentials.accountType ===
+                  AccountCredentialsType.GITHUB_TOKEN
+                    ? prAuthorInfo.username
+                    : null,
+                bitbucketUsername:
+                  accountCredentials.accountType ===
+                  AccountCredentialsType.BITBUCKET_TOKEN
+                    ? prAuthorInfo.username
+                    : null,
+                totalPrCount: 0,
+                performanceGains: 0,
+                codeFootprintReduction: 0,
+                refactorQuality: 0,
+                cleanDiffRatio: 0,
+                criticalModuleImpact: 0,
+                speedToDeploy: 0,
+                errorRateReduction: 0,
+                firstTimeRight: 0,
+                ownershipClarity: 0,
+                internalDocumentation: 0,
+                organizations: {
+                  connect: [{ id: repository.organizationId }],
+                },
+                repositories: {
+                  connect: [{ id: repositoryId }],
+                },
+              },
+            });
+          } else {
+            // Connect to organization and repository if not already connected
+            await prisma.collaborator.update({
+              where: { id: existingCollaborator.id },
+              data: {
+                organizations: {
+                  connect: [{ id: repository.organizationId }],
+                },
+                repositories: {
+                  connect: [{ id: repositoryId }],
+                },
+                totalPrCount: {
+                  increment: 1,
+                },
+              },
+            });
+          }
+
+          return existingCollaborator;
+        },
+      );
+
+      // Update collaborator metrics with weighted average
+      const weight = 0.3;
+      await this.prisma.collaborator.update({
+        where: { id: collaborator.id },
+        data: {
+          performanceGains:
+            collaborator.performanceGains * (1 - weight) +
+            analysisResult.collaboratorMetrics.performanceGainScore.score *
+              weight,
+          codeFootprintReduction:
+            collaborator.codeFootprintReduction * (1 - weight) +
+            analysisResult.collaboratorMetrics.codeFootprintScore.score *
+              weight,
+          refactorQuality:
+            collaborator.refactorQuality * (1 - weight) +
+            analysisResult.collaboratorMetrics.refactorQualityScore.score *
+              weight,
+          cleanDiffRatio:
+            collaborator.cleanDiffRatio * (1 - weight) +
+            analysisResult.collaboratorMetrics.efficiencyScore.score * weight,
+          criticalModuleImpact:
+            collaborator.criticalModuleImpact * (1 - weight) +
+            (analysisResult.collaboratorMetrics.businessImpact.criticalModules
+              .length > 0
+              ? 100
+              : 0) *
+              weight,
+          speedToDeploy:
+            collaborator.speedToDeploy * (1 - weight) +
+            analysisResult.collaboratorMetrics.efficiencyScore.score * weight,
+          errorRateReduction:
+            collaborator.errorRateReduction * (1 - weight) +
+            (analysisResult.collaboratorMetrics.businessImpact
+              .errorRateImpact !== 'Not enough information'
+              ? 100
+              : 0) *
+              weight,
+          firstTimeRight:
+            collaborator.firstTimeRight * (1 - weight) +
+            analysisResult.collaboratorMetrics.testCoverageScore.score * weight,
+          ownershipClarity:
+            collaborator.ownershipClarity * (1 - weight) +
+            analysisResult.collaboratorMetrics.teamCollaborationScore.score *
+              weight,
+          internalDocumentation:
+            collaborator.internalDocumentation * (1 - weight) +
+            analysisResult.collaboratorMetrics.documentationQualityScore.score *
+              weight,
+          totalPrCount: {
+            increment: 1,
+          },
+        },
+      });
+
       return {
         reportId: regressionTestingReport.id,
-        ...regressionAnalysis,
+        ...analysisResult,
       };
     } catch (error) {
       console.error('Error in analyzeRegressionImpactEnhanced:', error);
       throw new BadRequestException(error.message);
+    }
+  }
+
+  private async _fetchPrAuthorInfo(
+    repository: any,
+    prNumber: number,
+    credentials: any,
+  ) {
+    try {
+      if (credentials.accountType === AccountCredentialsType.GITHUB_TOKEN) {
+        const response = await axios.get(
+          `https://api.github.com/repos/${repository.owner}/${repository.name}/pulls/${prNumber}`,
+          {
+            headers: {
+              Authorization: `Bearer ${credentials.decryptedToken}`,
+              Accept: 'application/vnd.github.v3+json',
+            },
+          },
+        );
+        return {
+          username: response.data.user.login,
+          name: response.data.user.name,
+          email: response.data.user.email,
+        };
+      } else {
+        // Bitbucket API
+        const response = await axios.get(
+          `https://api.bitbucket.org/2.0/repositories/${repository.owner}/${repository.name}/pullrequests/${prNumber}`,
+          {
+            headers: {
+              Authorization: `Bearer ${credentials.decryptedToken}`,
+            },
+          },
+        );
+        return {
+          username: response.data.author.username,
+          name: response.data.author.display_name,
+          email: response.data.author.emailAddress,
+        };
+      }
+    } catch (error) {
+      console.error('Error fetching PR author info:', error);
+      throw error;
     }
   }
 
@@ -2315,211 +2453,6 @@ Your answer should be immediately useful to someone trying to understand this co
     });
 
     return result;
-  }
-
-  async analyzeRegressionImpact(
-    repositoryId: string,
-    prNumber: number,
-    changedFiles: {
-      filename: string;
-      patch: string;
-      previousContent?: string;
-      currentContent?: string;
-    }[],
-    accountId: string,
-  ) {
-    try {
-      const repository = await this.prisma.repository.findUnique({
-        where: { id: repositoryId },
-        include: {
-          repositorySettings: true,
-        },
-      });
-
-      if (!repository) {
-        throw new Error(`Repository "${repositoryId}" not found.`);
-      }
-
-      // Get account credentials to access repository files
-      const accountCredentials =
-        await this.accountCredentialService.getAccountToken({ accountId });
-
-      // Get the latest repository scan for file documentation
-      const repositoryScan = await this.prisma.repositoryScan.findFirst({
-        where: { repositoryId },
-        orderBy: { createdAt: 'desc' },
-      });
-
-      if (!repositoryScan) {
-        throw new Error(
-          `No repository scan found for repository "${repositoryId}".`,
-        );
-      }
-
-      // Get file documentation for affected files
-      const fileDocumentation = await this.prisma.fileDocumentation.findMany({
-        where: {
-          repositoryScanId: repositoryScan.id,
-          fullPath: {
-            in: changedFiles.map((file) => file.filename),
-          },
-        },
-      });
-
-      // Create a map of file documentation for quick lookup
-      const fileDocMap = {};
-      fileDocumentation.forEach((doc) => {
-        fileDocMap[doc.fullPath] = doc;
-      });
-
-      // Gather all dependencies from file documentation to analyze flow impact
-      const dependencyMap = this._buildDependencyGraph(fileDocumentation);
-
-      console.log('dependencyMap', dependencyMap);
-
-      // Fetch the latest commit from the PR and its parent to get proper "before" and "after" versions
-      let latestCommitSha = 'HEAD';
-      let parentCommitSha = repository.baseBranch;
-
-      try {
-        // Get the latest commit from the PR
-        const commitInfo = await this._fetchPrCommitInfo(
-          repository,
-          prNumber,
-          accountCredentials,
-        );
-
-        if (commitInfo) {
-          latestCommitSha = commitInfo.latestCommitSha;
-          parentCommitSha = commitInfo.parentCommitSha;
-          console.log(
-            `Using commits for comparison: latest=${latestCommitSha}, parent=${parentCommitSha}`,
-          );
-        } else {
-          console.log(
-            'Could not determine commit information, using HEAD and baseBranch as fallback',
-          );
-          parentCommitSha = repository.baseBranch;
-        }
-      } catch (error) {
-        console.error('Error fetching PR commit information:', error);
-        console.log('Using HEAD and baseBranch as fallback');
-        parentCommitSha = repository.baseBranch;
-      }
-
-      // Add this after line ~1691 where commitInfo is retrieved
-      if (
-        accountCredentials.accountType !== AccountCredentialsType.GITHUB_TOKEN
-      ) {
-        // For Bitbucket, swap the values since they're reversed
-        const temp = latestCommitSha;
-        latestCommitSha = parentCommitSha;
-        parentCommitSha = temp;
-        console.log(
-          `[Bitbucket] Swapped commit SHAs - now using latest=${latestCommitSha}, parent=${parentCommitSha}`,
-        );
-      }
-
-      // Enhanced file content retrieval - fetch from specific commits
-      const enhancedChangedFiles = await Promise.all(
-        changedFiles.map(async (file) => {
-          // Files with complete content (from before and after the changes)
-          const fileWithContent = {
-            filename: file.filename,
-            patch: file.patch,
-            documentation: fileDocMap[file.filename] || null,
-            functions: fileDocMap[file.filename]?.functions || [],
-            imports: fileDocMap[file.filename]?.imports || [],
-            exports: fileDocMap[file.filename]?.exports || [],
-            impactedBy: dependencyMap.impactedBy[file.filename] || [],
-            impacts: dependencyMap.impacts[file.filename] || [],
-            previousContent: '',
-            currentContent: '',
-          };
-
-          // If "previous" content was already provided, use it
-          if (file.previousContent) {
-            fileWithContent.previousContent = file.previousContent;
-          } else {
-            // Fetch "previous" version from parent commit
-            fileWithContent.previousContent = await this._fetchFileContent(
-              repository,
-              file.filename,
-              parentCommitSha, // Changed from latestCommitSha
-              accountCredentials,
-            );
-          }
-
-          // If "current" content was already provided, use it
-          if (file.currentContent) {
-            fileWithContent.currentContent = file.currentContent;
-          } else {
-            // Fetch "current" version from latest commit
-            fileWithContent.currentContent = await this._fetchFileContent(
-              repository,
-              file.filename,
-              latestCommitSha, // Changed from parentCommitSha
-              accountCredentials,
-            );
-          }
-
-          return fileWithContent;
-        }),
-      );
-
-      // Calculate affected flows based on dependencies
-      const affectedFlows = await this._identifyAffectedFlows(
-        enhancedChangedFiles,
-        fileDocumentation,
-        dependencyMap,
-      );
-
-      // Use DeepSeek to analyze regression impact
-      const deepseekAI = new DeepSeek();
-      const regressionAnalysis = await deepseekAI.analyzeRegressionImpact(
-        enhancedChangedFiles.map((file) => ({
-          filename: file.filename,
-          patch: file.patch,
-          previousContent: file.previousContent || '',
-          currentContent: file.currentContent || '',
-          documentation: file.documentation || null,
-          functions: file.functions || [],
-          imports: file.imports || [],
-          exports: file.exports || [],
-          impactedBy: file.impactedBy || [],
-          impacts: file.impacts || [],
-          affectedFlows: affectedFlows.fileFlowMap[file.filename] || [],
-        })),
-      );
-
-      // Include organization information for report creation
-      const organizationId = repository.organizationId;
-
-      // Store regression analysis results
-      const regressionTestingReport = await this.prisma.regressionReport.create(
-        {
-          data: {
-            repositoryId,
-            prNumber,
-            status: 'COMPLETED',
-            summary: regressionAnalysis.summary,
-            impactedFlows: regressionAnalysis.impactedFlows,
-            testCases: regressionAnalysis.testCases,
-            potentialBreakages: regressionAnalysis.potentialBreakages,
-            changedBehavior: regressionAnalysis.changedBehavior,
-            organizationId,
-          },
-        },
-      );
-
-      return {
-        reportId: regressionTestingReport.id,
-        ...regressionAnalysis,
-      };
-    } catch (error) {
-      console.error('❌ Error in analyzeRegressionImpact:', error);
-      throw new BadRequestException(error.message);
-    }
   }
 
   /**
@@ -4393,5 +4326,933 @@ Your answer should be immediately useful to someone trying to understand this co
       console.error(`Error in scanOnDemand for file ${filePath}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Fetches collaborator table data with comparative analysis
+   */
+  async fetchCollaboratorTableData(organizationId: string) {
+    try {
+      const collaborators = await this.prisma.collaborator.findMany({
+        where: {
+          organizations: {
+            some: { id: organizationId },
+          },
+        },
+        include: {
+          repositories: true,
+        },
+      });
+
+      // Calculate organization averages for comparison
+      const orgAverages = await this.prisma.collaborator.aggregate({
+        where: {
+          organizations: {
+            some: { id: organizationId },
+          },
+        },
+        _avg: {
+          performanceGains: true,
+          codeFootprintReduction: true,
+          refactorQuality: true,
+          cleanDiffRatio: true,
+          criticalModuleImpact: true,
+          speedToDeploy: true,
+          errorRateReduction: true,
+          firstTimeRight: true,
+          ownershipClarity: true,
+          internalDocumentation: true,
+          totalPrCount: true,
+        },
+      });
+
+      // Calculate badges and percentiles for each collaborator
+      const enrichedCollaborators = collaborators.map((collaborator) => {
+        const badges = this._calculateCollaboratorBadges(
+          collaborator,
+          orgAverages,
+        );
+        const percentiles = this._calculatePercentiles(
+          collaborator,
+          collaborators,
+        );
+
+        return {
+          id: collaborator.id,
+          name: collaborator.name,
+          email: collaborator.email,
+          githubUsername: collaborator.githubUsername,
+          bitbucketUsername: collaborator.bitbucketUsername,
+          metrics: {
+            performanceGains: {
+              value: collaborator.performanceGains,
+              // @ts-ignore
+              percentile: percentiles?.performanceGains,
+              orgAverage: orgAverages._avg.performanceGains,
+            },
+            codeFootprintReduction: {
+              value: collaborator.codeFootprintReduction,
+              // @ts-ignore
+
+              percentile: percentiles?.codeFootprintReduction,
+              orgAverage: orgAverages._avg.codeFootprintReduction,
+            },
+            refactorQuality: {
+              value: collaborator.refactorQuality,
+              // @ts-ignore
+
+              percentile: percentiles?.refactorQuality,
+              orgAverage: orgAverages._avg.refactorQuality,
+            },
+            cleanDiffRatio: {
+              value: collaborator.cleanDiffRatio,
+              // @ts-ignore
+
+              percentile: percentiles?.cleanDiffRatio,
+              orgAverage: orgAverages._avg.cleanDiffRatio,
+            },
+            criticalModuleImpact: {
+              value: collaborator.criticalModuleImpact,
+              // @ts-ignore
+
+              percentile: percentiles?.criticalModuleImpact,
+              orgAverage: orgAverages._avg.criticalModuleImpact,
+            },
+            speedToDeploy: {
+              value: collaborator.speedToDeploy,
+              // @ts-ignore
+
+              percentile: percentiles?.speedToDeploy,
+              orgAverage: orgAverages._avg.speedToDeploy,
+            },
+            errorRateReduction: {
+              value: collaborator.errorRateReduction,
+              // @ts-ignore
+
+              percentile: percentiles?.errorRateReduction,
+              orgAverage: orgAverages._avg.errorRateReduction,
+            },
+            firstTimeRight: {
+              value: collaborator.firstTimeRight,
+              // @ts-ignore
+
+              percentile: percentiles?.firstTimeRight,
+              orgAverage: orgAverages._avg.firstTimeRight,
+            },
+            ownershipClarity: {
+              value: collaborator.ownershipClarity,
+              // @ts-ignore
+
+              percentile: percentiles?.ownershipClarity,
+              orgAverage: orgAverages._avg.ownershipClarity,
+            },
+            internalDocumentation: {
+              value: collaborator.internalDocumentation,
+              // @ts-ignore
+
+              percentile: percentiles?.internalDocumentation,
+              orgAverage: orgAverages._avg.internalDocumentation,
+            },
+          },
+          activity: {
+            totalPRs: collaborator.totalPrCount,
+            repositories: collaborator.repositories.length,
+            avgPRsPerMonth: collaborator.totalPrCount / 12, // Assuming 12 months, adjust as needed
+          },
+          badges,
+        };
+      });
+
+      return {
+        collaborators: enrichedCollaborators,
+        organizationAverages: orgAverages._avg,
+      };
+    } catch (error) {
+      console.error('Error fetching collaborator table data:', error);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  /**
+   * Fetches detailed collaborator profile with comprehensive comparative analysis
+   */
+  async fetchCollaboratorProfile(
+    collaboratorId: string,
+    organizationId: string,
+  ) {
+    try {
+      // Get collaborator data with repositories
+      const collaborator = await this.prisma.collaborator.findUnique({
+        where: { id: collaboratorId },
+        include: {
+          repositories: true,
+          organizations: true,
+        },
+      });
+
+      if (!collaborator) {
+        throw new NotFoundException('Collaborator not found');
+      }
+
+      // Get all collaborators in the organization for comparison
+      const orgCollaborators = await this.prisma.collaborator.findMany({
+        where: {
+          organizations: {
+            some: { id: organizationId },
+          },
+        },
+      });
+
+      // Calculate organization averages
+      const orgAverages = await this.prisma.collaborator.aggregate({
+        where: {
+          organizations: {
+            some: { id: organizationId },
+          },
+        },
+        _avg: {
+          performanceGains: true,
+          codeFootprintReduction: true,
+          refactorQuality: true,
+          cleanDiffRatio: true,
+          criticalModuleImpact: true,
+          speedToDeploy: true,
+          errorRateReduction: true,
+          firstTimeRight: true,
+          ownershipClarity: true,
+          internalDocumentation: true,
+          totalPrCount: true,
+        },
+      });
+
+      // Get historical PR data with more details
+      const prHistory = await this.prisma.regressionReport.findMany({
+        where: {
+          organizationId,
+          AND: [
+            {
+              repositoryId: {
+                in: collaborator.repositories.map((repo) => repo.id),
+              },
+            },
+            {
+              createdAt: {
+                gte: new Date(
+                  new Date().getTime() - 6 * 30 * 24 * 60 * 60 * 1000,
+                ), // Last 6 months
+              },
+            },
+          ],
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+        select: {
+          id: true,
+          prNumber: true,
+          status: true,
+          summary: true,
+          impactedFlows: true,
+          changedBehavior: true,
+          potentialBreakages: true,
+          testCases: true,
+          createdAt: true,
+          repository: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+
+      // Calculate trends and percentiles
+      const trends = await this._calculateTrends(prHistory);
+      const percentiles = this._calculatePercentiles(
+        collaborator,
+        orgCollaborators,
+      );
+
+      // Calculate performance metrics over time
+      const timeBasedMetrics = await this._calculateTimeBasedMetrics(
+        prHistory,
+        organizationId,
+      );
+
+      // Calculate relative strengths and areas for improvement
+      const strengthsAndWeaknesses = this._analyzeStrengthsAndWeaknesses(
+        collaborator,
+        orgAverages._avg,
+        percentiles,
+      );
+
+      // Calculate impact scores
+      const impactScores = {
+        efficiency:
+          (collaborator.performanceGains + collaborator.speedToDeploy) / 2,
+        quality:
+          (collaborator.refactorQuality +
+            collaborator.cleanDiffRatio +
+            collaborator.firstTimeRight) /
+          3,
+        business:
+          (collaborator.criticalModuleImpact +
+            collaborator.errorRateReduction) /
+          2,
+        collaboration:
+          (collaborator.ownershipClarity + collaborator.internalDocumentation) /
+          2,
+      };
+
+      // Get repository-specific contributions
+      const repoContributions = await Promise.all(
+        collaborator.repositories.map(async (repo) => {
+          const repoSpecificPRs = prHistory.filter(
+            (pr) => pr.repository.id === repo.id,
+          );
+          return {
+            repositoryId: repo.id,
+            repositoryName: repo.name,
+            totalPRs: repoSpecificPRs.length,
+            impactedModules: repoSpecificPRs.reduce(
+              (acc, pr) => acc.concat(pr.impactedFlows || []),
+              [],
+            ),
+            averageImpact: this._calculateRepoSpecificImpact(repoSpecificPRs),
+          };
+        }),
+      );
+
+      return {
+        profile: {
+          ...collaborator,
+          badges: this._calculateCollaboratorBadges(
+            collaborator,
+            orgAverages._avg,
+          ),
+        },
+        comparativeAnalysis: {
+          percentiles,
+          organizationAverages: orgAverages._avg,
+          ranking: this._calculateRankings(collaborator, orgCollaborators),
+          impactScores,
+          strengthsAndWeaknesses,
+        },
+        historicalData: {
+          prHistory: this._formatPRHistory(prHistory),
+          trends,
+          timeBasedMetrics,
+          repoContributions,
+        },
+        visualizationData: {
+          performanceOverTime: this._preparePerformanceData(prHistory),
+          impactDistribution:
+            this._prepareImpactDistribution(repoContributions),
+          qualityTrends: this._prepareQualityTrends(prHistory),
+          collaborationNetwork: this._prepareCollaborationNetwork(
+            collaborator,
+            prHistory,
+          ),
+        },
+      };
+    } catch (error) {
+      console.error('Error fetching collaborator profile:', error);
+      throw error;
+    }
+  }
+
+  private async _calculateTimeBasedMetrics(
+    prHistory: any[],
+    organizationId: string,
+  ) {
+    const metrics = {
+      daily: {
+        // Last 10 days
+        dates: Array.from({ length: 10 }, (_, i) => {
+          const d = new Date();
+          d.setDate(d.getDate() - i);
+          return d.toISOString().split('T')[0];
+        }).reverse(),
+        collaborator: {
+          prCount: new Array(10).fill(0),
+          performance: new Array(10).fill(0),
+          quality: new Array(10).fill(0),
+          impact: new Array(10).fill(0),
+        },
+        orgAverage: {
+          prCount: new Array(10).fill(0),
+          performance: new Array(10).fill(0),
+          quality: new Array(10).fill(0),
+          impact: new Array(10).fill(0),
+        },
+      },
+      weekly: {
+        // Last 8 weeks
+        dates: Array.from({ length: 8 }, (_, i) => {
+          const d = new Date();
+          d.setDate(d.getDate() - i * 7);
+          return d.toISOString().split('T')[0];
+        }).reverse(),
+        collaborator: {
+          prCount: new Array(8).fill(0),
+          performance: new Array(8).fill(0),
+          quality: new Array(8).fill(0),
+          impact: new Array(8).fill(0),
+        },
+        orgAverage: {
+          prCount: new Array(8).fill(0),
+          performance: new Array(8).fill(0),
+          quality: new Array(8).fill(0),
+          impact: new Array(8).fill(0),
+        },
+      },
+      monthly: {
+        // Last 6 months
+        dates: Array.from({ length: 6 }, (_, i) => {
+          const d = new Date();
+          d.setMonth(d.getMonth() - i);
+          return d.toISOString().split('T')[0];
+        }).reverse(),
+        collaborator: {
+          prCount: new Array(6).fill(0),
+          performance: new Array(6).fill(0),
+          quality: new Array(6).fill(0),
+          impact: new Array(6).fill(0),
+        },
+        orgAverage: {
+          prCount: new Array(6).fill(0),
+          performance: new Array(6).fill(0),
+          quality: new Array(6).fill(0),
+          impact: new Array(6).fill(0),
+        },
+      },
+    };
+
+    // Get organization's PRs for comparison
+    const orgPRs = await this.prisma.regressionReport.findMany({
+      where: {
+        organizationId,
+        createdAt: {
+          gte: new Date(new Date().getTime() - 6 * 30 * 24 * 60 * 60 * 1000), // Last 6 months
+        },
+      },
+      select: {
+        createdAt: true,
+        impactedFlows: true,
+        testCases: true,
+        potentialBreakages: true,
+        changedBehavior: true,
+      },
+    });
+
+    // Process collaborator PRs
+    prHistory.forEach((pr) => {
+      const prDate = new Date(pr.createdAt);
+      const now = new Date();
+
+      // Calculate scores
+      const scores = this.calculateDetailedScores(pr);
+
+      // Daily metrics (last 10 days)
+      const daysDiff = Math.floor(
+        (now.getTime() - prDate.getTime()) / (1000 * 60 * 60 * 24),
+      );
+      if (daysDiff < 10) {
+        metrics.daily.collaborator.prCount[daysDiff]++;
+        metrics.daily.collaborator.performance[daysDiff] += scores.performance;
+        metrics.daily.collaborator.quality[daysDiff] += scores.quality;
+        metrics.daily.collaborator.impact[daysDiff] += scores.impact;
+      }
+
+      // Weekly metrics (last 8 weeks)
+      const weeksDiff = Math.floor(daysDiff / 7);
+      if (weeksDiff < 8) {
+        metrics.weekly.collaborator.prCount[weeksDiff]++;
+        metrics.weekly.collaborator.performance[weeksDiff] +=
+          scores.performance;
+        metrics.weekly.collaborator.quality[weeksDiff] += scores.quality;
+        metrics.weekly.collaborator.impact[weeksDiff] += scores.impact;
+      }
+
+      // Monthly metrics (last 6 months)
+      const monthsDiff = Math.floor(daysDiff / 30);
+      if (monthsDiff < 6) {
+        metrics.monthly.collaborator.prCount[monthsDiff]++;
+        metrics.monthly.collaborator.performance[monthsDiff] +=
+          scores.performance;
+        metrics.monthly.collaborator.quality[monthsDiff] += scores.quality;
+        metrics.monthly.collaborator.impact[monthsDiff] += scores.impact;
+      }
+    });
+
+    // Process organization PRs
+    orgPRs.forEach((pr) => {
+      const prDate = new Date(pr.createdAt);
+      const now = new Date();
+
+      // Calculate scores
+      const scores = this.calculateDetailedScores(pr);
+
+      // Daily metrics (last 10 days)
+      const daysDiff = Math.floor(
+        (now.getTime() - prDate.getTime()) / (1000 * 60 * 60 * 24),
+      );
+      if (daysDiff < 10) {
+        metrics.daily.orgAverage.prCount[daysDiff]++;
+        metrics.daily.orgAverage.performance[daysDiff] += scores.performance;
+        metrics.daily.orgAverage.quality[daysDiff] += scores.quality;
+        metrics.daily.orgAverage.impact[daysDiff] += scores.impact;
+      }
+
+      // Weekly metrics (last 8 weeks)
+      const weeksDiff = Math.floor(daysDiff / 7);
+      if (weeksDiff < 8) {
+        metrics.weekly.orgAverage.prCount[weeksDiff]++;
+        metrics.weekly.orgAverage.performance[weeksDiff] += scores.performance;
+        metrics.weekly.orgAverage.quality[weeksDiff] += scores.quality;
+        metrics.weekly.orgAverage.impact[weeksDiff] += scores.impact;
+      }
+
+      // Monthly metrics (last 6 months)
+      const monthsDiff = Math.floor(daysDiff / 30);
+      if (monthsDiff < 6) {
+        metrics.monthly.orgAverage.prCount[monthsDiff]++;
+        metrics.monthly.orgAverage.performance[monthsDiff] +=
+          scores.performance;
+        metrics.monthly.orgAverage.quality[monthsDiff] += scores.quality;
+        metrics.monthly.orgAverage.impact[monthsDiff] += scores.impact;
+      }
+    });
+
+    // Calculate averages for each period
+    ['daily', 'weekly', 'monthly'].forEach((period) => {
+      const range = period === 'daily' ? 10 : period === 'weekly' ? 8 : 6;
+
+      for (let i = 0; i < range; i++) {
+        // Collaborator averages
+        if (metrics[period].collaborator.prCount[i] > 0) {
+          metrics[period].collaborator.performance[i] /=
+            metrics[period].collaborator.prCount[i];
+          metrics[period].collaborator.quality[i] /=
+            metrics[period].collaborator.prCount[i];
+          metrics[period].collaborator.impact[i] /=
+            metrics[period].collaborator.prCount[i];
+        }
+
+        // Organization averages
+        if (metrics[period].orgAverage.prCount[i] > 0) {
+          metrics[period].orgAverage.performance[i] /=
+            metrics[period].orgAverage.prCount[i];
+          metrics[period].orgAverage.quality[i] /=
+            metrics[period].orgAverage.prCount[i];
+          metrics[period].orgAverage.impact[i] /=
+            metrics[period].orgAverage.prCount[i];
+        }
+      }
+    });
+
+    return metrics;
+  }
+
+  private calculateDetailedScores(pr: any): {
+    performance: number;
+    quality: number;
+    impact: number;
+  } {
+    const impactedFlows = (pr.impactedFlows as any[]) || [];
+    const testCases = (pr.testCases as any[]) || [];
+    const potentialBreakages = (pr.potentialBreakages as any[]) || [];
+    const changedBehavior = (pr.changedBehavior as any[]) || [];
+
+    // Performance Score (focused on efficiency and speed)
+    const performance =
+      Math.min(impactedFlows.length / 10, 1) * 0.4 + // Impact scope
+      Math.min(testCases.length / 10, 1) * 0.3 + // Test coverage
+      Math.max(0, 1 - potentialBreakages.length / 10) * 0.3; // Code stability
+
+    // Quality Score (focused on code quality and reliability)
+    const quality =
+      Math.max(0, 1 - potentialBreakages.length / 10) * 0.4 + // Code stability
+      Math.min(testCases.length / 10, 1) * 0.4 + // Test coverage
+      Math.min(changedBehavior.length / 5, 1) * 0.2; // Behavior impact
+
+    // Impact Score (focused on business value and scope)
+    const impact =
+      Math.min(impactedFlows.length / 10, 1) * 0.5 + // Impact scope
+      Math.min(changedBehavior.length / 5, 1) * 0.3 + // Behavior changes
+      Math.min(testCases.length / 10, 1) * 0.2; // Test coverage
+
+    return {
+      performance,
+      quality,
+      impact,
+    };
+  }
+
+  private _analyzeStrengthsAndWeaknesses(
+    collaborator: any,
+    orgAvg: any,
+    percentiles: any,
+  ) {
+    const threshold = 15; // Percentage difference threshold
+    const strengths = [];
+    const areasForImprovement = [];
+
+    const metrics = {
+      'Performance Optimization': collaborator.performanceGains,
+      'Code Quality': collaborator.refactorQuality,
+      'Development Speed': collaborator.speedToDeploy,
+      'Error Prevention': collaborator.errorRateReduction,
+      Documentation: collaborator.internalDocumentation,
+      'Code Review Quality': collaborator.cleanDiffRatio,
+      'Critical System Impact': collaborator.criticalModuleImpact,
+      'First-Time Success Rate': collaborator.firstTimeRight,
+      'Team Collaboration': collaborator.ownershipClarity,
+    };
+
+    Object.entries(metrics).forEach(([metric, value]) => {
+      const avgValue = orgAvg[this._camelCase(metric)];
+      const percentile = percentiles[this._camelCase(metric)];
+
+      if (value > avgValue * (1 + threshold / 100)) {
+        strengths.push({
+          area: metric,
+          percentileRank: percentile,
+          comparisonToAvg: `${Math.round((value / avgValue - 1) * 100)}% above average`,
+        });
+      } else if (value < avgValue * (1 - threshold / 100)) {
+        areasForImprovement.push({
+          area: metric,
+          percentileRank: percentile,
+          comparisonToAvg: `${Math.round((1 - value / avgValue) * 100)}% below average`,
+          suggestedActions: this._getSuggestedActions(metric, value, avgValue),
+        });
+      }
+    });
+
+    return { strengths, areasForImprovement };
+  }
+
+  private _camelCase(str: string): string {
+    return str
+      .toLowerCase()
+      .replace(/[^a-zA-Z0-9]+(.)/g, (_, chr) => chr.toUpperCase());
+  }
+
+  private _calculateRankings(collaborator: any, allCollaborators: any[]) {
+    const metrics = [
+      'performanceGains',
+      'refactorQuality',
+      'speedToDeploy',
+      'errorRateReduction',
+      'internalDocumentation',
+    ];
+
+    const rankings = {};
+    metrics.forEach((metric) => {
+      const sorted = [...allCollaborators].sort(
+        (a, b) => b[metric] - a[metric],
+      );
+      const rank = sorted.findIndex((c) => c.id === collaborator.id) + 1;
+      rankings[metric] = {
+        rank,
+        totalContributors: allCollaborators.length,
+        topPercentage: Math.round((rank / allCollaborators.length) * 100),
+      };
+    });
+
+    return rankings;
+  }
+
+  private _calculateRepoSpecificImpact(prs: any[]) {
+    // Calculate impact scores for the last 5 PRs only
+    const recentPRs = prs.slice(0, 5);
+
+    const impact = {
+      criticalChanges: 0,
+      testCoverage: 0,
+      codeQuality: 0,
+    };
+
+    recentPRs.forEach((pr) => {
+      // Critical changes impact
+      impact.criticalChanges += (pr.impactedFlows?.length || 0) * 0.2;
+
+      // Test coverage impact
+      impact.testCoverage += (pr.testCases?.length || 0) * 0.15;
+
+      // Code quality impact (inverse of potential breakages)
+      impact.codeQuality += Math.max(
+        0,
+        1 - (pr.potentialBreakages?.length || 0) * 0.1,
+      );
+    });
+
+    // Normalize scores to 0-100 range
+    return {
+      criticalChanges: Math.min(100, impact.criticalChanges * 20),
+      testCoverage: Math.min(100, impact.testCoverage * 20),
+      codeQuality: Math.min(100, (impact.codeQuality / recentPRs.length) * 100),
+    };
+  }
+
+  private _preparePerformanceData(prHistory: any[]) {
+    return prHistory.map((pr) => ({
+      date: pr.createdAt,
+      performanceScore: pr.performanceScore,
+      complexity: pr.complexity,
+      impactScore: pr.impactScore,
+    }));
+  }
+
+  private _prepareImpactDistribution(repoContributions: any[]) {
+    return repoContributions.map((repo) => ({
+      repository: repo.repositoryName,
+      criticalChanges: repo.impactedModules.filter((m) => m.isCritical).length,
+      normalChanges: repo.impactedModules.filter((m) => !m.isCritical).length,
+      impact: repo.averageImpact,
+    }));
+  }
+
+  private _prepareQualityTrends(prHistory: any[]) {
+    return prHistory.map((pr) => ({
+      date: pr.createdAt,
+      codeQuality: pr.qualityScore,
+      testCoverage: pr.testCoverage,
+      documentationQuality: pr.documentationScore,
+    }));
+  }
+
+  private _prepareCollaborationNetwork(collaborator: any, prHistory: any[]) {
+    const collaborations = new Map();
+
+    prHistory.forEach((pr) => {
+      if (pr.reviewers) {
+        pr.reviewers.forEach((reviewer) => {
+          const key = reviewer.username;
+          if (!collaborations.has(key)) {
+            collaborations.set(key, {
+              collaborator: reviewer.username,
+              interactions: 0,
+              averageResponseTime: 0,
+              positiveInteractions: 0,
+            });
+          }
+          const data = collaborations.get(key);
+          data.interactions++;
+          data.averageResponseTime =
+            (data.averageResponseTime * (data.interactions - 1) +
+              pr.reviewTime) /
+            data.interactions;
+          if (pr.reviewOutcome === 'approved') data.positiveInteractions++;
+        });
+      }
+    });
+
+    return Array.from(collaborations.values());
+  }
+
+  private _getSuggestedActions(
+    metric: string,
+    value: number,
+    average: number,
+  ): string[] {
+    const suggestions = {
+      'Performance Optimization': [
+        'Review and optimize database queries',
+        'Implement caching strategies',
+        'Analyze and reduce computational complexity',
+      ],
+      'Code Quality': [
+        'Follow SOLID principles',
+        'Increase unit test coverage',
+        'Participate in code reviews',
+      ],
+      'Development Speed': [
+        'Use development automation tools',
+        'Implement CI/CD practices',
+        'Break down tasks into smaller chunks',
+      ],
+      // Add more suggestions for other metrics
+    };
+
+    return (
+      suggestions[metric] || [
+        'Review best practices',
+        'Seek mentorship',
+        'Participate in training',
+      ]
+    );
+  }
+
+  private _calculateCollaboratorBadges(collaborator: any, orgAverages: any) {
+    const badges = [];
+
+    // Performance Master Badge
+    if (collaborator.performanceGains > 90) {
+      badges.push({
+        id: 'performance-master',
+        name: 'Performance Master',
+        description: 'Consistently delivers high-performance code improvements',
+        category: 'performance',
+      });
+    }
+
+    // Code Quality Champion Badge
+    if (collaborator.refactorQuality > 85 && collaborator.cleanDiffRatio > 85) {
+      badges.push({
+        id: 'quality-champion',
+        name: 'Code Quality Champion',
+        description: 'Maintains exceptional code quality standards',
+        category: 'quality',
+      });
+    }
+
+    // Critical Impact Badge
+    if (
+      collaborator.criticalModuleImpact > 80 &&
+      collaborator.totalPrCount > 10
+    ) {
+      badges.push({
+        id: 'critical-impact',
+        name: 'Critical Impact',
+        description: 'Successfully handles critical system components',
+        category: 'impact',
+      });
+    }
+
+    // Documentation Expert Badge
+    if (collaborator.internalDocumentation > 90) {
+      badges.push({
+        id: 'documentation-expert',
+        name: 'Documentation Expert',
+        description: 'Exceptional at maintaining code documentation',
+        category: 'documentation',
+      });
+    }
+
+    // Reliability Star Badge
+    if (
+      collaborator.errorRateReduction > 85 &&
+      collaborator.firstTimeRight > 85
+    ) {
+      badges.push({
+        id: 'reliability-star',
+        name: 'Reliability Star',
+        description: 'Consistently delivers reliable and error-free code',
+        category: 'reliability',
+      });
+    }
+
+    return badges;
+  }
+
+  private _calculatePercentiles(collaborator: any, allCollaborators: any[]) {
+    const percentiles = {};
+    const metrics = [
+      'performanceGains',
+      'codeFootprintReduction',
+      'refactorQuality',
+      'cleanDiffRatio',
+      'criticalModuleImpact',
+      'speedToDeploy',
+      'errorRateReduction',
+      'firstTimeRight',
+      'ownershipClarity',
+      'internalDocumentation',
+    ];
+
+    metrics.forEach((metric) => {
+      const values = allCollaborators
+        .map((c) => c[metric])
+        .sort((a, b) => a - b);
+      const index = values.findIndex((v) => v >= collaborator[metric]);
+      percentiles[metric] = Math.round((index / values.length) * 100);
+    });
+
+    return percentiles;
+  }
+
+  private _calculateTrends(prHistory: any[]) {
+    // Group PRs by month
+    const monthlyData = {};
+    prHistory.forEach((pr) => {
+      const month = new Date(pr.createdAt).toISOString().slice(0, 7);
+      if (!monthlyData[month]) {
+        monthlyData[month] = {
+          prs: 0,
+          performanceScore: 0,
+          qualityScore: 0,
+          impactScore: 0,
+          totalTestCases: 0,
+          totalImpactedFlows: 0,
+          totalBreakages: 0,
+          totalChangedBehavior: 0,
+        };
+      }
+
+      monthlyData[month].prs++;
+
+      // Calculate performance score based on PR metrics
+      const performanceScore =
+        (((pr.impactedFlows?.length || 0) * 0.3 +
+          (pr.testCases?.length || 0) * 0.3 +
+          (10 - (pr.potentialBreakages?.length || 0)) * 0.4) /
+          10) *
+        100; // Convert to percentage
+
+      // Calculate quality score based on test coverage and code stability
+      const qualityScore =
+        (((pr.testCases?.length || 0) * 0.4 +
+          (10 - (pr.potentialBreakages?.length || 0)) * 0.3 +
+          (pr.changedBehavior?.length || 0) * 0.3) /
+          10) *
+        100; // Convert to percentage
+
+      // Calculate impact score based on critical changes and scope
+      const impactScore =
+        (((pr.impactedFlows?.length || 0) * 0.4 +
+          (pr.changedBehavior?.length || 0) * 0.3 +
+          (pr.testCases?.length || 0) * 0.3) /
+          10) *
+        100; // Convert to percentage
+
+      monthlyData[month].performanceScore += performanceScore;
+      monthlyData[month].qualityScore += qualityScore;
+      monthlyData[month].impactScore += impactScore;
+      monthlyData[month].totalTestCases += pr.testCases?.length || 0;
+      monthlyData[month].totalImpactedFlows += pr.impactedFlows?.length || 0;
+      monthlyData[month].totalBreakages += pr.potentialBreakages?.length || 0;
+      monthlyData[month].totalChangedBehavior +=
+        pr.changedBehavior?.length || 0;
+    });
+
+    // Calculate averages for each month
+    Object.keys(monthlyData).forEach((month) => {
+      const data = monthlyData[month];
+      if (data.prs > 0) {
+        data.performanceScore = Math.round(data.performanceScore / data.prs);
+        data.qualityScore = Math.round(data.qualityScore / data.prs);
+        data.impactScore = Math.round(data.impactScore / data.prs);
+      }
+    });
+
+    return {
+      monthly: monthlyData,
+      // Add other trend calculations if needed
+    };
+  }
+
+  private _formatPRHistory(prHistory: any[]) {
+    return prHistory.map((pr) => ({
+      id: pr.id,
+      title: pr.title,
+      createdAt: pr.createdAt,
+      metrics: {
+        performanceImpact: pr.performanceImpact,
+        qualityScore: pr.qualityScore,
+        // Add other relevant metrics
+      },
+    }));
   }
 }

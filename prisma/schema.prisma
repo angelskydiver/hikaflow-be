@@ -158,6 +158,7 @@ model Organization {
   OrganizationInvitation OrganizationInvitation[]
   subscriptions          Subscription[]
   usageLogs              UsageLog[]
+  collaborators          Collaborator[]
   // Researcher             Researcher[]
   // ResearchAssistant      ResearchAssistant[]
 
@@ -238,7 +239,7 @@ model Repository {
   AssistedQuestions  AssistedQuestions[]
   threads            Thread[]
   UsageLog           UsageLog[]
-  // Researcher         Researcher[]
+  collaborators      Collaborator[]
   RegressionReport   RegressionReport[]
 }
 
@@ -633,3 +634,35 @@ model UsageLog {
 //   organization Organization @relation(fields: [organizationId], references: [id])
 //   researcher   Researcher   @relation(fields: [researcherId], references: [id])
 // }
+
+model Collaborator {
+  id                String  @id @default(uuid())
+  name              String
+  email             String?
+  githubUsername    String?
+  bitbucketUsername String?
+  totalPrCount      Int     @default(0) // Total number of closed PRs
+
+  // Code Efficiency Metrics
+  performanceGains       Float @default(0)
+  codeFootprintReduction Float @default(0)
+  refactorQuality        Float @default(0)
+  cleanDiffRatio         Float @default(0)
+
+  // Business Impact Metrics
+  criticalModuleImpact Float @default(0)
+  speedToDeploy        Float @default(0)
+  errorRateReduction   Float @default(0)
+  firstTimeRight       Float @default(0)
+
+  // Collaboration Metrics
+  ownershipClarity      Float @default(0)
+  internalDocumentation Float @default(0)
+
+  // Relationships
+  organizations Organization[] // Many-to-many with organizations
+  repositories  Repository[] // Many-to-many with repositories
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
