@@ -331,4 +331,30 @@ export class RepositoryScanController {
       );
     }
   }
+
+  /**
+   * Get collaborator table data for an organization
+   */
+  @Get('collaborators/:organizationId')
+  async GetCollaboratorTableData(
+    @Param('organizationId') organizationId: string,
+  ) {
+    return await this._repositoryScanService.fetchCollaboratorTableData(
+      organizationId,
+    );
+  }
+
+  /**
+   * Get detailed collaborator profile with comparative analysis
+   */
+  @Get('collaborator-profile/:collaboratorId/:organizationId')
+  async GetCollaboratorProfile(
+    @Param('collaboratorId') collaboratorId: string,
+    @Param('organizationId') organizationId: string,
+  ) {
+    return await this._repositoryScanService.fetchCollaboratorProfile(
+      collaboratorId,
+      organizationId,
+    );
+  }
 }
