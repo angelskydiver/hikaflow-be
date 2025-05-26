@@ -1138,10 +1138,26 @@ test('API returns correct response', async () => {
       testCases: [],
       potentialBreakages: [],
       changedBehavior: [],
+      collaboratorMetrics: {
+        performanceGainScore: { score: 0 },
+        codeFootprintScore: { score: 0 },
+        refactorQualityScore: { score: 0 },
+        efficiencyScore: { score: 0 },
+        teamCollaborationScore: { score: 0 },
+        testCoverageScore: { score: 0 },
+        documentationQualityScore: { score: 0 },
+        businessImpact: {
+          criticalModules: [],
+          userFacingImprovements: [],
+          errorRateImpact: 'Not enough information',
+          performanceEffects: 'Not enough information',
+        },
+      },
     };
 
     // File tracking (for summary)
     const analyzedFiles = new Set<string>();
+    let totalValidChunks = 0;
 
     // Process each chunk's results
     for (const result of results) {
@@ -1161,7 +1177,6 @@ test('API returns correct response', async () => {
       if (Array.isArray(result.impactedFlows)) {
         for (const flow of result.impactedFlows) {
           if (typeof flow === 'string') {
-            // Convert strings to objects in DeepSeek format
             merged.impactedFlows.push({
               flowName: flow,
               description: 'Automatically detected flow',
@@ -1171,7 +1186,6 @@ test('API returns correct response', async () => {
               breakageDetails: 'No specific details available',
             });
           } else if (typeof flow === 'object' && flow !== null) {
-            // Ensure object has required DeepSeek fields
             merged.impactedFlows.push({
               ...flow,
               breakageStatus: flow.breakageStatus || 'MIGHT_BREAK',
@@ -1201,62 +1215,62 @@ test('API returns correct response', async () => {
         );
       }
 
-      // Add potential breakages with DeepSeek fields
-      if (Array.isArray(result.potentialBreakages)) {
-        merged.potentialBreakages.push(
-          ...result.potentialBreakages.map((breakage) => ({
-            ...breakage,
-            breakageStatus: breakage.breakageStatus || 'MIGHT_BREAK',
-            evidence:
-              breakage.evidence || 'Evidence not provided from chunk analysis',
-            failureCondition:
-              breakage.failureCondition ||
-              'Unknown conditions that may trigger failures',
-          })),
-        );
-      }
+      // Merge collaborator metrics by averaging scores
+      if (result.collaboratorMetrics) {
+        totalValidChunks++;
 
-      // Add changed behavior with DeepSeek invocations
-      if (Array.isArray(result.changedBehavior)) {
-        merged.changedBehavior.push(
-          ...result.changedBehavior.map((behavior) => ({
-            ...behavior,
-            invocations: Array.isArray(behavior.invocations)
-              ? behavior.invocations
-              : [
-                  {
-                    file: 'Unknown',
-                    line: 'Unknown',
-                    compatibilityStatus: 'UNCERTAIN',
-                    explanation:
-                      'No specific information available from chunk analysis',
-                  },
-                ],
-          })),
-        );
+        // Update scores by adding them (we'll average later)
+        merged.collaboratorMetrics.performanceGainScore.score +=
+          result.collaboratorMetrics.performanceGainScore?.score || 0;
+        merged.collaboratorMetrics.codeFootprintScore.score +=
+          result.collaboratorMetrics.codeFootprintScore?.score || 0;
+        merged.collaboratorMetrics.refactorQualityScore.score +=
+          result.collaboratorMetrics.refactorQualityScore?.score || 0;
+        merged.collaboratorMetrics.efficiencyScore.score +=
+          result.collaboratorMetrics.efficiencyScore?.score || 0;
+        merged.collaboratorMetrics.teamCollaborationScore.score +=
+          result.collaboratorMetrics.teamCollaborationScore?.score || 0;
+        merged.collaboratorMetrics.testCoverageScore.score +=
+          result.collaboratorMetrics.testCoverageScore?.score || 0;
+        merged.collaboratorMetrics.documentationQualityScore.score +=
+          result.collaboratorMetrics.documentationQualityScore?.score || 0;
+
+        // Merge business impact data
+        if (result.collaboratorMetrics.businessImpact) {
+          merged.collaboratorMetrics.businessImpact.criticalModules.push(
+            ...(result.collaboratorMetrics.businessImpact.criticalModules ||
+              []),
+          );
+          merged.collaboratorMetrics.businessImpact.userFacingImprovements.push(
+            ...(result.collaboratorMetrics.businessImpact
+              .userFacingImprovements || []),
+          );
+        }
       }
     }
 
-    // Generate a meaningful final summary about all files analyzed
-    merged.summary = `Analysis of ${analyzedFiles.size} files from chunked processing.\n\nKey findings:\n${merged.summary}`;
+    // Calculate averages for collaborator metrics if we have valid chunks
+    if (totalValidChunks > 0) {
+      merged.collaboratorMetrics.performanceGainScore.score /= totalValidChunks;
+      merged.collaboratorMetrics.codeFootprintScore.score /= totalValidChunks;
+      merged.collaboratorMetrics.refactorQualityScore.score /= totalValidChunks;
+      merged.collaboratorMetrics.efficiencyScore.score /= totalValidChunks;
+      merged.collaboratorMetrics.teamCollaborationScore.score /=
+        totalValidChunks;
+      merged.collaboratorMetrics.testCoverageScore.score /= totalValidChunks;
+      merged.collaboratorMetrics.documentationQualityScore.score /=
+        totalValidChunks;
+    }
 
-    // Deduplicate arrays by key fields
-    merged.impactedFlows = this.deduplicateObjectArray(
-      merged.impactedFlows,
-      'flowName',
-    );
-    merged.testCases = this.deduplicateObjectArray(
-      merged.testCases,
-      'testName',
-    );
-    merged.potentialBreakages = this.deduplicateObjectArray(
-      merged.potentialBreakages,
-      'area',
-    );
-    merged.changedBehavior = this.deduplicateObjectArray(
-      merged.changedBehavior,
-      'component',
-    );
+    // Deduplicate business impact arrays
+    merged.collaboratorMetrics.businessImpact.criticalModules = [
+      ...new Set(merged.collaboratorMetrics.businessImpact.criticalModules),
+    ];
+    merged.collaboratorMetrics.businessImpact.userFacingImprovements = [
+      ...new Set(
+        merged.collaboratorMetrics.businessImpact.userFacingImprovements,
+      ),
+    ];
 
     return merged;
   }

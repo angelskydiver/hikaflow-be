@@ -31,6 +31,16 @@ export class OrganizationService {
         throw new BadRequestException('Organization already exists');
       }
 
+      const existingOrganization =
+        await this._prismaService.organization.findFirst({
+          where: {
+            name: data.name,
+          },
+        });
+      if (existingOrganization) {
+        throw new BadRequestException('Organization already exists');
+      }
+
       let createdOrganization;
 
       await this._prismaService.$transaction(async () => {
