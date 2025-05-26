@@ -2018,7 +2018,27 @@ Your answer should be immediately useful to someone trying to understand this co
         );
       } catch (error) {
         console.error('Error with DeepSeek analysis:', error);
-        // Handle error, potentially implement fallback to Gemini here
+        // Provide default analysis result structure
+        analysisResult = {
+          summary: 'Analysis incomplete due to processing error',
+          impactedFlows: [],
+          testCases: [],
+          potentialBreakages: [],
+          changedBehavior: [],
+          collaboratorMetrics: {
+            performanceGainScore: { score: 0 },
+            codeFootprintScore: { score: 0 },
+            refactorQualityScore: { score: 0 },
+            efficiencyScore: { score: 0 },
+            businessImpact: {
+              criticalModules: [],
+              errorRateImpact: 'Not enough information',
+            },
+            testCoverageScore: { score: 0 },
+            teamCollaborationScore: { score: 0 },
+            documentationQualityScore: { score: 0 },
+          },
+        };
       }
 
       // Create a report in the database
@@ -2027,8 +2047,8 @@ Your answer should be immediately useful to someone trying to understand this co
           data: {
             repositoryId,
             prNumber,
-            status: 'COMPLETED',
-            summary: analysisResult?.summary || 'Analysis failed',
+            status: analysisResult ? 'COMPLETED' : 'PARTIAL',
+            summary: analysisResult?.summary || 'Analysis incomplete',
             impactedFlows: analysisResult?.impactedFlows || [],
             testCases: analysisResult?.testCases || [],
             potentialBreakages: analysisResult?.potentialBreakages || [],
@@ -2112,6 +2132,21 @@ Your answer should be immediately useful to someone trying to understand this co
         },
       );
 
+      // Ensure collaboratorMetrics exists and has all required properties
+      const metrics = analysisResult?.collaboratorMetrics || {
+        performanceGainScore: { score: 0 },
+        codeFootprintScore: { score: 0 },
+        refactorQualityScore: { score: 0 },
+        efficiencyScore: { score: 0 },
+        businessImpact: {
+          criticalModules: [],
+          errorRateImpact: 'Not enough information',
+        },
+        testCoverageScore: { score: 0 },
+        teamCollaborationScore: { score: 0 },
+        documentationQualityScore: { score: 0 },
+      };
+
       // Update collaborator metrics with weighted average
       const weight = 0.3;
       await this.prisma.collaborator.update({
@@ -2119,47 +2154,41 @@ Your answer should be immediately useful to someone trying to understand this co
         data: {
           performanceGains:
             collaborator.performanceGains * (1 - weight) +
-            analysisResult.collaboratorMetrics.performanceGainScore.score *
-              weight,
+            (metrics.performanceGainScore?.score || 0) * weight,
           codeFootprintReduction:
             collaborator.codeFootprintReduction * (1 - weight) +
-            analysisResult.collaboratorMetrics.codeFootprintScore.score *
-              weight,
+            (metrics.codeFootprintScore?.score || 0) * weight,
           refactorQuality:
             collaborator.refactorQuality * (1 - weight) +
-            analysisResult.collaboratorMetrics.refactorQualityScore.score *
-              weight,
+            (metrics.refactorQualityScore?.score || 0) * weight,
           cleanDiffRatio:
             collaborator.cleanDiffRatio * (1 - weight) +
-            analysisResult.collaboratorMetrics.efficiencyScore.score * weight,
+            (metrics.efficiencyScore?.score || 0) * weight,
           criticalModuleImpact:
             collaborator.criticalModuleImpact * (1 - weight) +
-            (analysisResult.collaboratorMetrics.businessImpact.criticalModules
-              .length > 0
+            ((metrics.businessImpact?.criticalModules?.length || 0) > 0
               ? 100
               : 0) *
               weight,
           speedToDeploy:
             collaborator.speedToDeploy * (1 - weight) +
-            analysisResult.collaboratorMetrics.efficiencyScore.score * weight,
+            (metrics.efficiencyScore?.score || 0) * weight,
           errorRateReduction:
             collaborator.errorRateReduction * (1 - weight) +
-            (analysisResult.collaboratorMetrics.businessImpact
-              .errorRateImpact !== 'Not enough information'
+            (metrics.businessImpact?.errorRateImpact !==
+            'Not enough information'
               ? 100
               : 0) *
               weight,
           firstTimeRight:
             collaborator.firstTimeRight * (1 - weight) +
-            analysisResult.collaboratorMetrics.testCoverageScore.score * weight,
+            (metrics.testCoverageScore?.score || 0) * weight,
           ownershipClarity:
             collaborator.ownershipClarity * (1 - weight) +
-            analysisResult.collaboratorMetrics.teamCollaborationScore.score *
-              weight,
+            (metrics.teamCollaborationScore?.score || 0) * weight,
           internalDocumentation:
             collaborator.internalDocumentation * (1 - weight) +
-            analysisResult.collaboratorMetrics.documentationQualityScore.score *
-              weight,
+            (metrics.documentationQualityScore?.score || 0) * weight,
           totalPrCount: {
             increment: 1,
           },
