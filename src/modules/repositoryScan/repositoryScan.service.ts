@@ -4739,7 +4739,9 @@ Your answer should be immediately useful to someone trying to understand this co
         // Last 6 months
         dates: Array.from({ length: 6 }, (_, i) => {
           const d = new Date();
-          d.setMonth(d.getMonth() - i);
+          d.setDate(1); // Set to first day of current month
+          d.setMonth(d.getMonth() - i + 1); // Move to next month (+1) then subtract months
+          d.setDate(0); // Set to last day of previous month
           return d.toISOString().split('T')[0];
         }).reverse(),
         collaborator: {
