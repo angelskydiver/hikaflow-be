@@ -10,6 +10,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
 import { BillingService } from '../billing/billing.service';
 import { CommentService } from '../comment/comment.service';
+import { SeniorEngineerAnalysisService } from './seniorEngineerAnalysis.service';
 
 export interface AnalysisContext {
   repositoryId: string;
@@ -25,6 +26,8 @@ export interface QueryAnalysisRequest {
   query: string;
   accountId: string;
   threadId?: string;
+  analysisMode?: 'standard' | 'senior' | 'code_review' | 'architecture';
+  includeTracing?: boolean;
 }
 
 export interface QueryAnalysisResponse {
@@ -32,6 +35,158 @@ export interface QueryAnalysisResponse {
   context: any[];
   summary?: string;
   threadId?: string;
+  traceData?: AnalysisTrace;
+  resourceAnalysis?: ResourceAnalysis;
+  codeInsights?: CodeInsights;
+  architecturalGuidance?: ArchitecturalGuidance;
+}
+
+export interface AnalysisTrace {
+  executionPath: string[];
+  decisionPoints: DecisionPoint[];
+  performanceMetrics: PerformanceMetrics;
+  resourcesAnalyzed: string[];
+  analysisDepth: number;
+}
+
+export interface DecisionPoint {
+  step: string;
+  reasoning: string;
+  alternatives: string[];
+  chosenPath: string;
+  confidence: number;
+}
+
+export interface PerformanceMetrics {
+  totalTime: number;
+  aiCallsCount: number;
+  filesAnalyzed: number;
+  embeddingTime: number;
+  analysisTime: number;
+}
+
+export interface ResourceAnalysis {
+  keyResources: IdentifiedResource[];
+  dependencies: DependencyMap;
+  patterns: ArchitecturalPattern[];
+  codeQuality: CodeQualityMetrics;
+}
+
+export interface IdentifiedResource {
+  type:
+    | 'controller'
+    | 'service'
+    | 'model'
+    | 'utility'
+    | 'config'
+    | 'middleware';
+  name: string;
+  path: string;
+  importance: number;
+  relationships: string[];
+  businessValue: string;
+  technicalDebt?: TechnicalDebt;
+}
+
+export interface DependencyMap {
+  directDependencies: string[];
+  indirectDependencies: string[];
+  circularDependencies: string[];
+  unusedDependencies: string[];
+}
+
+export interface ArchitecturalPattern {
+  pattern: string;
+  confidence: number;
+  evidence: string[];
+  recommendations: string[];
+}
+
+export interface CodeQualityMetrics {
+  complexity: number;
+  maintainability: number;
+  testCoverage: number;
+  codeSmells: string[];
+  securityIssues: string[];
+}
+
+export interface TechnicalDebt {
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  description: string;
+  estimatedEffort: string;
+  impact: string;
+}
+
+export interface CodeInsights {
+  refactoringOpportunities: RefactoringOpportunity[];
+  performanceOptimizations: PerformanceOptimization[];
+  bestPracticeViolations: BestPracticeViolation[];
+  securityVulnerabilities: SecurityVulnerability[];
+}
+
+export interface RefactoringOpportunity {
+  type: string;
+  file: string;
+  line?: number;
+  description: string;
+  suggestion: string;
+  impact: 'low' | 'medium' | 'high';
+  effort: 'low' | 'medium' | 'high';
+}
+
+export interface PerformanceOptimization {
+  category: string;
+  description: string;
+  currentIssue: string;
+  solution: string;
+  expectedImprovement: string;
+}
+
+export interface BestPracticeViolation {
+  practice: string;
+  violation: string;
+  file: string;
+  line?: number;
+  correction: string;
+}
+
+export interface SecurityVulnerability {
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  type: string;
+  description: string;
+  file: string;
+  line?: number;
+  mitigation: string;
+}
+
+export interface ArchitecturalGuidance {
+  currentArchitecture: string;
+  strengths: string[];
+  weaknesses: string[];
+  recommendations: ArchitecturalRecommendation[];
+  futureModuleGuidance: ModuleGuidance;
+}
+
+export interface ArchitecturalRecommendation {
+  category: string;
+  priority: 'low' | 'medium' | 'high';
+  description: string;
+  implementation: string;
+  benefits: string[];
+}
+
+export interface ModuleGuidance {
+  recommendedStructure: string;
+  namingConventions: string[];
+  integrationPatterns: string[];
+  testingStrategy: string;
+}
+
+export interface PreviousMessage {
+  question: string;
+  summary: any;
+  isDetailed: boolean;
+  answer?: any; // Only present when isDetailed is true
 }
 
 @Injectable()
@@ -41,48 +196,135 @@ export class RepositoryAnalysisService {
     private readonly commentService: CommentService,
     private readonly accountCredentialService: AccountCredentialService,
     private readonly billingService: BillingService,
+    private readonly seniorEngineerAnalysisService: SeniorEngineerAnalysisService,
   ) {}
 
   /**
-   * Main entry point for repository analysis
+   * Main entry point for repository analysis with senior engineer capabilities
    */
   async analyzeRepository(
     request: QueryAnalysisRequest,
   ): Promise<QueryAnalysisResponse> {
+    const startTime = Date.now();
+    const trace: AnalysisTrace = {
+      executionPath: ['analyzeRepository'],
+      decisionPoints: [],
+      performanceMetrics: {
+        totalTime: 0,
+        aiCallsCount: 0,
+        filesAnalyzed: 0,
+        embeddingTime: 0,
+        analysisTime: 0,
+      },
+      resourcesAnalyzed: [],
+      analysisDepth: 0,
+    };
+
     try {
-      console.log(`[analyzeRepository] Processing query: "${request.query}"`);
+      console.log(
+        `[analyzeRepository] Processing query: "${request.query}" with mode: ${request.analysisMode || 'standard'}`,
+      );
 
       // Validate and prepare analysis context
       const context = await this.prepareAnalysisContext(request);
+      trace.executionPath.push('prepareAnalysisContext');
 
       // Enhance query with thread context
       const enhancedQuery = await this.enhanceQueryWithContext(
         request.query,
         request.threadId,
       );
+      trace.executionPath.push('enhanceQueryWithContext');
 
-      // Categorize query type
+      // Categorize query type with enhanced AI analysis
       const gemini = new Gemini();
-      const queryType = await gemini.categorizeQueryType(
+      const queryType = await this.categorizeQueryWithSeniorAnalysis(
         enhancedQuery,
         !!request.threadId,
+        request.analysisMode || 'standard',
+        gemini,
+        trace,
       );
+      trace.performanceMetrics.aiCallsCount++;
+
       console.log(`[analyzeRepository] Query categorized as: ${queryType}`);
 
-      // Route to appropriate handler
-      return await this.routeQueryToHandler(
+      // Route to appropriate handler with enhanced capabilities
+      const response = await this.routeQueryToEnhancedHandler(
         queryType,
         request.query,
         enhancedQuery,
         context,
         request.threadId,
+        request.analysisMode || 'standard',
+        trace,
       );
+
+      // Add tracing data if requested
+      if (request.includeTracing) {
+        trace.performanceMetrics.totalTime = Date.now() - startTime;
+        response.traceData = trace;
+      }
+
+      return response;
     } catch (error) {
       console.error('Error in analyzeRepository:', error);
       throw new BadRequestException(
         `Failed to analyze repository. ${error.message}`,
       );
     }
+  }
+
+  /**
+   * Enhanced query categorization with senior analysis capabilities
+   */
+  private async categorizeQueryWithSeniorAnalysis(
+    enhancedQuery: string,
+    hasThread: boolean,
+    analysisMode: string,
+    gemini: Gemini,
+    trace: AnalysisTrace,
+  ): Promise<string> {
+    trace.executionPath.push('categorizeQueryWithSeniorAnalysis');
+
+    const seniorPrompt = `
+As a senior fullstack engineer, analyze this query and categorize it with deep technical understanding:
+
+Query: "${enhancedQuery}"
+Analysis Mode: ${analysisMode}
+Has Thread Context: ${hasThread}
+
+Consider these enhanced categories:
+- ARCHITECTURAL_REVIEW: Questions about system architecture, design patterns, scalability
+- CODE_REVIEW: Code quality, refactoring, best practices
+- PERFORMANCE_ANALYSIS: Performance bottlenecks, optimization opportunities
+- SECURITY_AUDIT: Security vulnerabilities, best practices
+- MODULE_DESIGN: New feature/module design guidance
+- TECHNICAL_DEBT: Legacy code analysis, modernization suggestions
+- FOLLOW_UP: Contextual follow-up questions
+- USER_FLOW: User journey and business logic analysis
+- FUNCTION_TRACE: Deep code tracing and debugging
+- PROJECT_LEVEL: High-level project understanding
+
+Return the most appropriate category that allows for the deepest technical analysis.
+`;
+
+    const category = await gemini.categorizeQueryType(seniorPrompt, hasThread);
+
+    trace.decisionPoints.push({
+      step: 'query_categorization',
+      reasoning: `Categorized as ${category} based on query content and analysis mode`,
+      alternatives: [
+        'FOLLOW_UP',
+        'USER_FLOW',
+        'FUNCTION_TRACE',
+        'PROJECT_LEVEL',
+      ],
+      chosenPath: category,
+      confidence: 0.85,
+    });
+
+    return category;
   }
 
   /**
@@ -235,305 +477,211 @@ export class RepositoryAnalysisService {
   }
 
   /**
-   * Handle follow-up questions with context from previous conversation
+   * Enhanced routing with senior engineer capabilities
    */
-  private async handleFollowUpQuery(
-    query: string,
+  private async routeQueryToEnhancedHandler(
+    queryType: string,
+    originalQuery: string,
     enhancedQuery: string,
     context: AnalysisContext,
     threadId?: string,
+    analysisMode: string = 'standard',
+    trace?: AnalysisTrace,
   ): Promise<QueryAnalysisResponse> {
-    console.log(`[handleFollowUpQuery] Processing follow-up question`);
+    trace?.executionPath.push('routeQueryToEnhancedHandler');
 
-    if (!threadId) {
-      console.log('No threadId provided, falling back to PROJECT_LEVEL');
-      return await this.handleProjectLevelQuery(query, enhancedQuery, context);
+    switch (queryType) {
+      case 'ARCHITECTURAL_REVIEW':
+        return await this.handleArchitecturalReview(
+          originalQuery,
+          enhancedQuery,
+          context,
+          threadId,
+          trace,
+        );
+      case 'CODE_REVIEW':
+        return await this.handleCodeReview(
+          originalQuery,
+          enhancedQuery,
+          context,
+          threadId,
+          trace,
+        );
+      case 'PERFORMANCE_ANALYSIS':
+        return await this.handlePerformanceAnalysis(
+          originalQuery,
+          enhancedQuery,
+          context,
+          threadId,
+          trace,
+        );
+      case 'SECURITY_AUDIT':
+        return await this.handleSecurityAudit(
+          originalQuery,
+          enhancedQuery,
+          context,
+          threadId,
+          trace,
+        );
+      case 'MODULE_DESIGN':
+        return await this.handleModuleDesign(
+          originalQuery,
+          enhancedQuery,
+          context,
+          threadId,
+          trace,
+        );
+      case 'TECHNICAL_DEBT':
+        return await this.handleTechnicalDebtAnalysis(
+          originalQuery,
+          enhancedQuery,
+          context,
+          threadId,
+          trace,
+        );
+      case 'FOLLOW_UP':
+        return await this.handleEnhancedFollowUpQuery(
+          originalQuery,
+          enhancedQuery,
+          context,
+          threadId,
+          analysisMode,
+          trace,
+        );
+      case 'USER_FLOW':
+        return await this.handleEnhancedUserFlowQuery(
+          originalQuery,
+          enhancedQuery,
+          context,
+          threadId,
+          analysisMode,
+          trace,
+        );
+      case 'FUNCTION_TRACE':
+        return await this.handleEnhancedFunctionTraceQuery(
+          originalQuery,
+          enhancedQuery,
+          context,
+          threadId,
+          analysisMode,
+          trace,
+        );
+      case 'PROJECT_LEVEL':
+        return await this.handleEnhancedProjectLevelQuery(
+          originalQuery,
+          enhancedQuery,
+          context,
+          threadId,
+          analysisMode,
+          trace,
+        );
+      default:
+        return await this.handleEnhancedSemanticSearchFallback(
+          originalQuery,
+          enhancedQuery,
+          context,
+          threadId,
+          analysisMode,
+          trace,
+        );
     }
-
-    const previousMessages = await this.getPreviousMessages(threadId);
-    if (previousMessages.length === 0) {
-      console.log('No previous messages found, falling back to PROJECT_LEVEL');
-      return await this.handleProjectLevelQuery(query, enhancedQuery, context);
-    }
-
-    // Get relevant files based on combined context
-    const gemini = new Gemini();
-    // @ts-expect-error - previousMessages[0] is guaranteed to exist due to length check above
-    const mostRecentAnswer = previousMessages[0]?.answer || '';
-    const followUpEmbedding = await gemini.getEmbeddings(
-      mostRecentAnswer + ' ' + query,
-    );
-    const followUpVectorQuery = `[${followUpEmbedding.join(',')}]`;
-
-    const semanticSearchResults = await this.performSemanticSearch(
-      followUpVectorQuery,
-      context.repositoryScanId,
-      5,
-    );
-
-    if (semanticSearchResults.length === 0) {
-      return {
-        answer: "I couldn't find relevant context for your follow-up question.",
-        context: [],
-      };
-    }
-
-    const relevantFiles = await this.prisma.fileDocumentation.findMany({
-      where: { id: { in: semanticSearchResults.map((r) => r.id) } },
-    });
-
-    const filesWithCode = await this.fetchFilesWithCode(relevantFiles, context);
-
-    const followUpPrompt = this.buildFollowUpPrompt(query, previousMessages);
-    const queryResponse = await gemini.generateAnswer(
-      followUpPrompt,
-      filesWithCode,
-      enhancedQuery,
-    );
-
-    return await this.createAssistanceResponse(
-      query,
-      queryResponse,
-      context,
-      threadId,
-    );
   }
 
   /**
-   * Handle user flow related queries
+   * Handle architectural review queries with senior expertise
    */
-  private async handleUserFlowQuery(
+  private async handleArchitecturalReview(
     query: string,
     enhancedQuery: string,
     context: AnalysisContext,
     threadId?: string,
+    trace?: AnalysisTrace,
   ): Promise<QueryAnalysisResponse> {
-    console.log(`[handleUserFlowQuery] Processing user flow question`);
+    trace?.executionPath.push('handleArchitecturalReview');
 
-    // Find user flow related files
-    const userFlowFiles = await this.findUserFlowFiles(
-      context.repositoryScanId,
-    );
-    const entryPointFiles = await this.findEntryPointFiles(
-      context.repositoryScanId,
-    );
-
-    let relevantFiles = [...userFlowFiles, ...entryPointFiles];
     console.log(
-      'Found user flow files:',
-      relevantFiles.map((f) => ({ name: f.name, fullPath: f.fullPath })),
+      `[handleArchitecturalReview] Conducting architectural analysis`,
     );
 
-    // Filter relevant files using AI
-    const gemini = new Gemini();
-    const fileQuickInfo = relevantFiles.map((data) =>
-      this.mapFileToQuickInfo(data),
+    // Get comprehensive project files for architectural analysis
+    const architecturalFiles = await this.findArchitecturalFiles(
+      context.repositoryScanId,
     );
-    const filteredFiles = await gemini.filterRelevantFiles(
-      enhancedQuery,
-      fileQuickInfo,
+    const configFiles = await this.findConfigurationFiles(
+      context.repositoryScanId,
     );
-
-    relevantFiles = relevantFiles.filter((data) => {
-      const mappedData = this.mapDocumentFields(data);
-      return filteredFiles.output.some(
-        (file) => file.fileName === mappedData.fileName,
-      );
-    });
-
-    const filesWithCode = await this.fetchFilesWithCode(relevantFiles, context);
-
-    const userFlowPrompt = this.buildUserFlowPrompt(query);
-    const queryResponse = await gemini.generateAnswer(
-      userFlowPrompt,
-      filesWithCode,
-      enhancedQuery,
-    );
-
-    return await this.createAssistanceResponse(
-      query,
-      queryResponse,
-      context,
-      threadId,
-    );
-  }
-
-  /**
-   * Handle function trace queries
-   */
-  private async handleFunctionTraceQuery(
-    query: string,
-    enhancedQuery: string,
-    context: AnalysisContext,
-    threadId?: string,
-  ): Promise<QueryAnalysisResponse> {
-    console.log(
-      `[handleFunctionTraceQuery] Processing function trace question`,
-    );
-
-    // Check for specific file path in query
-    const filePathMatch = query.match(
-      /explain\s+(\S+\.[a-z]+)|\bfile\s+(\S+\.[a-z]+)/i,
-    );
-    const filePath = filePathMatch
-      ? filePathMatch[1] || filePathMatch[2]
-      : null;
-
-    let relevantFiles = [];
-
-    if (filePath) {
-      console.log(`Looking for specific file: ${filePath}`);
-      relevantFiles = await this.findSpecificFile(
-        filePath,
-        context.repositoryScanId,
-      );
-    }
-
-    // If no specific file found, use semantic search
-    if (relevantFiles.length === 0) {
-      const gemini = new Gemini();
-      const embedding = await gemini.getEmbeddings(query);
-      const vectorQuery = `[${embedding.join(',')}]`;
-
-      const semanticResults = await this.performSemanticSearch(
-        vectorQuery,
-        context.repositoryScanId,
-        5,
-      );
-
-      if (semanticResults.length > 0) {
-        relevantFiles = await this.prisma.fileDocumentation.findMany({
-          where: { id: { in: semanticResults.map((r) => r.id) } },
-        });
-      }
-    }
-
-    if (relevantFiles.length === 0) {
-      return {
-        answer:
-          "I couldn't find relevant files to answer your question about this code.",
-        context: [],
-      };
-    }
-
-    // Find related files (imports/exports)
-    relevantFiles = await this.findRelatedFiles(
-      relevantFiles,
+    const coreFiles = await this.findCoreApplicationFiles(
       context.repositoryScanId,
     );
 
-    const filesWithCode = await this.fetchFilesWithCode(relevantFiles, context);
+    const allFiles = [...architecturalFiles, ...configFiles, ...coreFiles];
+    trace?.resourcesAnalyzed.push(...allFiles.map((f) => f.fullPath));
+    if (trace) {
+      trace.performanceMetrics.filesAnalyzed = allFiles.length;
+    }
 
-    const gemini = new Gemini();
-    const functionTracePrompt = this.buildFunctionTracePrompt(query, filePath);
-    const queryResponse = await gemini.generateAnswer(
-      functionTracePrompt,
-      filesWithCode,
-      enhancedQuery,
-    );
+    const filesWithCode = await this.fetchFilesWithCode(allFiles, context);
 
-    return await this.createAssistanceResponse(
-      query,
-      queryResponse,
-      context,
-      threadId,
-    );
-  }
-
-  /**
-   * Handle project-level queries
-   */
-  private async handleProjectLevelQuery(
-    query: string,
-    enhancedQuery: string,
-    context: AnalysisContext,
-    threadId?: string,
-  ): Promise<QueryAnalysisResponse> {
-    console.log(`[handleProjectLevelQuery] Processing project level question`);
-
-    const isSchemaModelQuestion =
-      /schema|model|database|db|table|entity|field|column|type|relation|prisma/i.test(
+    // Analyze architecture patterns
+    const resourceAnalysis =
+      await this.seniorEngineerAnalysisService.analyzeResourcesAndPatterns(
+        filesWithCode,
+        context,
+      );
+    const architecturalGuidance =
+      await this.seniorEngineerAnalysisService.generateArchitecturalGuidance(
+        filesWithCode,
         query,
+        context,
       );
 
-    let tagBasedFiles = await this.findProjectLevelFiles(
-      context.repositoryScanId,
-    );
-
-    if (isSchemaModelQuestion) {
-      const schemaFiles = await this.findSchemaModelFiles(
-        context.repositoryScanId,
-      );
-      tagBasedFiles = [...schemaFiles, ...tagBasedFiles];
-      // Remove duplicates
-      tagBasedFiles = Array.from(
-        new Map(tagBasedFiles.map((file) => [file.id, file])).values(),
-      );
-    }
-
-    if (tagBasedFiles.length === 0) {
-      return {
-        answer:
-          "I couldn't find relevant project files to answer your question.",
-        context: [],
-      };
-    }
-
-    // Filter relevant files using AI
     const gemini = new Gemini();
-    const fileQuickInfo = tagBasedFiles.map((data) =>
-      this.mapFileToQuickInfo(data),
-    );
-    const filteredFiles = await gemini.filterRelevantFiles(
-      enhancedQuery,
-      fileQuickInfo,
-    );
-
-    tagBasedFiles = tagBasedFiles.filter((data) => {
-      const mappedData = this.mapDocumentFields(data);
-      return filteredFiles.output.some(
-        (file) => file.fileName === mappedData.fileName,
+    const architecturalPrompt =
+      this.seniorEngineerAnalysisService.buildArchitecturalReviewPrompt(
+        query,
+        resourceAnalysis,
       );
-    });
 
-    // Add essential files
-    const essentialFiles = await this.findEssentialProjectFiles(
-      context.repositoryScanId,
-    );
-    const existingIds = new Set(tagBasedFiles.map((file) => file.id));
-    const newEssentialFiles = essentialFiles.filter(
-      (file) => !existingIds.has(file.id),
-    );
-    tagBasedFiles = [...tagBasedFiles, ...newEssentialFiles];
-
-    const filesWithCode = await this.fetchFilesWithCode(tagBasedFiles, context);
     const queryResponse = await gemini.generateAnswer(
-      query,
+      architecturalPrompt,
       filesWithCode,
       enhancedQuery,
     );
+    if (trace) {
+      trace.performanceMetrics.aiCallsCount++;
+    }
 
-    return await this.createAssistanceResponse(
-      query,
-      queryResponse,
-      context,
-      threadId,
-    );
+    const response =
+      await this.seniorEngineerAnalysisService.createEnhancedAssistanceResponse(
+        query,
+        queryResponse,
+        context,
+        threadId,
+        {
+          resourceAnalysis,
+          architecturalGuidance,
+        },
+        this,
+      );
+
+    return response;
   }
 
   /**
-   * Fallback semantic search handler
+   * Handle code review queries with detailed analysis
    */
-  private async handleSemanticSearchFallback(
+  private async handleCodeReview(
     query: string,
     enhancedQuery: string,
     context: AnalysisContext,
     threadId?: string,
+    trace?: AnalysisTrace,
   ): Promise<QueryAnalysisResponse> {
-    console.log(
-      `[handleSemanticSearchFallback] Using semantic search fallback`,
-    );
+    trace?.executionPath.push('handleCodeReview');
 
+    console.log(`[handleCodeReview] Conducting code review analysis`);
+
+    // Find relevant files for code review
     const gemini = new Gemini();
     const embedding = await gemini.getEmbeddings(query);
     const vectorQuery = `[${embedding.join(',')}]`;
@@ -541,39 +689,293 @@ export class RepositoryAnalysisService {
     const semanticResults = await this.performSemanticSearch(
       vectorQuery,
       context.repositoryScanId,
-      5,
+      8,
     );
 
-    if (semanticResults.length === 0) {
-      return {
-        answer:
-          "I couldn't find relevant information to answer your question. The repository may not have been fully scanned or indexed yet.",
-        context: [],
-      };
-    }
-
-    const topFiles = await this.prisma.fileDocumentation.findMany({
-      where: { id: { in: semanticResults.map((file) => file.id) } },
+    const relevantFiles = await this.prisma.fileDocumentation.findMany({
+      where: { id: { in: semanticResults.map((r) => r.id) } },
     });
 
-    const filesWithCode = await this.fetchFilesWithCode(topFiles, context);
+    const filesWithCode = await this.fetchFilesWithCode(relevantFiles, context);
+
+    // Perform code quality analysis
+    const codeInsights =
+      await this.seniorEngineerAnalysisService.analyzeCodeQuality(
+        filesWithCode,
+        context,
+      );
+
+    const codeReviewPrompt =
+      this.seniorEngineerAnalysisService.buildCodeReviewPrompt(
+        query,
+        codeInsights,
+      );
     const queryResponse = await gemini.generateAnswer(
-      query,
+      codeReviewPrompt,
       filesWithCode,
       enhancedQuery,
     );
+    if (trace) {
+      trace.performanceMetrics.aiCallsCount += 2;
+    }
 
-    return await this.createAssistanceResponse(
-      query,
-      queryResponse,
-      context,
-      threadId,
+    const response =
+      await this.seniorEngineerAnalysisService.createEnhancedAssistanceResponse(
+        query,
+        queryResponse,
+        context,
+        threadId,
+        {
+          codeInsights,
+        },
+        this,
+      );
+
+    return response;
+  }
+
+  /**
+   * Handle performance analysis queries
+   */
+  private async handlePerformanceAnalysis(
+    query: string,
+    enhancedQuery: string,
+    context: AnalysisContext,
+    threadId?: string,
+    trace?: AnalysisTrace,
+  ): Promise<QueryAnalysisResponse> {
+    trace?.executionPath.push('handlePerformanceAnalysis');
+
+    console.log(`[handlePerformanceAnalysis] Analyzing performance aspects`);
+
+    // Find performance-critical files
+    const performanceFiles = await this.findPerformanceCriticalFiles(
+      context.repositoryScanId,
     );
+    const filesWithCode = await this.fetchFilesWithCode(
+      performanceFiles,
+      context,
+    );
+
+    // Analyze performance optimizations
+    const codeInsights =
+      await this.seniorEngineerAnalysisService.analyzePerformanceOptimizations(
+        filesWithCode,
+        context,
+      );
+
+    const gemini = new Gemini();
+    const performancePrompt =
+      this.seniorEngineerAnalysisService.buildPerformanceAnalysisPrompt(
+        query,
+        codeInsights,
+      );
+    const queryResponse = await gemini.generateAnswer(
+      performancePrompt,
+      filesWithCode,
+      enhancedQuery,
+    );
+    if (trace) {
+      trace.performanceMetrics.aiCallsCount++;
+    }
+
+    const response =
+      await this.seniorEngineerAnalysisService.createEnhancedAssistanceResponse(
+        query,
+        queryResponse,
+        context,
+        threadId,
+        { codeInsights },
+        this,
+      );
+
+    return response;
+  }
+
+  /**
+   * Handle security audit queries
+   */
+  private async handleSecurityAudit(
+    query: string,
+    enhancedQuery: string,
+    context: AnalysisContext,
+    threadId?: string,
+    trace?: AnalysisTrace,
+  ): Promise<QueryAnalysisResponse> {
+    trace?.executionPath.push('handleSecurityAudit');
+
+    console.log(`[handleSecurityAudit] Conducting security analysis`);
+
+    // Find security-relevant files
+    const securityFiles = await this.findSecurityRelevantFiles(
+      context.repositoryScanId,
+    );
+    const filesWithCode = await this.fetchFilesWithCode(securityFiles, context);
+
+    // Analyze security vulnerabilities
+    const codeInsights =
+      await this.seniorEngineerAnalysisService.analyzeSecurityVulnerabilities(
+        filesWithCode,
+        context,
+      );
+
+    const gemini = new Gemini();
+    const securityPrompt =
+      this.seniorEngineerAnalysisService.buildSecurityAuditPrompt(
+        query,
+        codeInsights,
+      );
+    const queryResponse = await gemini.generateAnswer(
+      securityPrompt,
+      filesWithCode,
+      enhancedQuery,
+    );
+    if (trace) {
+      trace.performanceMetrics.aiCallsCount++;
+    }
+
+    const response =
+      await this.seniorEngineerAnalysisService.createEnhancedAssistanceResponse(
+        query,
+        queryResponse,
+        context,
+        threadId,
+        { codeInsights },
+        this,
+      );
+
+    return response;
+  }
+
+  /**
+   * Handle module design guidance
+   */
+  private async handleModuleDesign(
+    query: string,
+    enhancedQuery: string,
+    context: AnalysisContext,
+    threadId?: string,
+    trace?: AnalysisTrace,
+  ): Promise<QueryAnalysisResponse> {
+    trace?.executionPath.push('handleModuleDesign');
+
+    console.log(`[handleModuleDesign] Providing module design guidance`);
+
+    // Analyze existing project structure
+    const projectFiles = await this.findProjectLevelFiles(
+      context.repositoryScanId,
+    );
+    const filesWithCode = await this.fetchFilesWithCode(projectFiles, context);
+
+    // Generate architectural guidance for new modules
+    const architecturalGuidance =
+      await this.seniorEngineerAnalysisService.generateModuleDesignGuidance(
+        filesWithCode,
+        query,
+        context,
+      );
+
+    const gemini = new Gemini();
+    const moduleDesignPrompt =
+      this.seniorEngineerAnalysisService.buildModuleDesignPrompt(
+        query,
+        architecturalGuidance,
+      );
+    const queryResponse = await gemini.generateAnswer(
+      moduleDesignPrompt,
+      filesWithCode,
+      enhancedQuery,
+    );
+    if (trace) {
+      trace.performanceMetrics.aiCallsCount++;
+    }
+
+    const response =
+      await this.seniorEngineerAnalysisService.createEnhancedAssistanceResponse(
+        query,
+        queryResponse,
+        context,
+        threadId,
+        { architecturalGuidance },
+        this,
+      );
+
+    return response;
+  }
+
+  /**
+   * Handle technical debt analysis
+   */
+  private async handleTechnicalDebtAnalysis(
+    query: string,
+    enhancedQuery: string,
+    context: AnalysisContext,
+    threadId?: string,
+    trace?: AnalysisTrace,
+  ): Promise<QueryAnalysisResponse> {
+    trace?.executionPath.push('handleTechnicalDebtAnalysis');
+
+    console.log(`[handleTechnicalDebtAnalysis] Analyzing technical debt`);
+
+    // Find files that might contain technical debt
+    const allFiles = await this.findAllProjectFiles(context.repositoryScanId);
+
+    // Use AI to filter files that likely contain technical debt
+    const gemini = new Gemini();
+    const fileQuickInfo = allFiles.map((data) => this.mapFileToQuickInfo(data));
+    const filteredFiles = await gemini.filterRelevantFiles(
+      `technical debt, legacy code, code smells, outdated patterns: ${query}`,
+      fileQuickInfo,
+    );
+
+    const relevantFiles = allFiles.filter((data) => {
+      const mappedData = this.mapDocumentFields(data);
+      return filteredFiles.output.some(
+        (file) => file.fileName === mappedData.fileName,
+      );
+    });
+
+    const filesWithCode = await this.fetchFilesWithCode(relevantFiles, context);
+
+    // Analyze technical debt
+    const resourceAnalysis =
+      await this.seniorEngineerAnalysisService.analyzeTechnicalDebt(
+        filesWithCode,
+        context,
+      );
+
+    const technicalDebtPrompt =
+      this.seniorEngineerAnalysisService.buildTechnicalDebtPrompt(
+        query,
+        resourceAnalysis,
+      );
+    const queryResponse = await gemini.generateAnswer(
+      technicalDebtPrompt,
+      filesWithCode,
+      enhancedQuery,
+    );
+    if (trace) {
+      trace.performanceMetrics.aiCallsCount += 2;
+    }
+
+    const response =
+      await this.seniorEngineerAnalysisService.createEnhancedAssistanceResponse(
+        query,
+        queryResponse,
+        context,
+        threadId,
+        { resourceAnalysis },
+        this,
+      );
+
+    return response;
   }
 
   // Helper methods
 
-  private async getPreviousMessages(threadId: string) {
+  private async getPreviousMessages(
+    threadId: string,
+  ): Promise<PreviousMessage[]> {
     // Ensure threadId is valid before making database query
     if (!threadId || threadId === 'undefined' || threadId === 'null') {
       console.log(
@@ -602,17 +1004,21 @@ export class RepositoryAnalysisService {
     const olderMessages = thread.questions.slice(5, 10);
 
     return [
-      ...recentMessages.map((q) => ({
-        question: q.question,
-        answer: q.answer as any,
-        summary: q.summary,
-        isDetailed: true,
-      })),
-      ...olderMessages.map((q) => ({
-        question: q.question,
-        summary: q.summary || (q.answer as any),
-        isDetailed: false,
-      })),
+      ...recentMessages.map(
+        (q): PreviousMessage => ({
+          question: q.question,
+          answer: q.answer as any,
+          summary: q.summary,
+          isDetailed: true,
+        }),
+      ),
+      ...olderMessages.map(
+        (q): PreviousMessage => ({
+          question: q.question,
+          summary: q.summary || (q.answer as any),
+          isDetailed: false,
+        }),
+      ),
     ];
   }
 
@@ -808,27 +1214,50 @@ export class RepositoryAnalysisService {
     return sourceCodeResponses.map((res, index) => ({
       summary: files[index].summary,
       fileName: files[index].name,
-      sourceCode: res.data,
+      sourceCode: this.normalizeSourceCode(res?.data),
       functions: files[index].functions || [],
       imports: files[index].imports || [],
       exports: files[index].exports || [],
     }));
   }
 
+  /**
+   * Normalize sourceCode to ensure it's always a string
+   */
+  private normalizeSourceCode(data: any): string {
+    if (typeof data === 'string') {
+      return data;
+    }
+
+    if (data === null || data === undefined) {
+      return 'Error: File content not available';
+    }
+
+    if (typeof data === 'object') {
+      try {
+        return JSON.stringify(data, null, 2);
+      } catch {
+        return 'Error: Unable to parse file content';
+      }
+    }
+
+    return String(data);
+  }
+
   private mapFileToQuickInfo(data: any): any {
-    const mappedData = this.mapDocumentFields(data);
+    // Map document fields based on the data structure
     return {
-      fileName: mappedData.fileName,
-      filePath: mappedData.filePath,
-      fileSummary: mappedData.summary,
-      fileTags: mappedData.fileType,
-      functions: data.functions || [],
-      imports: data.imports || [],
-      exports: data.exports || [],
+      fileName: data.name || '',
+      filePath: data.fullPath || '',
+      summary: data.summary || '',
+      fileType: data.fileType || [],
     };
   }
 
-  private buildFollowUpPrompt(query: string, previousMessages: any[]): string {
+  private buildFollowUpPrompt(
+    query: string,
+    previousMessages: PreviousMessage[],
+  ): string {
     return `Based on the previous conversation context and the new question, analyze the code to explain: ${query}
 
 Previous conversation context:
@@ -909,7 +1338,40 @@ Your answer should be immediately useful to someone trying to understand this co
 `;
   }
 
-  // Helper methods implementation
+  /**
+   * Helper methods implementation
+   */
+
+  /**
+   * Enhanced wrapper for createAssistanceResponse
+   */
+  private async createEnhancedAssistanceResponse(
+    query: string,
+    queryResponse: any,
+    context: AnalysisContext,
+    mainService: RepositoryAnalysisService,
+    threadId?: string,
+    analysisData?: any,
+  ): Promise<QueryAnalysisResponse> {
+    const baseResponse = await this.createAssistanceResponse(
+      query,
+      queryResponse,
+      context,
+      threadId,
+    );
+
+    // Add enhanced analysis data if provided
+    if (analysisData) {
+      return {
+        ...baseResponse,
+        resourceAnalysis: analysisData.resourceAnalysis,
+        codeInsights: analysisData.codeInsights,
+        architecturalGuidance: analysisData.architecturalGuidance,
+      };
+    }
+
+    return baseResponse;
+  }
 
   private async fetchSourceCodeForFiles(
     files: any[],
@@ -958,18 +1420,27 @@ Your answer should be immediately useful to someone trying to understand this co
     try {
       const results = await Promise.allSettled(sourceCodeMapping);
       return results
-        .map((r) => {
+        .map((r, index) => {
           if (r.status === 'fulfilled') {
             return r.value;
           } else {
-            return null;
+            console.error(
+              `Error fetching file ${files[index]?.name || 'unknown'}:`,
+              r.reason,
+            );
+            // Return a mock response with error message
+            return {
+              data: `Error fetching file content: ${r.reason?.message || 'Unknown error'}`,
+            };
           }
         })
         .filter((r) => r !== null);
     } catch (error) {
       console.error('Error fetching source code:', error.message);
       // Return placeholder data on error to avoid breaking the flow
-      return files.map(() => ({ data: 'Error fetching file content' }));
+      return files.map((file) => ({
+        data: `Error fetching file content for ${file?.name || 'unknown file'}`,
+      }));
     }
   }
 
@@ -1070,7 +1541,7 @@ Your answer should be immediately useful to someone trying to understand this co
       threadId: validThreadId,
     };
 
-    const assistedQuestions = await this.prisma.assistedQuestions.create({
+    await this.prisma.assistedQuestions.create({
       data: assistedQuestionPayload,
     });
 
@@ -1127,5 +1598,902 @@ Your answer should be immediately useful to someone trying to understand this co
       summary: responseSummary,
       threadId: validThreadId,
     };
+  }
+
+  /**
+   * Original follow-up query handler (maintained for compatibility)
+   */
+  private async handleFollowUpQuery(
+    query: string,
+    enhancedQuery: string,
+    context: AnalysisContext,
+    threadId?: string,
+  ): Promise<QueryAnalysisResponse> {
+    console.log(`[handleFollowUpQuery] Processing follow-up question`);
+
+    if (!threadId) {
+      console.log('No threadId provided, falling back to PROJECT_LEVEL');
+      return await this.handleProjectLevelQuery(query, enhancedQuery, context);
+    }
+
+    const previousMessages = await this.getPreviousMessages(threadId);
+    if (previousMessages.length === 0) {
+      console.log('No previous messages found, falling back to PROJECT_LEVEL');
+      return await this.handleProjectLevelQuery(query, enhancedQuery, context);
+    }
+
+    // Get relevant files based on combined context
+    const gemini = new Gemini();
+    const mostRecentAnswer =
+      previousMessages[0]?.isDetailed && previousMessages[0]?.answer
+        ? previousMessages[0].answer
+        : previousMessages[0]?.summary || '';
+    const followUpEmbedding = await gemini.getEmbeddings(
+      mostRecentAnswer + ' ' + query,
+    );
+    const followUpVectorQuery = `[${followUpEmbedding.join(',')}]`;
+
+    const semanticSearchResults = await this.performSemanticSearch(
+      followUpVectorQuery,
+      context.repositoryScanId,
+      5,
+    );
+
+    if (semanticSearchResults.length === 0) {
+      return {
+        answer: "I couldn't find relevant context for your follow-up question.",
+        context: [],
+      };
+    }
+
+    const relevantFiles = await this.prisma.fileDocumentation.findMany({
+      where: { id: { in: semanticSearchResults.map((r) => r.id) } },
+    });
+
+    const filesWithCode = await this.fetchFilesWithCode(relevantFiles, context);
+
+    const followUpPrompt = this.buildFollowUpPrompt(query, previousMessages);
+    const queryResponse = await gemini.generateAnswer(
+      followUpPrompt,
+      filesWithCode,
+      enhancedQuery,
+    );
+
+    return await this.createEnhancedAssistanceResponse(
+      query,
+      queryResponse,
+      context,
+      this,
+      threadId,
+      null,
+    );
+  }
+
+  /**
+   * Enhanced follow-up query handler with senior analysis
+   */
+  private async handleEnhancedFollowUpQuery(
+    query: string,
+    enhancedQuery: string,
+    context: AnalysisContext,
+    threadId?: string,
+    analysisMode: string = 'standard',
+    trace?: AnalysisTrace,
+  ): Promise<QueryAnalysisResponse> {
+    trace?.executionPath.push('handleEnhancedFollowUpQuery');
+
+    if (!threadId) {
+      return await this.handleEnhancedProjectLevelQuery(
+        query,
+        enhancedQuery,
+        context,
+        threadId,
+        analysisMode,
+        trace,
+      );
+    }
+
+    const previousMessages = await this.getPreviousMessages(threadId);
+    if (previousMessages.length === 0) {
+      return await this.handleEnhancedProjectLevelQuery(
+        query,
+        enhancedQuery,
+        context,
+        threadId,
+        analysisMode,
+        trace,
+      );
+    }
+
+    const gemini = new Gemini();
+    const mostRecentAnswer =
+      previousMessages[0]?.isDetailed && previousMessages[0]?.answer
+        ? previousMessages[0].answer
+        : previousMessages[0]?.summary || '';
+    const followUpEmbedding = await gemini.getEmbeddings(
+      mostRecentAnswer + ' ' + query,
+    );
+    const followUpVectorQuery = `[${followUpEmbedding.join(',')}]`;
+
+    const semanticSearchResults = await this.performSemanticSearch(
+      followUpVectorQuery,
+      context.repositoryScanId,
+      8,
+    );
+
+    const relevantFiles = await this.prisma.fileDocumentation.findMany({
+      where: { id: { in: semanticSearchResults.map((r) => r.id) } },
+    });
+
+    const filesWithCode = await this.fetchFilesWithCode(relevantFiles, context);
+
+    // Perform enhanced analysis
+    const resourceAnalysis =
+      await this.seniorEngineerAnalysisService.analyzeResourcesAndPatterns(
+        filesWithCode,
+        context,
+      );
+    const codeInsights =
+      await this.seniorEngineerAnalysisService.analyzeCodeQuality(
+        filesWithCode,
+        context,
+      );
+
+    const followUpPrompt =
+      this.seniorEngineerAnalysisService.buildEnhancedFollowUpPrompt(
+        query,
+        previousMessages,
+        analysisMode,
+      );
+    const queryResponse = await gemini.generateAnswer(
+      followUpPrompt,
+      filesWithCode,
+      enhancedQuery,
+    );
+    if (trace) {
+      trace.performanceMetrics.aiCallsCount += 2;
+    }
+
+    return await this.createEnhancedAssistanceResponse(
+      query,
+      queryResponse,
+      context,
+      this,
+      threadId,
+      { resourceAnalysis, codeInsights },
+    );
+  }
+
+  /**
+   * Original user flow query handler (maintained for compatibility)
+   */
+  private async handleUserFlowQuery(
+    query: string,
+    enhancedQuery: string,
+    context: AnalysisContext,
+    threadId?: string,
+  ): Promise<QueryAnalysisResponse> {
+    console.log(`[handleUserFlowQuery] Processing user flow question`);
+
+    // Find user flow related files
+    const userFlowFiles = await this.findUserFlowFiles(
+      context.repositoryScanId,
+    );
+    const entryPointFiles = await this.findEntryPointFiles(
+      context.repositoryScanId,
+    );
+
+    let relevantFiles = [...userFlowFiles, ...entryPointFiles];
+    console.log(
+      'Found user flow files:',
+      relevantFiles.map((f) => ({ name: f.name, fullPath: f.fullPath })),
+    );
+
+    // Filter relevant files using AI
+    const gemini = new Gemini();
+    const fileQuickInfo = relevantFiles.map((data) =>
+      this.mapFileToQuickInfo(data),
+    );
+    const filteredFiles = await gemini.filterRelevantFiles(
+      enhancedQuery,
+      fileQuickInfo,
+    );
+
+    relevantFiles = relevantFiles.filter((data) => {
+      const mappedData = this.mapDocumentFields(data);
+      return filteredFiles.output.some(
+        (file) => file.fileName === mappedData.fileName,
+      );
+    });
+
+    const filesWithCode = await this.fetchFilesWithCode(relevantFiles, context);
+
+    const userFlowPrompt = this.buildUserFlowPrompt(query);
+    const queryResponse = await gemini.generateAnswer(
+      userFlowPrompt,
+      filesWithCode,
+      enhancedQuery,
+    );
+
+    return await this.createEnhancedAssistanceResponse(
+      query,
+      queryResponse,
+      context,
+      this,
+      threadId,
+      null,
+    );
+  }
+
+  /**
+   * Enhanced user flow query handler
+   */
+  private async handleEnhancedUserFlowQuery(
+    query: string,
+    enhancedQuery: string,
+    context: AnalysisContext,
+    threadId?: string,
+    analysisMode: string = 'standard',
+    trace?: AnalysisTrace,
+  ): Promise<QueryAnalysisResponse> {
+    trace?.executionPath.push('handleEnhancedUserFlowQuery');
+
+    const userFlowFiles = await this.findUserFlowFiles(
+      context.repositoryScanId,
+    );
+    const entryPointFiles = await this.findEntryPointFiles(
+      context.repositoryScanId,
+    );
+    let relevantFiles = [...userFlowFiles, ...entryPointFiles];
+
+    const geminiFlow = new Gemini();
+    const fileQuickInfo = relevantFiles.map((data) =>
+      this.mapFileToQuickInfo(data),
+    );
+    const filteredFiles = await geminiFlow.filterRelevantFiles(
+      enhancedQuery,
+      fileQuickInfo,
+    );
+
+    relevantFiles = relevantFiles.filter((data) => {
+      const mappedData = this.mapDocumentFields(data);
+      return filteredFiles.output.some(
+        (file) => file.fileName === mappedData.fileName,
+      );
+    });
+
+    const filesWithCode = await this.fetchFilesWithCode(relevantFiles, context);
+
+    // Enhanced analysis
+    const resourceAnalysis =
+      await this.seniorEngineerAnalysisService.analyzeResourcesAndPatterns(
+        filesWithCode,
+        context,
+      );
+    const architecturalGuidance =
+      await this.seniorEngineerAnalysisService.generateArchitecturalGuidance(
+        filesWithCode,
+        query,
+        context,
+      );
+
+    const userFlowPrompt =
+      this.seniorEngineerAnalysisService.buildEnhancedUserFlowPrompt(
+        query,
+        analysisMode,
+      );
+    const queryResponse = await geminiFlow.generateAnswer(
+      userFlowPrompt,
+      filesWithCode,
+      enhancedQuery,
+    );
+    if (trace) {
+      trace.performanceMetrics.aiCallsCount += 2;
+    }
+
+    return await this.createEnhancedAssistanceResponse(
+      query,
+      queryResponse,
+      context,
+      this,
+      threadId,
+      { resourceAnalysis, architecturalGuidance },
+    );
+  }
+
+  /**
+   * Original function trace query handler (maintained for compatibility)
+   */
+  private async handleFunctionTraceQuery(
+    query: string,
+    enhancedQuery: string,
+    context: AnalysisContext,
+    threadId?: string,
+  ): Promise<QueryAnalysisResponse> {
+    console.log(
+      `[handleFunctionTraceQuery] Processing function trace question`,
+    );
+
+    // Check for specific file path in query
+    const filePathMatch = query.match(
+      /explain\s+(\S+\.[a-z]+)|\bfile\s+(\S+\.[a-z]+)/i,
+    );
+    const filePath = filePathMatch
+      ? filePathMatch[1] || filePathMatch[2]
+      : null;
+
+    let relevantFiles = [];
+
+    if (filePath) {
+      console.log(`Looking for specific file: ${filePath}`);
+      relevantFiles = await this.findSpecificFile(
+        filePath,
+        context.repositoryScanId,
+      );
+    }
+
+    // If no specific file found, use semantic search
+    if (relevantFiles.length === 0) {
+      const gemini = new Gemini();
+      const embedding = await gemini.getEmbeddings(query);
+      const vectorQuery = `[${embedding.join(',')}]`;
+
+      const semanticResults = await this.performSemanticSearch(
+        vectorQuery,
+        context.repositoryScanId,
+        5,
+      );
+
+      if (semanticResults.length > 0) {
+        relevantFiles = await this.prisma.fileDocumentation.findMany({
+          where: { id: { in: semanticResults.map((r) => r.id) } },
+        });
+      }
+    }
+
+    if (relevantFiles.length === 0) {
+      return {
+        answer:
+          "I couldn't find relevant files to answer your question about this code.",
+        context: [],
+      };
+    }
+
+    // Find related files (imports/exports)
+    relevantFiles = await this.findRelatedFiles(
+      relevantFiles,
+      context.repositoryScanId,
+    );
+
+    const filesWithCode = await this.fetchFilesWithCode(relevantFiles, context);
+
+    const geminiTrace = new Gemini();
+    const functionTracePrompt = this.buildFunctionTracePrompt(query, filePath);
+    const queryResponse = await geminiTrace.generateAnswer(
+      functionTracePrompt,
+      filesWithCode,
+      enhancedQuery,
+    );
+
+    return await this.createEnhancedAssistanceResponse(
+      query,
+      queryResponse,
+      context,
+      this,
+      threadId,
+      null,
+    );
+  }
+
+  /**
+   * Enhanced function trace query handler
+   */
+  private async handleEnhancedFunctionTraceQuery(
+    query: string,
+    enhancedQuery: string,
+    context: AnalysisContext,
+    threadId?: string,
+    analysisMode: string = 'standard',
+    trace?: AnalysisTrace,
+  ): Promise<QueryAnalysisResponse> {
+    trace?.executionPath.push('handleEnhancedFunctionTraceQuery');
+
+    const filePathMatch = query.match(
+      /explain\s+(\S+\.[a-z]+)|\bfile\s+(\S+\.[a-z]+)/i,
+    );
+    const filePath = filePathMatch
+      ? filePathMatch[1] || filePathMatch[2]
+      : null;
+    let relevantFiles = [];
+
+    if (filePath) {
+      relevantFiles = await this.findSpecificFile(
+        filePath,
+        context.repositoryScanId,
+      );
+    }
+
+    if (relevantFiles.length === 0) {
+      const geminiEnhanced = new Gemini();
+      const embedding = await geminiEnhanced.getEmbeddings(query);
+      const vectorQuery = `[${embedding.join(',')}]`;
+      const semanticResults = await this.performSemanticSearch(
+        vectorQuery,
+        context.repositoryScanId,
+        8,
+      );
+
+      if (semanticResults.length > 0) {
+        relevantFiles = await this.prisma.fileDocumentation.findMany({
+          where: { id: { in: semanticResults.map((r) => r.id) } },
+        });
+      }
+    }
+
+    relevantFiles = await this.findRelatedFiles(
+      relevantFiles,
+      context.repositoryScanId,
+    );
+    const filesWithCode = await this.fetchFilesWithCode(relevantFiles, context);
+
+    // Enhanced analysis
+    const codeInsights =
+      await this.seniorEngineerAnalysisService.analyzeCodeQuality(
+        filesWithCode,
+        context,
+      );
+    const resourceAnalysis =
+      await this.seniorEngineerAnalysisService.analyzeResourcesAndPatterns(
+        filesWithCode,
+        context,
+      );
+
+    const geminiEnhanced = new Gemini();
+    const functionTracePrompt =
+      this.seniorEngineerAnalysisService.buildEnhancedFunctionTracePrompt(
+        query,
+        filePath,
+        analysisMode,
+      );
+    const queryResponse = await geminiEnhanced.generateAnswer(
+      functionTracePrompt,
+      filesWithCode,
+      enhancedQuery,
+    );
+    if (trace) {
+      trace.performanceMetrics.aiCallsCount += 2;
+    }
+
+    return await this.createEnhancedAssistanceResponse(
+      query,
+      queryResponse,
+      context,
+      this,
+      threadId,
+      { codeInsights, resourceAnalysis },
+    );
+  }
+
+  /**
+   * Original project level query handler (maintained for compatibility)
+   */
+  private async handleProjectLevelQuery(
+    query: string,
+    enhancedQuery: string,
+    context: AnalysisContext,
+    threadId?: string,
+  ): Promise<QueryAnalysisResponse> {
+    console.log(`[handleProjectLevelQuery] Processing project level question`);
+
+    const isSchemaModelQuestion =
+      /schema|model|database|db|table|entity|field|column|type|relation|prisma/i.test(
+        query,
+      );
+
+    let tagBasedFiles = await this.findProjectLevelFiles(
+      context.repositoryScanId,
+    );
+
+    if (isSchemaModelQuestion) {
+      const schemaFiles = await this.findSchemaModelFiles(
+        context.repositoryScanId,
+      );
+      tagBasedFiles = [...schemaFiles, ...tagBasedFiles];
+      // Remove duplicates
+      tagBasedFiles = Array.from(
+        new Map(tagBasedFiles.map((file) => [file.id, file])).values(),
+      );
+    }
+
+    if (tagBasedFiles.length === 0) {
+      return {
+        answer:
+          "I couldn't find relevant project files to answer your question.",
+        context: [],
+      };
+    }
+
+    // Filter relevant files using AI
+    const geminiProject = new Gemini();
+    const fileQuickInfo = tagBasedFiles.map((data) =>
+      this.mapFileToQuickInfo(data),
+    );
+    const filteredFiles = await geminiProject.filterRelevantFiles(
+      enhancedQuery,
+      fileQuickInfo,
+    );
+
+    tagBasedFiles = tagBasedFiles.filter((data) => {
+      const mappedData = this.mapDocumentFields(data);
+      return filteredFiles.output.some(
+        (file) => file.fileName === mappedData.fileName,
+      );
+    });
+
+    // Add essential files
+    const essentialFiles = await this.findEssentialProjectFiles(
+      context.repositoryScanId,
+    );
+    const existingIds = new Set(tagBasedFiles.map((file) => file.id));
+    const newEssentialFiles = essentialFiles.filter(
+      (file) => !existingIds.has(file.id),
+    );
+    tagBasedFiles = [...tagBasedFiles, ...newEssentialFiles];
+
+    const filesWithCode = await this.fetchFilesWithCode(tagBasedFiles, context);
+    const queryResponse = await geminiProject.generateAnswer(
+      query,
+      filesWithCode,
+      enhancedQuery,
+    );
+
+    return await this.createEnhancedAssistanceResponse(
+      query,
+      queryResponse,
+      context,
+      this,
+      threadId,
+      null,
+    );
+  }
+
+  /**
+   * Enhanced project level query handler
+   */
+  private async handleEnhancedProjectLevelQuery(
+    query: string,
+    enhancedQuery: string,
+    context: AnalysisContext,
+    threadId?: string,
+    analysisMode: string = 'standard',
+    trace?: AnalysisTrace,
+  ): Promise<QueryAnalysisResponse> {
+    trace?.executionPath.push('handleEnhancedProjectLevelQuery');
+
+    const isSchemaModelQuestion =
+      /schema|model|database|db|table|entity|field|column|type|relation|prisma/i.test(
+        query,
+      );
+    let tagBasedFiles = await this.findProjectLevelFiles(
+      context.repositoryScanId,
+    );
+
+    if (isSchemaModelQuestion) {
+      const schemaFiles = await this.findSchemaModelFiles(
+        context.repositoryScanId,
+      );
+      tagBasedFiles = [...schemaFiles, ...tagBasedFiles];
+      tagBasedFiles = Array.from(
+        new Map(tagBasedFiles.map((file) => [file.id, file])).values(),
+      );
+    }
+
+    const geminiProjectEnhanced = new Gemini();
+    const fileQuickInfo = tagBasedFiles.map((data) =>
+      this.mapFileToQuickInfo(data),
+    );
+    const filteredFiles = await geminiProjectEnhanced.filterRelevantFiles(
+      enhancedQuery,
+      fileQuickInfo,
+    );
+
+    tagBasedFiles = tagBasedFiles.filter((data) => {
+      const mappedData = this.mapDocumentFields(data);
+      return filteredFiles.output.some(
+        (file) => file.fileName === mappedData.fileName,
+      );
+    });
+
+    const essentialFiles = await this.findEssentialProjectFiles(
+      context.repositoryScanId,
+    );
+    const existingIds = new Set(tagBasedFiles.map((file) => file.id));
+    const newEssentialFiles = essentialFiles.filter(
+      (file) => !existingIds.has(file.id),
+    );
+    tagBasedFiles = [...tagBasedFiles, ...newEssentialFiles];
+
+    const filesWithCode = await this.fetchFilesWithCode(tagBasedFiles, context);
+
+    // Enhanced analysis
+    const resourceAnalysis =
+      await this.seniorEngineerAnalysisService.analyzeResourcesAndPatterns(
+        filesWithCode,
+        context,
+      );
+    const architecturalGuidance =
+      await this.seniorEngineerAnalysisService.generateArchitecturalGuidance(
+        filesWithCode,
+        query,
+        context,
+      );
+    const codeInsights =
+      await this.seniorEngineerAnalysisService.analyzeCodeQuality(
+        filesWithCode,
+        context,
+      );
+
+    const enhancedPrompt =
+      this.seniorEngineerAnalysisService.buildEnhancedProjectLevelPrompt(
+        query,
+        analysisMode,
+        resourceAnalysis,
+      );
+    const queryResponse = await geminiProjectEnhanced.generateAnswer(
+      enhancedPrompt,
+      filesWithCode,
+      enhancedQuery,
+    );
+    if (trace) {
+      trace.performanceMetrics.aiCallsCount += 2;
+    }
+
+    return await this.createEnhancedAssistanceResponse(
+      query,
+      queryResponse,
+      context,
+      this,
+      threadId,
+      { resourceAnalysis, architecturalGuidance, codeInsights },
+    );
+  }
+
+  /**
+   * Original semantic search fallback (maintained for compatibility)
+   */
+  private async handleSemanticSearchFallback(
+    query: string,
+    enhancedQuery: string,
+    context: AnalysisContext,
+    threadId?: string,
+  ): Promise<QueryAnalysisResponse> {
+    console.log(
+      `[handleSemanticSearchFallback] Using semantic search fallback`,
+    );
+
+    const geminiSemantic = new Gemini();
+    const embedding = await geminiSemantic.getEmbeddings(query);
+    const vectorQuery = `[${embedding.join(',')}]`;
+
+    const semanticResults = await this.performSemanticSearch(
+      vectorQuery,
+      context.repositoryScanId,
+      5,
+    );
+
+    if (semanticResults.length === 0) {
+      return {
+        answer:
+          "I couldn't find relevant information to answer your question. The repository may not have been fully scanned or indexed yet.",
+        context: [],
+      };
+    }
+
+    const topFiles = await this.prisma.fileDocumentation.findMany({
+      where: { id: { in: semanticResults.map((file) => file.id) } },
+    });
+
+    const filesWithCode = await this.fetchFilesWithCode(topFiles, context);
+    const queryResponse = await geminiSemantic.generateAnswer(
+      query,
+      filesWithCode,
+      enhancedQuery,
+    );
+
+    return await this.createEnhancedAssistanceResponse(
+      query,
+      queryResponse,
+      context,
+      this,
+      threadId,
+      null,
+    );
+  }
+
+  /**
+   * Enhanced semantic search fallback
+   */
+  private async handleEnhancedSemanticSearchFallback(
+    query: string,
+    enhancedQuery: string,
+    context: AnalysisContext,
+    threadId?: string,
+    analysisMode: string = 'standard',
+    trace?: AnalysisTrace,
+  ): Promise<QueryAnalysisResponse> {
+    trace?.executionPath.push('handleEnhancedSemanticSearchFallback');
+
+    const geminiSemanticEnhanced = new Gemini();
+    const embedding = await geminiSemanticEnhanced.getEmbeddings(query);
+    const vectorQuery = `[${embedding.join(',')}]`;
+
+    const semanticResults = await this.performSemanticSearch(
+      vectorQuery,
+      context.repositoryScanId,
+      8,
+    );
+
+    if (semanticResults.length === 0) {
+      return {
+        answer:
+          "I couldn't find relevant information to answer your question. The repository may not have been fully scanned or indexed yet.",
+        context: [],
+      };
+    }
+
+    const topFiles = await this.prisma.fileDocumentation.findMany({
+      where: { id: { in: semanticResults.map((file) => file.id) } },
+    });
+
+    const filesWithCode = await this.fetchFilesWithCode(topFiles, context);
+
+    // Enhanced analysis
+    const resourceAnalysis =
+      await this.seniorEngineerAnalysisService.analyzeResourcesAndPatterns(
+        filesWithCode,
+        context,
+      );
+    const codeInsights =
+      await this.seniorEngineerAnalysisService.analyzeCodeQuality(
+        filesWithCode,
+        context,
+      );
+
+    const enhancedPrompt =
+      this.seniorEngineerAnalysisService.buildEnhancedSemanticPrompt(
+        query,
+        analysisMode,
+      );
+    const queryResponse = await geminiSemanticEnhanced.generateAnswer(
+      enhancedPrompt,
+      filesWithCode,
+      enhancedQuery,
+    );
+    if (trace) {
+      trace.performanceMetrics.aiCallsCount += 2;
+    }
+
+    return await this.createEnhancedAssistanceResponse(
+      query,
+      queryResponse,
+      context,
+      this,
+      threadId,
+      { resourceAnalysis, codeInsights },
+    );
+  }
+
+  // Enhanced analysis methods
+
+  /**
+   * Find architectural files in the repository
+   */
+  private async findArchitecturalFiles(repositoryScanId: string) {
+    return await this.prisma.fileDocumentation.findMany({
+      where: {
+        repositoryScanId,
+        OR: [
+          {
+            fileType: {
+              hasSome: ['CONTROLLER', 'SERVICE', 'ROUTER', 'MIDDLEWARE'],
+            },
+          },
+          { fullPath: { contains: 'src/modules', mode: 'insensitive' } },
+          { fullPath: { contains: 'src/common', mode: 'insensitive' } },
+          { fullPath: { contains: 'src/core', mode: 'insensitive' } },
+          { name: { endsWith: '.module.ts' } },
+          { name: { endsWith: '.controller.ts' } },
+          { name: { endsWith: '.service.ts' } },
+        ],
+      },
+    });
+  }
+
+  /**
+   * Find configuration files
+   */
+  private async findConfigurationFiles(repositoryScanId: string) {
+    return await this.prisma.fileDocumentation.findMany({
+      where: {
+        repositoryScanId,
+        OR: [
+          { name: { contains: 'config', mode: 'insensitive' } },
+          { name: { endsWith: '.config.ts' } },
+          { name: { endsWith: '.config.js' } },
+          { name: { equals: 'package.json' } },
+          { name: { equals: 'tsconfig.json' } },
+          { name: { equals: '.env.example' } },
+          { name: { equals: 'docker-compose.yml' } },
+          { name: { equals: 'Dockerfile' } },
+        ],
+      },
+    });
+  }
+
+  /**
+   * Find core application files
+   */
+  private async findCoreApplicationFiles(repositoryScanId: string) {
+    return await this.prisma.fileDocumentation.findMany({
+      where: {
+        repositoryScanId,
+        OR: [
+          { name: { equals: 'main.ts' } },
+          { name: { equals: 'app.ts' } },
+          { name: { equals: 'app.module.ts' } },
+          { name: { equals: 'index.ts' } },
+          { name: { contains: 'bootstrap', mode: 'insensitive' } },
+        ],
+      },
+    });
+  }
+
+  /**
+   * Find all project files
+   */
+  private async findAllProjectFiles(repositoryScanId: string) {
+    return await this.prisma.fileDocumentation.findMany({
+      where: { repositoryScanId },
+    });
+  }
+
+  /**
+   * Find performance-critical files
+   */
+  private async findPerformanceCriticalFiles(repositoryScanId: string) {
+    return await this.prisma.fileDocumentation.findMany({
+      where: {
+        repositoryScanId,
+        OR: [
+          { fileType: { hasSome: ['SERVICE', 'CONTROLLER', 'API'] } },
+          { fullPath: { contains: 'database', mode: 'insensitive' } },
+          { fullPath: { contains: 'query', mode: 'insensitive' } },
+          { fullPath: { contains: 'cache', mode: 'insensitive' } },
+          { name: { contains: 'performance', mode: 'insensitive' } },
+          { name: { contains: 'optimization', mode: 'insensitive' } },
+        ],
+      },
+    });
+  }
+
+  /**
+   * Find security-relevant files
+   */
+  private async findSecurityRelevantFiles(repositoryScanId: string) {
+    return await this.prisma.fileDocumentation.findMany({
+      where: {
+        repositoryScanId,
+        OR: [
+          { fullPath: { contains: 'auth', mode: 'insensitive' } },
+          { fullPath: { contains: 'security', mode: 'insensitive' } },
+          { fullPath: { contains: 'validation', mode: 'insensitive' } },
+          { fullPath: { contains: 'guard', mode: 'insensitive' } },
+          { name: { contains: 'auth', mode: 'insensitive' } },
+          { name: { contains: 'security', mode: 'insensitive' } },
+          { name: { contains: 'jwt', mode: 'insensitive' } },
+          { name: { contains: 'crypto', mode: 'insensitive' } },
+        ],
+      },
+    });
   }
 }
