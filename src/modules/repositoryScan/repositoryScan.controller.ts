@@ -97,7 +97,7 @@ export class RepositoryScanController {
     @Body() body: any,
     @Request() req: any,
   ) {
-    return await this._repositoryScanService.testAnalyzeAssistance(
+    return await this._repositoryScanService.analyzeRepositoryRefactored(
       repositoryId,
       body.query,
       req.user.accountId,

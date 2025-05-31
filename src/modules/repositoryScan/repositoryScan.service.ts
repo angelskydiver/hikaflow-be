@@ -36,6 +36,7 @@ import {
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
 import { BillingService } from '../billing/billing.service';
 import { CommentService } from '../comment/comment.service';
+import { RepositoryAnalysisService } from './repositoryAnalysis.service';
 
 @Injectable()
 export class RepositoryScanService {
@@ -46,6 +47,45 @@ export class RepositoryScanService {
     private readonly _billingService: BillingService,
     private readonly _mailService: MailService,
   ) {}
+
+  /**
+   * Refactored repository analysis method - uses the new RepositoryAnalysisService
+   */
+  async analyzeRepositoryRefactored(
+    repositoryId: string,
+    query: string,
+    accountId: string,
+    threadId?: string,
+  ) {
+    try {
+      console.log(
+        `[analyzeRepositoryRefactored] Processing query: "${query}" with threadId: ${threadId || 'none'}`,
+      );
+
+      const analysisService = new RepositoryAnalysisService(
+        this.prisma,
+        this._commentService,
+        this.accountCredentialService,
+        this._billingService,
+      );
+
+      // Ensure threadId is properly handled - convert undefined/null to undefined
+      const validThreadId =
+        threadId && threadId !== 'undefined' && threadId !== 'null'
+          ? threadId
+          : undefined;
+
+      return await analysisService.analyzeRepository({
+        repositoryId,
+        query,
+        accountId,
+        threadId: validThreadId,
+      });
+    } catch (error) {
+      console.error(`[analyzeRepositoryRefactored] Error:`, error);
+      throw error;
+    }
+  }
 
   /**
    * Queues a repository scan job.
