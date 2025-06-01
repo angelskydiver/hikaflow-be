@@ -1307,8 +1307,7 @@ test('API returns correct response', async () => {
         model: 'gemini-1.5-flash',
       });
 
-      const prompt = `
-You are an AI assistant that helps categorize user questions about codebases into one of four types:
+      const prompt = `You are an AI assistant that helps categorize user questions about codebases into one of five types:
 
 1. PROJECT_LEVEL: Questions about the overall project, its structure, purpose, technologies used, database schema, models, tables, or high-level architecture. Examples:
    - "What is the purpose of this project?"
@@ -1335,7 +1334,16 @@ You are an AI assistant that helps categorize user questions about codebases int
    - "Walk me through the authentication flow"
    - "What's the process for submitting a form?"
 
-4. FOLLOW_UP: Questions that reference or build upon previous questions/answers in the conversation. Examples:
+4. RELEASE_ANALYSIS: Questions about commit history, code changes, releases, or version differences. Examples:
+   - "What changes were made in the last commit?"
+   - "Show me the recent code changes"
+   - "What features were added in the latest release?"
+   - "What did the user change in their last commit?"
+   - "What are the main changes between versions?"
+   - "Summarize the recent code modifications"
+   - "What bugs were fixed in recent commits?"
+
+5. FOLLOW_UP: Questions that reference or build upon previous questions/answers in the conversation. Examples:
    - "Can you explain that part in more detail?"
    - "What about the other functions it calls?"
    - "How does that relate to what you showed earlier?"
@@ -1343,11 +1351,10 @@ You are an AI assistant that helps categorize user questions about codebases int
    - "Why does it work that way?"
    - "What else is connected to this?"
 
-Based on the query below, categorize it into exactly ONE of these types: PROJECT_LEVEL, FUNCTION_TRACE, USER_FLOW, or FOLLOW_UP.
+Based on the query below, categorize it into exactly ONE of these types: PROJECT_LEVEL, FUNCTION_TRACE, USER_FLOW, RELEASE_ANALYSIS, or FOLLOW_UP.
 Respond with ONLY the category name, nothing else.
 
-Query: ${query}
-`;
+Query: ${query}`;
 
       const resp = await model.generateContent([prompt]);
       const categoryType = resp.response.text().trim();
@@ -1362,9 +1369,13 @@ Query: ${query}
 
       // Validate the response is one of the expected categories
       if (
-        !['PROJECT_LEVEL', 'FUNCTION_TRACE', 'USER_FLOW', 'FOLLOW_UP'].includes(
-          categoryType,
-        )
+        ![
+          'PROJECT_LEVEL',
+          'FUNCTION_TRACE',
+          'USER_FLOW',
+          'FOLLOW_UP',
+          'RELEASE_ANALYSIS',
+        ].includes(categoryType)
       ) {
         console.warn(
           `Unexpected category type returned: ${categoryType}, defaulting to PROJECT_LEVEL`,
