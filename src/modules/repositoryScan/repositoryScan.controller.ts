@@ -102,6 +102,7 @@ export class RepositoryScanController {
       body.query,
       req.user.accountId,
       body.threadId,
+      body.analysisMode,
     );
   }
 

@@ -57,10 +57,16 @@ export class RepositoryScanService {
     query: string,
     accountId: string,
     threadId?: string,
+    analysisMode?:
+      | 'standard'
+      | 'senior'
+      | 'code_review'
+      | 'architecture'
+      | 'release_analysis',
   ) {
     try {
       console.log(
-        `[analyzeRepositoryRefactored] Processing query: "${query}" with threadId: ${threadId || 'none'}`,
+        `[analyzeRepositoryRefactored] Processing query: "${query}" with threadId: ${threadId || 'none'} and mode: ${analysisMode || 'standard'}`,
       );
 
       const seniorEngineerAnalysisService = new SeniorEngineerAnalysisService();
@@ -83,6 +89,9 @@ export class RepositoryScanService {
         query,
         accountId,
         threadId: validThreadId,
+        analysisMode: analysisMode || 'standard',
+        includeTracing:
+          analysisMode === 'senior' || analysisMode === 'release_analysis',
       });
     } catch (error) {
       console.error(`[analyzeRepositoryRefactored] Error:`, error);
@@ -310,7 +319,7 @@ export class RepositoryScanService {
       }
       try {
         lines = fileContent.toString().split('\n');
-      } catch (parseError) {
+      } catch (error) {
         console.error(
           '❌ **fileContent**: ',
           typeof fileContent,
@@ -338,9 +347,6 @@ export class RepositoryScanService {
       // Extract file extension and name
       const fileName =
         fileChanges.name || fileChanges.fileRelativePath.split('/').pop();
-      const fileExtension = fileName.includes('.')
-        ? fileName.substring(fileName.lastIndexOf('.'))
-        : '';
 
       // Determine file type based on analysis tags
       const fileTypeStr = analysisResult.tags?.[0] || 'UNKNOWN';

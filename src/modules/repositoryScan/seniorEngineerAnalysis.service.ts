@@ -561,26 +561,119 @@ Focus on high-level strategic guidance while providing specific technical recomm
   }
 
   buildEnhancedSemanticPrompt(query: string, analysisMode: string): string {
+    const modeInstructions = this.getModeInstructions(analysisMode);
+
     return `
-As a senior engineer with deep domain expertise, analyze this query comprehensively:
+You are an expert software engineer analyzing this codebase with ${analysisMode} analysis mode.
+
+${modeInstructions}
 
 Query: "${query}"
-Analysis Mode: ${analysisMode}
 
-Provide thorough analysis covering:
-1. **Direct Answer**: Address the specific question asked
-2. **Context and Background**: Relevant technical context
-3. **Implementation Details**: Specific code patterns and examples
-4. **Best Practices**: Industry standards and project-specific practices
-5. **Common Pitfalls**: What to avoid and why
-6. **Performance Considerations**: Efficiency and optimization aspects
-7. **Security Implications**: Security considerations and best practices
-8. **Testing Approaches**: How to verify and validate the implementation
-9. **Alternative Solutions**: Other approaches and their trade-offs
-10. **Future Considerations**: Scalability and maintainability aspects
+Based on the provided code files, give a comprehensive technical answer that:
+1. Directly addresses the specific question
+2. References actual code implementations
+3. Provides technical depth appropriate for the analysis mode
+4. Includes practical recommendations where relevant
 
-Provide actionable insights with specific examples from the codebase.
+Your answer should be technically accurate and immediately actionable.
 `;
+  }
+
+  /**
+   * Build prompt for release analysis queries
+   */
+  buildReleaseAnalysisPrompt(
+    query: string,
+    releaseHighlights: any[],
+    releaseSummary: any,
+  ): string {
+    return `
+As a senior software engineer and release manager, analyze the recent release changes and commit history.
+
+Query: "${query}"
+
+Release Summary:
+- Total commits analyzed: ${releaseSummary?.totalCommits || 0}
+- Contributors involved: ${releaseSummary?.contributors || 0}
+- Time span: ${releaseSummary?.timespan?.from ? `${releaseSummary.timespan.from} to ${releaseSummary.timespan.to}` : 'Recent activity'}
+
+Recent Release Highlights:
+${releaseHighlights
+  .map(
+    (highlight) => `
+- Commit: ${highlight.commitMessage} by ${highlight.committer}
+  Impact: +${highlight.additions}/-${highlight.deletions} lines, ${highlight.totalFiles} files
+  Summary: ${typeof highlight.summary === 'object' ? JSON.stringify(highlight.summary) : highlight.summary}
+`,
+  )
+  .join('\n')}
+
+Contributor Activity:
+${
+  releaseSummary?.contributorStats
+    ? Object.entries(releaseSummary.contributorStats)
+        .map(
+          ([contributor, stats]: [string, any]) => `
+- ${contributor}: ${stats.commitCount} commits, +${stats.linesAdded}/-${stats.linesRemoved} lines
+`,
+        )
+        .join('\n')
+    : 'No contributor data available'
+}
+
+Based on this release and commit analysis, provide insights about:
+1. Key changes and their potential impact
+2. Contributors and their contributions
+3. Areas of the codebase that changed most frequently
+4. Risk assessment for the changes
+5. Recommendations for deployment or further development
+
+Focus on answering the specific question while providing context from the commit history and release data.
+`;
+  }
+
+  /**
+   * Get mode-specific instructions for analysis
+   */
+  private getModeInstructions(analysisMode: string): string {
+    switch (analysisMode) {
+      case 'senior':
+        return `
+Provide expert-level analysis covering:
+- Architectural implications and design patterns
+- Performance and scalability considerations
+- Security and compliance aspects
+- Maintenance and technical debt assessment
+- Industry best practices and alternatives`;
+      case 'code_review':
+        return `
+Focus on code quality aspects:
+- Code structure and organization
+- Naming conventions and readability
+- Error handling and edge cases
+- Testing coverage and testability
+- Refactoring opportunities`;
+      case 'architecture':
+        return `
+Emphasize architectural concerns:
+- System design and component relationships
+- Data flow and dependencies
+- Scalability and modularity
+- Integration patterns and interfaces
+- Deployment and infrastructure considerations`;
+      case 'release_analysis':
+        return `
+Focus on release and change management:
+- Impact assessment of changes
+- Risk analysis and mitigation
+- Deployment considerations
+- Rollback strategies
+- Monitoring and observability`;
+      default:
+        return `
+Provide comprehensive technical analysis covering implementation details, best practices, and practical recommendations.`;
+    }
   }
 
   /**

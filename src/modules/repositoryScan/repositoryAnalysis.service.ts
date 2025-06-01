@@ -26,7 +26,12 @@ export interface QueryAnalysisRequest {
   query: string;
   accountId: string;
   threadId?: string;
-  analysisMode?: 'standard' | 'senior' | 'code_review' | 'architecture';
+  analysisMode?:
+    | 'standard'
+    | 'senior'
+    | 'code_review'
+    | 'architecture'
+    | 'release_analysis';
   includeTracing?: boolean;
 }
 
@@ -39,6 +44,7 @@ export interface QueryAnalysisResponse {
   resourceAnalysis?: ResourceAnalysis;
   codeInsights?: CodeInsights;
   architecturalGuidance?: ArchitecturalGuidance;
+  releaseAnalysis?: ReleaseAnalysis;
 }
 
 export interface AnalysisTrace {
@@ -189,6 +195,57 @@ export interface PreviousMessage {
   answer?: any; // Only present when isDetailed is true
 }
 
+export interface ReleaseAnalysis {
+  commitsSummary: CommitSummary[];
+  releaseHighlights: ReleaseHighlight[];
+  contributorActivity: ContributorActivity[];
+  impactAnalysis: ReleaseImpact;
+  changeTimeline: ChangeTimelineEntry[];
+}
+
+export interface CommitSummary {
+  commitId: string;
+  commitMessage: string;
+  committer: string;
+  timestamp: Date;
+  additions: number;
+  deletions: number;
+  filesChanged: number;
+  summary: any;
+  impact: 'low' | 'medium' | 'high';
+}
+
+export interface ReleaseHighlight {
+  category: 'feature' | 'bugfix' | 'performance' | 'security' | 'refactor';
+  description: string;
+  commits: string[];
+  impact: string;
+  filesAffected: string[];
+}
+
+export interface ContributorActivity {
+  committer: string;
+  commitCount: number;
+  linesAdded: number;
+  linesRemoved: number;
+  impactScore: number;
+  keyContributions: string[];
+}
+
+export interface ReleaseImpact {
+  overallScope: 'minor' | 'major' | 'patch';
+  criticalAreas: string[];
+  riskLevel: 'low' | 'medium' | 'high';
+  recommendedActions: string[];
+}
+
+export interface ChangeTimelineEntry {
+  date: Date;
+  commits: string[];
+  summary: string;
+  contributor: string;
+}
+
 @Injectable()
 export class RepositoryAnalysisService {
   constructor(
@@ -301,6 +358,7 @@ Consider these enhanced categories:
 - SECURITY_AUDIT: Security vulnerabilities, best practices
 - MODULE_DESIGN: New feature/module design guidance
 - TECHNICAL_DEBT: Legacy code analysis, modernization suggestions
+- RELEASE_ANALYSIS: Questions about commits, releases, changes, contributors, recent updates
 - FOLLOW_UP: Contextual follow-up questions
 - USER_FLOW: User journey and business logic analysis
 - FUNCTION_TRACE: Deep code tracing and debugging
@@ -311,6 +369,9 @@ Return the most appropriate category that allows for the deepest technical analy
 
     const category = await gemini.categorizeQueryType(seniorPrompt, hasThread);
 
+    console.log(
+      `[categorizeQueryWithSeniorAnalysis] Categorized as ${category}`,
+    );
     trace.decisionPoints.push({
       step: 'query_categorization',
       reasoning: `Categorized as ${category} based on query content and analysis mode`,
@@ -319,10 +380,15 @@ Return the most appropriate category that allows for the deepest technical analy
         'USER_FLOW',
         'FUNCTION_TRACE',
         'PROJECT_LEVEL',
+        'RELEASE_ANALYSIS',
       ],
       chosenPath: category,
       confidence: 0.85,
     });
+
+    console.log(
+      `[categorizeQueryWithSeniorAnalysis] Categorized as ${category}`,
+    );
 
     return category;
   }
@@ -533,6 +599,14 @@ Return the most appropriate category that allows for the deepest technical analy
         );
       case 'TECHNICAL_DEBT':
         return await this.handleTechnicalDebtAnalysis(
+          originalQuery,
+          enhancedQuery,
+          context,
+          threadId,
+          trace,
+        );
+      case 'RELEASE_ANALYSIS':
+        return await this.handleReleaseAnalysis(
           originalQuery,
           enhancedQuery,
           context,
@@ -971,6 +1045,159 @@ Return the most appropriate category that allows for the deepest technical analy
     return response;
   }
 
+  /**
+   * Handle release analysis queries
+   */
+  private async handleReleaseAnalysis(
+    query: string,
+    enhancedQuery: string,
+    context: AnalysisContext,
+    threadId?: string,
+    trace?: AnalysisTrace,
+  ): Promise<QueryAnalysisResponse> {
+    trace?.executionPath.push('handleReleaseAnalysis');
+
+    try {
+      // Get previous conversation context if this is a follow-up
+      let previousContext = '';
+      if (threadId) {
+        const previousMessages = await this.getPreviousMessages(threadId);
+        if (previousMessages.length > 0) {
+          previousContext = previousMessages
+            .map((msg) => {
+              const answer = msg.isDetailed ? msg.answer : msg.summary;
+              return `Q: ${msg.question}\nA: ${answer}`;
+            })
+            .join('\n\n');
+        }
+      }
+
+      // Optimize commit fetching by adding specific fields selection
+      const recentCommits = await this.prisma.commitSummary.findMany({
+        where: {
+          repositoryId: context.repository.repositoryId,
+        },
+        select: {
+          commitMessage: true,
+          committer: true,
+          additions: true,
+          deletions: true,
+          totalFiles: true,
+          createdAt: true,
+          summary: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      });
+
+      if (recentCommits.length === 0) {
+        return await this.handleEnhancedProjectLevelQuery(
+          query,
+          enhancedQuery,
+          context,
+          threadId,
+          'standard',
+          trace,
+        );
+      }
+
+      // Only perform semantic search if explicitly needed or if it's a follow-up question
+      let relevantCommits = recentCommits;
+      const needsSemanticSearch =
+        /specific|about|related to|regarding|concerning/i.test(query) ||
+        (previousContext && /commit|change|update|fix|feature/i.test(query));
+
+      if (needsSemanticSearch) {
+        const gemini = new Gemini();
+        try {
+          // Include previous context in embedding if it exists
+          const searchQuery = previousContext
+            ? `${previousContext}\n\nFollow-up: ${query}`
+            : query;
+
+          const embedding = await gemini.getEmbeddings(searchQuery);
+          const vectorQuery = `[${embedding.join(',')}]`;
+          const semanticResults = await this.performCommitSemanticSearch(
+            vectorQuery,
+            context.repository.repositoryId,
+            5,
+          );
+          if (semanticResults.length > 0) {
+            relevantCommits = semanticResults;
+          }
+        } catch (error) {
+          console.warn('Semantic search failed, using recent commits:', error);
+        }
+      }
+
+      // Optimize file fetching
+      const releaseFiles = await this.findReleaseFiles(
+        context.repositoryScanId,
+      );
+      const filesWithCode = await this.fetchFilesWithCode(
+        releaseFiles.slice(0, 5),
+        context,
+      );
+
+      // Build prompt with context awareness
+      const releasePrompt = `
+${previousContext ? `Previous conversation:\n${previousContext}\n\nFollow-up question: "${query}"\n` : `New question: "${query}"\n`}
+
+Analyze these ${relevantCommits.length} commits:
+
+${relevantCommits
+  .map(
+    (
+      commit,
+    ) => `• ${commit.commitMessage.split('\n')[0]} (${commit.committer}) | +${commit.additions}/-${commit.deletions} in ${commit.totalFiles} files
+`,
+  )
+  .join('')}
+
+${
+  previousContext
+    ? 'Provide a focused answer to the follow-up question, using context from the previous conversation and these commits.'
+    : `Provide a concise analysis focusing on:
+1. Key changes and their impact
+2. Main contributors
+3. Most affected areas
+4. Notable patterns`
+}
+
+Keep the response focused and practical.`;
+
+      const gemini = new Gemini();
+      const queryResponse = await gemini.generateAnswer(
+        releasePrompt,
+        filesWithCode,
+        enhancedQuery,
+      );
+
+      if (trace) {
+        trace.performanceMetrics.aiCallsCount++;
+      }
+
+      return await this.createEnhancedAssistanceResponse(
+        query,
+        queryResponse,
+        context,
+        this,
+        threadId,
+        null,
+      );
+    } catch (error) {
+      console.error('Error in handleReleaseAnalysis:', error);
+      return await this.handleEnhancedProjectLevelQuery(
+        query,
+        enhancedQuery,
+        context,
+        threadId,
+        'standard',
+        trace,
+      );
+    }
+  }
+
   // Helper methods
 
   private async getPreviousMessages(
@@ -1367,6 +1594,7 @@ Your answer should be immediately useful to someone trying to understand this co
         resourceAnalysis: analysisData.resourceAnalysis,
         codeInsights: analysisData.codeInsights,
         architecturalGuidance: analysisData.architecturalGuidance,
+        releaseAnalysis: analysisData.releaseAnalysis,
       };
     }
 
@@ -2495,5 +2723,118 @@ Your answer should be immediately useful to someone trying to understand this co
         ],
       },
     });
+  }
+
+  /**
+   * Find release-relevant files based on query context
+   */
+  private async findReleaseFiles(repositoryScanId: string) {
+    return await this.prisma.fileDocumentation.findMany({
+      where: {
+        repositoryScanId,
+        OR: [
+          { name: { contains: 'CHANGELOG', mode: 'insensitive' } },
+          { name: { contains: 'RELEASE', mode: 'insensitive' } },
+          { name: { contains: 'VERSION', mode: 'insensitive' } },
+          { name: { equals: 'package.json' } },
+          { name: { contains: 'readme', mode: 'insensitive' } },
+          { fileType: { hasSome: ['CONTROLLER', 'SERVICE', 'API'] } },
+        ],
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 20,
+    });
+  }
+
+  /**
+   * Analyze release highlights from commits
+   */
+  private async analyzeReleaseHighlights(
+    filesWithCode: any[],
+    context: AnalysisContext,
+  ) {
+    // Get recent commits for release analysis
+    const recentCommits = await this.prisma.commitSummary.findMany({
+      where: {
+        repositoryId: context.repositoryId,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+
+    return recentCommits.map((commit) => ({
+      commitId: commit.commitId,
+      commitMessage: commit.commitMessage,
+      committer: commit.committer,
+      additions: commit.additions,
+      deletions: commit.deletions,
+      totalFiles: commit.totalFiles,
+      summary: commit.summary,
+      timestamp: commit.createdAt,
+    }));
+  }
+
+  /**
+   * Generate release summary analysis
+   */
+  private async generateReleaseSummary(
+    filesWithCode: any[],
+    context: AnalysisContext,
+  ) {
+    const recentCommits = await this.prisma.commitSummary.findMany({
+      where: {
+        repositoryId: context.repositoryId,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
+
+    // Analyze contributor activity
+    const contributorStats = recentCommits.reduce((acc: any, commit) => {
+      if (!acc[commit.committer]) {
+        acc[commit.committer] = {
+          commitCount: 0,
+          linesAdded: 0,
+          linesRemoved: 0,
+          commits: [],
+        };
+      }
+      acc[commit.committer].commitCount++;
+      acc[commit.committer].linesAdded += commit.additions;
+      acc[commit.committer].linesRemoved += commit.deletions;
+      acc[commit.committer].commits.push(commit.commitId);
+      return acc;
+    }, {});
+
+    return {
+      totalCommits: recentCommits.length,
+      contributors: Object.keys(contributorStats).length,
+      contributorStats,
+      timespan:
+        recentCommits.length > 0
+          ? {
+              from: recentCommits[recentCommits.length - 1].createdAt,
+              to: recentCommits[0].createdAt,
+            }
+          : null,
+    };
+  }
+
+  /**
+   * Perform semantic search on commits
+   */
+  private async performCommitSemanticSearch(
+    vectorQuery: string,
+    repositoryId: string,
+    limit: number,
+  ) {
+    return (await this.prisma.$queryRaw`
+      SELECT id, "commitId", "commitMessage", committer, summary, "createdAt"
+      FROM "commitSummary" 
+      WHERE "repositoryId" = ${repositoryId}
+      AND "commitSummaryEmbedding" IS NOT NULL
+      ORDER BY "commitSummaryEmbedding" <=> ${vectorQuery}::vector 
+      LIMIT ${limit}
+    `) as any[];
   }
 }

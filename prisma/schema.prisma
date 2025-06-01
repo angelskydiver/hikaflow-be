@@ -341,16 +341,17 @@ model PrTracker {
 }
 
 model commitSummary {
-  id            String @id @default(uuid())
-  repositoryId  String
-  reportId      String
-  commitId      String
-  commitMessage String
-  additions     Int
-  deletions     Int
-  totalFiles    Int
-  committer     String
-  summary       Json   @default("{}")
+  id                     String                      @id @default(uuid())
+  repositoryId           String
+  reportId               String
+  commitId               String
+  commitMessage          String
+  additions              Int
+  deletions              Int
+  totalFiles             Int
+  committer              String
+  summary                Json                        @default("{}")
+  commitSummaryEmbedding Unsupported("vector(768)")? // Store embeddings as vector for semantic search
 
   repository Repository      @relation(fields: [repositoryId], references: [repositoryId])
   report     ExecutiveReport @relation(fields: [reportId], references: [id])
