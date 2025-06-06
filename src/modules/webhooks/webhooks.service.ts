@@ -1687,26 +1687,28 @@ export class WebhooksService {
       const createCommentsMapping = allIssues
         .map((data, index) => {
           // Check if it's a PR comment by checking the 'isPrIssue' flag
-          // @ts-expect-error - The comments array is guaranteed to have the same length as allIssues
-          if (comments[index].value?.isPrIssue) {
-            const payload = {
-              repositoryId: prInfo.id,
-              prId: prInfo.prId,
-              content: data.content,
-              line: parseInt(data.line),
-              file: data.file,
-              issue: data.issue,
-              issueCategory: data.category,
-              severity: data.priority,
-              reason: data.reason,
-              type: CommentType.PULL_REQUEST,
-              enhancementType: data.enhancementType,
-              affectedCodeBlock: data.affectedCodeBlock || {},
-              improvedCodeBlock: data.improvedCodeBlock || {},
-              tags: data.tags || [],
-            };
-            return this._commentService.createComment(payload);
-          }
+          // if (comments[index].value?.isPrIssue) {
+          const payload = {
+            repositoryId: prInfo.id,
+            prId: prInfo.prId,
+            content: data.content,
+            line: parseInt(data.line),
+            file: data.file,
+            issue: data.issue,
+            issueCategory: data.category,
+            severity: data.priority,
+            reason: data.reason,
+            // @ts-expect-error - The comments array is guaranteed to have the same length as allIssues
+            type: comments[index].value?.isPrIssue
+              ? CommentType.PULL_REQUEST
+              : CommentType.ISSUE,
+            enhancementType: data.enhancementType,
+            affectedCodeBlock: data.affectedCodeBlock || {},
+            improvedCodeBlock: data.improvedCodeBlock || {},
+            tags: data.tags || [],
+          };
+          return this._commentService.createComment(payload);
+          // }
           return undefined;
         })
         .filter((comment) => comment !== undefined);
