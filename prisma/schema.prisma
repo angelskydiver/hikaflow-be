@@ -301,12 +301,6 @@ model Comment {
   severity      String        @default("LOW")
   reason        String        @default("")
 
-  // Enhanced fields for code suggestions like GitHub Copilot
-  enhancementType   String? // CODE_REPLACEMENT, SUGGESTION, REFACTOR, SECURITY_FIX
-  affectedCodeBlock Json?    @default("{}") // { startLine, endLine, codeLines[] }
-  improvedCodeBlock Json?    @default("{}") // { startLine, endLine, codeLines[], explanation }
-  tags              String[] @default([]) // SECURITY, PERFORMANCE, MAINTAINABILITY, etc.
-
   repository Repository @relation(fields: [repositoryId], references: [repositoryId])
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
