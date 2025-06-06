@@ -19,6 +19,7 @@ import {
 } from 'src/config/helpers/repositories/bitbucket.helper';
 import {
   commentPr,
+  commentPrSummary,
   commitInfo,
   fetchFiles,
   fetchPrCommits,
@@ -1724,6 +1725,10 @@ export class WebhooksService {
         ),
         Promise.allSettled(createCommentsMapping),
       ]);
+
+      await commentPrSummary(prInfo, {
+        issue: analyzeCombineSummary.prSummary,
+      });
 
       // Notification and status update can be done in parallel
       const notificationPayload = {
