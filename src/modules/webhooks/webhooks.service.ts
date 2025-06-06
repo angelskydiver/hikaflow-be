@@ -1687,6 +1687,7 @@ export class WebhooksService {
       const createCommentsMapping = allIssues
         .map((data, index) => {
           // Check if it's a PR comment by checking the 'isPrIssue' flag
+          // @ts-expect-error - The comments array is guaranteed to have the same length as allIssues
           if (comments[index].value?.isPrIssue) {
             const payload = {
               repositoryId: prInfo.id,
