@@ -10,7 +10,6 @@ import { shouldAnalyze } from 'src/config/constants/unnecessary.files.constant';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
 import { filterHighPriorityComments } from 'src/config/helpers/comment.helper';
 import {
-  changesMapping,
   commentBitbucketPr,
   commitInfoBitbucket,
   extractChangesFromPatch,
@@ -20,7 +19,6 @@ import {
 } from 'src/config/helpers/repositories/bitbucket.helper';
 import {
   commentPr,
-  commentPrSummary,
   commitInfo,
   fetchFiles,
   fetchPrCommits,
@@ -283,6 +281,10 @@ export class WebhooksService {
           severity: data.priority.split(' ')[0],
           reason: data.reason,
           type: CommentType.PULL_REQUEST,
+          enhancementType: data.enhancementType,
+          affectedCodeBlock: data.affectedCodeBlock || {},
+          improvedCodeBlock: data.improvedCodeBlock || {},
+          tags: data.tags || [],
         };
         return this._commentService.createComment(payload);
       });
@@ -452,6 +454,10 @@ export class WebhooksService {
           severity: data.priority.split(' ')[0],
           reason: data.reason,
           type: CommentType.PULL_REQUEST,
+          enhancementType: data.enhancementType,
+          affectedCodeBlock: data.affectedCodeBlock || {},
+          improvedCodeBlock: data.improvedCodeBlock || {},
+          tags: data.tags || [],
         };
         return this._commentService.createComment(payload);
       });
@@ -1351,15 +1357,13 @@ export class WebhooksService {
       const { duplicateIdenticalCodeIssue, duplicateCodes } =
         await this.detectDuplicateAndIdenticalCode(filePatch);
 
-      const PrPatches = changesMapping(filePatch);
+      const repository = await this._prismaService.repository.findFirst({
+        where: { id: prInfo.repositoryId },
+        include: {
+          repositorySettings: true,
+        },
+      });
 
-      const { repositorySettings } =
-        await this._prismaService.repository.findFirst({
-          where: { id: prInfo.repositoryId },
-          include: {
-            repositorySettings: true,
-          },
-        });
       const deepSeekWrapper = new DeepSeek();
 
       let allIssues = duplicateIdenticalCodeIssue;
@@ -1386,18 +1390,18 @@ export class WebhooksService {
               const AiResponse =
                 await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(
                   changes,
-                  repositorySettings,
+                  repository?.repositorySettings || [],
                 );
               return {
                 codeIssues: AiResponse.codeIssues,
-                prSummary: AiResponse.prSummary,
+                chunkSummary: AiResponse.chunkSummary,
               };
             } catch (error) {
               console.error(
                 `Error analyzing Bitbucket file ${changes.file}:`,
                 error,
               );
-              return { codeIssues: [], prSummary: '' };
+              return { codeIssues: [], chunkSummary: '' };
             }
           }),
         );
@@ -1417,34 +1421,39 @@ export class WebhooksService {
       allBatchResults.forEach((batchResults) => {
         batchResults.forEach((result) => {
           allIssues = [...allIssues, ...result.codeIssues];
-          if (result.prSummary) {
-            allSummaries.push({ prSummary: result.prSummary });
+          if (result.chunkSummary) {
+            allSummaries.push(result.chunkSummary);
           }
         });
       });
 
       // Reliability analysis can be done while other operations are in progress
-      const reliabilityAnalysisPromise =
-        deepSeekWrapper.deepAnalyzeCodeFilesForIssuesReliability(allIssues);
+      // const reliabilityAnalysisPromise =
+      //   deepSeekWrapper.deepAnalyzeCodeFilesForIssuesReliability(allIssues);
 
       const combinedSummary = allSummaries;
 
       // Wait for reliability analysis and prepare filtered issues
-      const reliabilityResult = await reliabilityAnalysisPromise;
-      allIssues = reliabilityResult?.codeIssues || allIssues;
+      // const reliabilityResult = await reliabilityAnalysisPromise;
+      // allIssues = reliabilityResult?.codeIssues || allIssues;
 
       const filteredIssues = filterHighPriorityComments(allIssues);
 
       // Post high-priority issues as inline comments on Bitbucket and analyze summary in parallel
-      const [_commentsResult, analyzeCombineSummary] = await Promise.all([
+      const [, analyzeCombineSummary] = await Promise.all([
         Promise.allSettled(
-          filteredIssues.map(({ issue, priority, reason, line, file }) =>
+          filteredIssues.map((currentIssue) =>
             commentBitbucketPr({
               token: prInfo.token,
               commentUrl: prInfo.links.comments.href,
               body: {
-                content: { raw: `${issue} - Priority: ${priority}\n${reason}` },
-                inline: { to: parseInt(line), path: file },
+                content: {
+                  raw: this.formatEnhancedComment(currentIssue),
+                },
+                inline: {
+                  to: parseInt(currentIssue.line),
+                  path: currentIssue.file,
+                },
               },
             }),
           ),
@@ -1453,7 +1462,7 @@ export class WebhooksService {
       ]);
 
       const createCommentsMapping = filteredIssues
-        .map((data, index) => {
+        .map((data) => {
           const payload = {
             repositoryId: prInfo.id,
             prId: prInfo.prId,
@@ -1464,9 +1473,11 @@ export class WebhooksService {
             issueCategory: data.category,
             severity: data.priority,
             reason: data.reason,
-            type: PrPatches[`${data.file}-${data.line}`]
-              ? CommentType.PULL_REQUEST
-              : CommentType.ISSUE,
+            type: CommentType.PULL_REQUEST,
+            enhancementType: data.enhancementType,
+            affectedCodeBlock: data.affectedCodeBlock || {},
+            improvedCodeBlock: data.improvedCodeBlock || {},
+            tags: data.tags || [],
           };
           return this._commentService.createComment(payload);
         })
@@ -1612,11 +1623,11 @@ export class WebhooksService {
                 );
               return {
                 codeIssues: AiResponse.codeIssues,
-                prSummary: AiResponse.prSummary,
+                chunkSummary: AiResponse.chunkSummary,
               };
             } catch (error) {
               console.error(`Error analyzing file ${changes.file}:`, error);
-              return { codeIssues: [], prSummary: '' };
+              return { codeIssues: [], chunkSummary: '' };
             }
           }),
         );
@@ -1636,8 +1647,8 @@ export class WebhooksService {
       allBatchResults.forEach((batchResults) => {
         batchResults.forEach((result) => {
           allIssues = [...allIssues, ...result.codeIssues];
-          if (result.prSummary) {
-            allSummaries.push({ prSummary: result.prSummary });
+          if (result.chunkSummary) {
+            allSummaries.push(result.chunkSummary);
           }
         });
       });
@@ -1653,8 +1664,8 @@ export class WebhooksService {
       this.performanceMetrics.batchesProcessed += batches.length;
 
       // Reliability analysis can be done while other operations are in progress
-      const reliabilityAnalysisPromise =
-        deepSeekWrapper.deepAnalyzeCodeFilesForIssuesReliability(allIssues);
+      // const reliabilityAnalysisPromise =
+      //   deepSeekWrapper.deepAnalyzeCodeFilesForIssuesReliability(allIssues);
 
       // Step 3: Combine summaries into a single PR summary
       const combinedSummary = allSummaries;
@@ -1663,15 +1674,13 @@ export class WebhooksService {
       const commentsMapping = allIssues.map((data) => commentPr(data, prInfo));
 
       // Wait for reliability analysis and execute comments in parallel
-      const [reliabilityResult, comments, analyzeCombineSummary] =
-        await Promise.all([
-          reliabilityAnalysisPromise,
-          Promise.allSettled(commentsMapping),
-          deepSeekWrapper.analyzeCombineSummary(combinedSummary),
-        ]);
+      const [comments, analyzeCombineSummary] = await Promise.all([
+        Promise.allSettled(commentsMapping),
+        deepSeekWrapper.analyzeCombineSummary(combinedSummary),
+      ]);
 
       // Update allIssues with reliability results
-      allIssues = reliabilityResult?.codeIssues || allIssues;
+      // allIssues = reliabilityResult?.codeIssues || allIssues;
 
       // Parallel execution of database operations
       const createCommentsMapping = allIssues
@@ -1690,6 +1699,10 @@ export class WebhooksService {
               severity: data.priority,
               reason: data.reason,
               type: CommentType.PULL_REQUEST,
+              enhancementType: data.enhancementType,
+              affectedCodeBlock: data.affectedCodeBlock || {},
+              improvedCodeBlock: data.improvedCodeBlock || {},
+              tags: data.tags || [],
             };
             return this._commentService.createComment(payload);
           }
@@ -1702,10 +1715,6 @@ export class WebhooksService {
         this._pullRequestService.updatePullRequest(prInfo.prId, {
           summary: analyzeCombineSummary.prSummary,
         }),
-        commentPrSummary(prInfo, {
-          issue: analyzeCombineSummary.prSummary,
-        }),
-        Promise.allSettled(createCommentsMapping),
         this._commentService.registerDuplicateCode(
           duplicateCodes.map((data) => ({
             ...data,
@@ -1713,10 +1722,11 @@ export class WebhooksService {
             prId: prInfo.prNumber.toString(),
           })),
         ),
+        Promise.allSettled(createCommentsMapping),
       ]);
 
       // Notification and status update can be done in parallel
-      const payload = {
+      const notificationPayload = {
         accountId: prInfo.accountId,
         authorName: prInfo.owner,
         repositoryInfo: {
@@ -1727,7 +1737,7 @@ export class WebhooksService {
       };
 
       await Promise.all([
-        this.sendPrCreateNotification(payload),
+        this.sendPrCreateNotification(notificationPayload),
         this._prTrackerService.updatePrInfo(
           `${prInfo.repo}-${prInfo.prNumber}-${prInfo.action}`,
           PrTrackerStatus.APPROVED,
@@ -2017,14 +2027,13 @@ export class WebhooksService {
       const emailMapping = accounts
         .filter((account) => account.user.sendEmail)
         .map((account) => {
-          const payload = {
+          return this._mailService.prClosedNotification({
             email: account.user.email,
             adminName: account.user.firstName,
             repositoryName: data.repositoryInfo.repositoryName,
             authorName: data.authorName,
             reportUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/report/${data.reportId}`,
-          };
-          // this._mailService.prClosedNotification(payload);
+          });
         });
 
       await Promise.all(emailMapping);
@@ -2039,5 +2048,199 @@ export class WebhooksService {
     return this._prismaService.repository.findUnique({
       where: { repositoryId },
     });
+  }
+
+  private formatEnhancedComment(issue: any): string {
+    // Get file extension for syntax highlighting
+    const getFileExtension = (filename: string): string => {
+      if (!filename) return '';
+      const extension = filename.split('.').pop()?.toLowerCase();
+      const languageMap = {
+        ts: 'typescript',
+        js: 'javascript',
+        tsx: 'tsx',
+        jsx: 'jsx',
+        py: 'python',
+        java: 'java',
+        cs: 'csharp',
+        cpp: 'cpp',
+        c: 'c',
+        php: 'php',
+        rb: 'ruby',
+        go: 'go',
+        rs: 'rust',
+        kt: 'kotlin',
+        swift: 'swift',
+        html: 'html',
+        css: 'css',
+        json: 'json',
+        yaml: 'yaml',
+        sql: 'sql',
+        sh: 'bash',
+      };
+      return languageMap[extension] || extension || '';
+    };
+
+    let commentBody = '';
+
+    if (
+      issue.enhancementType === 'CODE_REPLACEMENT' &&
+      issue.improvedCodeBlock
+    ) {
+      commentBody = `## 🔧 ${issue.issue}
+**Priority:** ${issue.priority} | **Category:** ${issue.category}
+
+### 📍 Current Code (Lines ${issue.affectedCodeBlock?.startLine}-${issue.affectedCodeBlock?.endLine})
+\`\`\`${getFileExtension(issue.file)}
+${issue.affectedCodeBlock?.codeLines?.join('\n') || issue.content}
+\`\`\`
+
+### ✨ Improved Code
+\`\`\`${getFileExtension(issue.file)}
+${issue.improvedCodeBlock.codeLines.join('\n')}
+\`\`\`
+
+### 💡 Why This Improvement Matters
+${this.generateConsequences(issue)}
+
+### ⚠️ Consequences of Not Fixing
+${this.generateBenefits(issue)}
+
+${issue.reason}
+
+---
+*🚀 **Copy-paste ready!** This code follows best practices and is production-ready.*`;
+    } else if (issue.enhancementType === 'SUGGESTION') {
+      commentBody = `## 💡 ${issue.issue}
+**Priority:** ${issue.priority} | **Category:** ${issue.category}
+
+### 📍 Code Location (Lines ${issue.affectedCodeBlock?.startLine}-${issue.affectedCodeBlock?.endLine})
+\`\`\`${getFileExtension(issue.file)}
+${issue.affectedCodeBlock?.codeLines?.join('\n') || issue.content}
+\`\`\`
+
+### 🤔 Why This Needs Attention
+${this.generateConsequences(issue)}
+
+### 💭 Recommended Approach
+${issue.reason}
+
+### 🎯 Expected Outcomes
+${this.generateBenefits(issue)}
+
+---
+*📝 Multiple solutions possible - choose the approach that best fits your architecture.*`;
+    } else if (
+      issue.enhancementType === 'SECURITY_FIX' &&
+      issue.improvedCodeBlock
+    ) {
+      commentBody = `## 🛡️ **SECURITY RISK:** ${issue.issue}
+**Priority:** ${issue.priority} | **Impact:** Critical Security Vulnerability
+
+### ⚠️ Vulnerable Code (Lines ${issue.affectedCodeBlock?.startLine}-${issue.affectedCodeBlock?.endLine})
+\`\`\`${getFileExtension(issue.file)}
+${issue.affectedCodeBlock?.codeLines?.join('\n') || issue.content}
+\`\`\`
+
+### 🔒 Secure Implementation
+\`\`\`${getFileExtension(issue.file)}
+${issue.improvedCodeBlock.codeLines.join('\n')}
+\`\`\`
+
+### 🚨 **CRITICAL:** What Happens If Not Fixed
+${this.generateSecurityConsequences(issue)}
+
+### 🔐 Security Benefits
+${issue.improvedCodeBlock.explanation || ''}
+
+${issue.reason}
+
+---
+*🚨 **IMMEDIATE ACTION REQUIRED** - Deploy this fix as soon as possible to prevent security breaches.*`;
+    } else if (
+      issue.enhancementType === 'REFACTOR' &&
+      issue.improvedCodeBlock
+    ) {
+      commentBody = `## ♻️ Refactoring Opportunity: ${issue.issue}
+**Priority:** ${issue.priority} | **Focus:** Code Quality & Maintainability
+
+### 📍 Current Implementation (Lines ${issue.affectedCodeBlock?.startLine}-${issue.affectedCodeBlock?.endLine})
+\`\`\`${getFileExtension(issue.file)}
+${issue.affectedCodeBlock?.codeLines?.join('\n') || issue.content}
+\`\`\`
+
+### 🎯 Refactored Code
+\`\`\`${getFileExtension(issue.file)}
+${issue.improvedCodeBlock.codeLines.join('\n')}
+\`\`\`
+
+### 📈 Technical Debt Impact
+${this.generateTechnicalDebtConsequences(issue)}
+
+### 🚀 Refactoring Benefits
+${issue.improvedCodeBlock.explanation || ''}
+${this.generateBenefits(issue)}
+
+${issue.reason}
+
+---
+*✨ This refactoring improves code maintainability and reduces future development time.*`;
+    } else {
+      // Fallback format
+      commentBody = `## ${issue.issue}
+**Priority:** ${issue.priority}
+
+### 📍 Code Location
+\`\`\`${getFileExtension(issue.file)}
+${issue.content}
+\`\`\`
+
+### ⚠️ Why This Matters
+${this.generateConsequences(issue)}
+
+### 📋 Analysis
+${issue.reason}`;
+    }
+
+    return commentBody;
+  }
+
+  private generateConsequences(issue: any): string {
+    const consequenceMap = {
+      HIGH: [
+        '🔥 **Production Impact:** This could cause system failures or crashes',
+        '💸 **Business Risk:** Potential revenue loss and customer dissatisfaction',
+        '🔒 **Security Risk:** Vulnerability to attacks and data breaches',
+        '⚡ **Performance:** Significant performance degradation expected',
+      ],
+      MEDIUM: [
+        '⚠️ **Code Quality:** Increases technical debt and maintenance burden',
+        '🐛 **Bug Risk:** Higher probability of future bugs and issues',
+        '👥 **Team Productivity:** Slower development and harder debugging',
+        '📈 **Scalability:** May not handle increased load properly',
+      ],
+      LOW: [
+        '📚 **Maintainability:** Code becomes harder to understand and modify',
+        '🔄 **Development Speed:** Slower future feature development',
+        '📖 **Code Readability:** Confusing for other developers',
+        '🧪 **Testing:** More difficult to write and maintain tests',
+      ],
+    };
+
+    const consequences =
+      consequenceMap[issue.priority] || consequenceMap['MEDIUM'];
+    return consequences.slice(0, 2).join('\n');
+  }
+
+  private generateSecurityConsequences(currentIssue: any): string {
+    return `Security impact if not fixed: ${currentIssue.reason}`;
+  }
+
+  private generateTechnicalDebtConsequences(currentIssue: any): string {
+    return `Technical debt impact: ${currentIssue.reason}`;
+  }
+
+  private generateBenefits(currentIssue: any): string {
+    return `Benefits of fixing: ${currentIssue.reason}`;
   }
 }

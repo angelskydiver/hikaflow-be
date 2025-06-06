@@ -23,6 +23,22 @@ export class CreateCommentRequestDto {
   issueCategory: string;
   severity: string;
   type: CommentType;
+  reason?: string;
+
+  // Enhanced fields for GitHub Copilot-like suggestions
+  enhancementType?: string; // CODE_REPLACEMENT, SUGGESTION, REFACTOR, SECURITY_FIX
+  affectedCodeBlock?: {
+    startLine: number;
+    endLine: number;
+    codeLines: string[];
+  };
+  improvedCodeBlock?: {
+    startLine: number;
+    endLine: number;
+    codeLines: string[];
+    explanation: string;
+  };
+  tags?: string[]; // SECURITY, PERFORMANCE, MAINTAINABILITY, etc.
 }
 
 export class GetCommentRequestDto {
