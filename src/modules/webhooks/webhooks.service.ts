@@ -19,6 +19,7 @@ import {
 } from 'src/config/helpers/repositories/bitbucket.helper';
 import {
   commentPr,
+  commentPrSummary,
   commitInfo,
   fetchFiles,
   fetchPrCommits,
@@ -1698,7 +1699,10 @@ export class WebhooksService {
               issueCategory: data.category,
               severity: data.priority,
               reason: data.reason,
-              type: CommentType.PULL_REQUEST,
+              // @ts-expect-error - The comments array is guaranteed to have the same length as allIssues
+              type: comments[index].value?.isPrIssue
+                ? CommentType.PULL_REQUEST
+                : CommentType.ISSUE,
               enhancementType: data.enhancementType,
               affectedCodeBlock: data.affectedCodeBlock || {},
               improvedCodeBlock: data.improvedCodeBlock || {},
@@ -1724,6 +1728,10 @@ export class WebhooksService {
         ),
         Promise.allSettled(createCommentsMapping),
       ]);
+
+      await commentPrSummary(prInfo, {
+        issue: analyzeCombineSummary.prSummary,
+      });
 
       // Notification and status update can be done in parallel
       const notificationPayload = {
