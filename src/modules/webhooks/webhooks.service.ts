@@ -1699,10 +1699,7 @@ export class WebhooksService {
               issueCategory: data.category,
               severity: data.priority,
               reason: data.reason,
-              // @ts-expect-error - The comments array is guaranteed to have the same length as allIssues
-              type: comments[index].value?.isPrIssue
-                ? CommentType.PULL_REQUEST
-                : CommentType.ISSUE,
+              type: CommentType.PULL_REQUEST,
               enhancementType: data.enhancementType,
               affectedCodeBlock: data.affectedCodeBlock || {},
               improvedCodeBlock: data.improvedCodeBlock || {},
