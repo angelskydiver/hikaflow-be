@@ -33,6 +33,7 @@ export interface QueryAnalysisRequest {
     | 'architecture'
     | 'release_analysis';
   includeTracing?: boolean;
+  streamProgress?: (step: string, message: string, data?: any) => void;
 }
 
 export interface QueryAnalysisResponse {
@@ -282,9 +283,18 @@ export class RepositoryAnalysisService {
         `[analyzeRepository] Processing query: "${request.query}" with mode: ${request.analysisMode || 'standard'}`,
       );
 
+      // Stream progress updates
+      if (request.streamProgress) {
+        request.streamProgress('preparing', 'Preparing analysis context...');
+      }
+
       // Validate and prepare analysis context
       const context = await this.prepareAnalysisContext(request);
       trace.executionPath.push('prepareAnalysisContext');
+
+      if (request.streamProgress) {
+        request.streamProgress('enhancing', 'Enhancing query with context...');
+      }
 
       // Enhance query with thread context
       const enhancedQuery = await this.enhanceQueryWithContext(
@@ -292,6 +302,10 @@ export class RepositoryAnalysisService {
         request.threadId,
       );
       trace.executionPath.push('enhanceQueryWithContext');
+
+      if (request.streamProgress) {
+        request.streamProgress('categorizing', 'Categorizing query type...');
+      }
 
       // Categorize query type with enhanced AI analysis
       const gemini = new Gemini();
@@ -306,6 +320,16 @@ export class RepositoryAnalysisService {
 
       console.log(`[analyzeRepository] Query categorized as: ${queryType}`);
 
+      if (request.streamProgress) {
+        request.streamProgress(
+          'processing',
+          `Processing ${queryType.toLowerCase()} query...`,
+          {
+            queryType,
+          },
+        );
+      }
+
       // Route to appropriate handler with enhanced capabilities
       const response = await this.routeQueryToEnhancedHandler(
         queryType,
@@ -315,6 +339,7 @@ export class RepositoryAnalysisService {
         request.threadId,
         request.analysisMode || 'standard',
         trace,
+        request.streamProgress, // Pass the streaming function
       );
 
       // Add tracing data if requested
@@ -553,6 +578,7 @@ Return the most appropriate category that allows for the deepest technical analy
     threadId?: string,
     analysisMode: string = 'standard',
     trace?: AnalysisTrace,
+    streamProgress?: (step: string, message: string, data?: any) => void,
   ): Promise<QueryAnalysisResponse> {
     trace?.executionPath.push('routeQueryToEnhancedHandler');
 

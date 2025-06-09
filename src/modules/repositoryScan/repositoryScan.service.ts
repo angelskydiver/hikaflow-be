@@ -63,11 +63,23 @@ export class RepositoryScanService {
       | 'code_review'
       | 'architecture'
       | 'release_analysis',
+    streamProgress?: (step: string, message: string, data?: any) => void,
   ) {
     try {
       console.log(
         `[analyzeRepositoryRefactored] Processing query: "${query}" with threadId: ${threadId || 'none'} and mode: ${analysisMode || 'standard'}`,
       );
+
+      // Enhanced thinking progress updates
+      if (streamProgress) {
+        streamProgress('thinking', 'Examining the question complexity...');
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        streamProgress('thinking', 'Determining the best analysis approach...');
+        await new Promise((resolve) => setTimeout(resolve, 400));
+
+        streamProgress('initializing', 'Setting up analysis services...');
+      }
 
       const seniorEngineerAnalysisService = new SeniorEngineerAnalysisService();
       const analysisService = new RepositoryAnalysisService(
@@ -78,13 +90,33 @@ export class RepositoryScanService {
         seniorEngineerAnalysisService,
       );
 
+      if (streamProgress) {
+        streamProgress(
+          'thinking',
+          'Checking repository access and permissions...',
+        );
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        streamProgress(
+          'validating',
+          'Repository validation complete. Proceeding with analysis...',
+        );
+      }
+
       // Ensure threadId is properly handled - convert undefined/null to undefined
       const validThreadId =
         threadId && threadId !== 'undefined' && threadId !== 'null'
           ? threadId
           : undefined;
 
-      return await analysisService.analyzeRepository({
+      if (streamProgress) {
+        streamProgress(
+          'analyzing',
+          'Processing your query with AI analysis...',
+        );
+      }
+
+      const result = await analysisService.analyzeRepository({
         repositoryId,
         query,
         accountId,
@@ -92,9 +124,22 @@ export class RepositoryScanService {
         analysisMode: analysisMode || 'standard',
         includeTracing:
           analysisMode === 'senior' || analysisMode === 'release_analysis',
+        streamProgress, // Pass the streaming function to the analysis service
       });
+
+      if (streamProgress) {
+        streamProgress(
+          'finalizing',
+          'Finalizing response and saving results...',
+        );
+      }
+
+      return result;
     } catch (error) {
       console.error(`[analyzeRepositoryRefactored] Error:`, error);
+      if (streamProgress) {
+        streamProgress('error', `Error during analysis: ${error.message}`);
+      }
       throw error;
     }
   }

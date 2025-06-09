@@ -9,9 +9,11 @@ import {
   Put,
   Query,
   Request,
+  Res,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam } from '@nestjs/swagger';
 import { ScanStatus } from '@prisma/client';
+import { Response } from 'express';
 import { Public } from 'src/decorators/public';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { RepositoryScanService } from './repositoryScan.service';
@@ -96,14 +98,112 @@ export class RepositoryScanController {
     @Param('repositoryId') repositoryId: string,
     @Body() body: any,
     @Request() req: any,
+    @Res() res: Response,
   ) {
-    return await this._repositoryScanService.analyzeRepositoryRefactored(
-      repositoryId,
-      body.query,
-      req.user.accountId,
-      body.threadId,
-      body.analysisMode,
-    );
+    // Set headers for Server-Sent Events
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+    try {
+      // Stream progress updates with thinking mechanism
+      const streamProgress = (step: string, message: string, data?: any) => {
+        try {
+          const eventData = {
+            step,
+            message,
+            timestamp: new Date().toISOString(),
+            thinking: true,
+            ...(data && { data }),
+          };
+
+          // Safely stringify the data
+          const jsonString = JSON.stringify(eventData);
+          res.write(`data: ${jsonString}\n\n`);
+        } catch (stringifyError) {
+          console.error('Error stringifying progress data:', stringifyError);
+
+          // Send a fallback simplified version
+          const fallbackData = {
+            step,
+            message,
+            timestamp: new Date().toISOString(),
+            thinking: true,
+            ...(data &&
+              data.response && {
+                data: { response: data.response, threadId: data.threadId },
+              }),
+          };
+
+          try {
+            const fallbackJson = JSON.stringify(fallbackData);
+            res.write(`data: ${fallbackJson}\n\n`);
+          } catch (fallbackError) {
+            console.error('Error with fallback data:', fallbackError);
+            // Send minimal data
+            const minimalData = {
+              step,
+              message,
+              timestamp: new Date().toISOString(),
+              thinking: true,
+            };
+            res.write(`data: ${JSON.stringify(minimalData)}\n\n`);
+          }
+        }
+      };
+
+      // Enhanced thinking steps
+      streamProgress('thinking', 'Analyzing your question...');
+      await new Promise((resolve) => setTimeout(resolve, 800));
+
+      streamProgress(
+        'thinking',
+        'Understanding the context and requirements...',
+      );
+      await new Promise((resolve) => setTimeout(resolve, 600));
+
+      streamProgress(
+        'thinking',
+        'Scanning repository structure and codebase...',
+      );
+      await new Promise((resolve) => setTimeout(resolve, 700));
+
+      streamProgress('initializing', 'Setting up AI analysis pipeline...');
+
+      // Call the service with streaming callback
+      const result =
+        await this._repositoryScanService.analyzeRepositoryRefactored(
+          repositoryId,
+          body.query,
+          req.user.accountId,
+          body.threadId,
+          body.analysisMode,
+          streamProgress, // Pass the streaming function
+        );
+
+      // Send finalizing step before completion
+      streamProgress('finalizing', 'Finalizing analysis results...');
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Send final result
+      streamProgress('completed', 'Analysis completed successfully', result);
+
+      // End the stream
+      res.write('event: end\ndata: {}\n\n');
+      res.end();
+    } catch (error) {
+      console.error('Error in streaming analysis:', error);
+      const errorData = {
+        step: 'error',
+        message: error.message || 'An error occurred during analysis',
+        timestamp: new Date().toISOString(),
+      };
+      res.write(`data: ${JSON.stringify(errorData)}\n\n`);
+      res.write('event: end\ndata: {}\n\n');
+      res.end();
+    }
   }
 
   @ApiBearerAuth()
@@ -212,10 +312,7 @@ export class RepositoryScanController {
   @ApiParam({ name: 'repositoryId', type: 'string', required: false })
   @ApiBearerAuth()
   @Post('/rescan/:repositoryId?')
-  async triggerRescan(
-    @Param('repositoryId') repositoryId?: string,
-    @Request() req?: any,
-  ) {
+  async triggerRescan(@Param('repositoryId') repositoryId?: string) {
     try {
       // If repository ID is provided, scan only that repository
       if (repositoryId) {
@@ -244,12 +341,7 @@ export class RepositoryScanController {
           );
         }
 
-        // Mock the structure needed for rescanMissingFiles to process just this repository
-        const mockLatestScanByRepo = {
-          [repositoryId]: scan,
-        };
-
-        // Call the protected method with our mock data
+        // Call the protected method
         return this._repositoryScanService.rescanMissingFiles();
       }
 
