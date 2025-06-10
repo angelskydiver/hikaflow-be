@@ -124,70 +124,48 @@ export class RepositoryScanController {
           res.write(`data: ${jsonString}\n\n`);
         } catch (stringifyError) {
           console.error('Error stringifying progress data:', stringifyError);
-
-          // Send a fallback simplified version
-          const fallbackData = {
+          // Send minimal data
+          const minimalData = {
             step,
             message,
             timestamp: new Date().toISOString(),
             thinking: true,
-            ...(data &&
-              data.response && {
-                data: { response: data.response, threadId: data.threadId },
-              }),
           };
-
-          try {
-            const fallbackJson = JSON.stringify(fallbackData);
-            res.write(`data: ${fallbackJson}\n\n`);
-          } catch (fallbackError) {
-            console.error('Error with fallback data:', fallbackError);
-            // Send minimal data
-            const minimalData = {
-              step,
-              message,
-              timestamp: new Date().toISOString(),
-              thinking: true,
-            };
-            res.write(`data: ${JSON.stringify(minimalData)}\n\n`);
-          }
+          res.write(`data: ${JSON.stringify(minimalData)}\n\n`);
         }
       };
 
-      // Enhanced thinking steps
-      streamProgress('thinking', 'Analyzing your question...');
-      await new Promise((resolve) => setTimeout(resolve, 800));
-
-      streamProgress(
-        'thinking',
-        'Understanding the context and requirements...',
-      );
-      await new Promise((resolve) => setTimeout(resolve, 600));
-
-      streamProgress(
-        'thinking',
-        'Scanning repository structure and codebase...',
-      );
-      await new Promise((resolve) => setTimeout(resolve, 700));
-
-      streamProgress('initializing', 'Setting up AI analysis pipeline...');
-
-      // Call the service with streaming callback
-      const result =
-        await this._repositoryScanService.analyzeRepositoryRefactored(
+      // Start analysis in background
+      const analysisPromise =
+        this._repositoryScanService.analyzeRepositoryRefactored(
           repositoryId,
           body.query,
           req.user.accountId,
           body.threadId,
           body.analysisMode,
-          streamProgress, // Pass the streaming function
+          streamProgress,
         );
 
-      // Send finalizing step before completion
-      streamProgress('finalizing', 'Finalizing analysis results...');
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Send initial thinking events immediately
+      streamProgress('thinking', 'Analyzing your question...');
+      streamProgress(
+        'thinking',
+        'Understanding the context and requirements...',
+      );
+      streamProgress(
+        'thinking',
+        'Scanning repository structure and codebase...',
+      );
+      streamProgress('initializing', 'Setting up AI analysis pipeline...');
 
-      // Send final result
+      // Wait for analysis to complete
+      const result = await analysisPromise;
+
+      // Send final events
+      streamProgress('finalizing', 'Finalizing analysis results...');
+      delete result.codeInsights;
+      delete result.resourceAnalysis;
+      delete result.architecturalGuidance;
       streamProgress('completed', 'Analysis completed successfully', result);
 
       // End the stream

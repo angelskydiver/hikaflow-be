@@ -283,18 +283,9 @@ export class RepositoryAnalysisService {
         `[analyzeRepository] Processing query: "${request.query}" with mode: ${request.analysisMode || 'standard'}`,
       );
 
-      // Stream progress updates
-      if (request.streamProgress) {
-        request.streamProgress('preparing', 'Preparing analysis context...');
-      }
-
       // Validate and prepare analysis context
       const context = await this.prepareAnalysisContext(request);
       trace.executionPath.push('prepareAnalysisContext');
-
-      if (request.streamProgress) {
-        request.streamProgress('enhancing', 'Enhancing query with context...');
-      }
 
       // Enhance query with thread context
       const enhancedQuery = await this.enhanceQueryWithContext(
@@ -303,8 +294,12 @@ export class RepositoryAnalysisService {
       );
       trace.executionPath.push('enhanceQueryWithContext');
 
+      // Progress update for analysis
       if (request.streamProgress) {
-        request.streamProgress('categorizing', 'Categorizing query type...');
+        request.streamProgress(
+          'processing',
+          'Processing query with AI analysis...',
+        );
       }
 
       // Categorize query type with enhanced AI analysis
@@ -318,42 +313,49 @@ export class RepositoryAnalysisService {
       );
       trace.performanceMetrics.aiCallsCount++;
 
-      console.log(`[analyzeRepository] Query categorized as: ${queryType}`);
-
+      // Progress update for analysis phase
       if (request.streamProgress) {
-        request.streamProgress(
-          'processing',
-          `Processing ${queryType.toLowerCase()} query...`,
-          {
-            queryType,
-          },
-        );
+        request.streamProgress('analyzing', 'Analyzing codebase with AI...');
       }
 
-      // Route to appropriate handler with enhanced capabilities
-      const response = await this.routeQueryToEnhancedHandler(
-        queryType,
-        request.query,
-        enhancedQuery,
-        context,
-        request.threadId,
-        request.analysisMode || 'standard',
-        trace,
-        request.streamProgress, // Pass the streaming function
-      );
-
-      // Add tracing data if requested
-      if (request.includeTracing) {
-        trace.performanceMetrics.totalTime = Date.now() - startTime;
-        response.traceData = trace;
+      // Process based on query type
+      let response: QueryAnalysisResponse;
+      switch (queryType) {
+        case 'performance':
+          response = await this.handlePerformanceAnalysis(
+            request.query,
+            enhancedQuery,
+            context,
+            request.threadId,
+            trace,
+          );
+          break;
+        case 'release':
+          response = await this.handleReleaseAnalysis(
+            request.query,
+            enhancedQuery,
+            context,
+            request.threadId,
+            trace,
+          );
+          break;
+        default:
+          response = await this.handleEnhancedProjectLevelQuery(
+            request.query,
+            enhancedQuery,
+            context,
+            request.threadId,
+            request.analysisMode || 'standard',
+            trace,
+          );
       }
 
+      // Update trace metrics
+      trace.performanceMetrics.totalTime = Date.now() - startTime;
       return response;
     } catch (error) {
-      console.error('Error in analyzeRepository:', error);
-      throw new BadRequestException(
-        `Failed to analyze repository. ${error.message}`,
-      );
+      console.error(`[analyzeRepository] Error:`, error);
+      throw error;
     }
   }
 
@@ -2633,7 +2635,7 @@ Your answer should be immediately useful to someone trying to understand this co
       context,
       this,
       threadId,
-      { resourceAnalysis, codeInsights },
+      // { resourceAnalysis, codeInsights },
     );
   }
 
