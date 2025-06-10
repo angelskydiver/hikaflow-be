@@ -9,9 +9,11 @@ import {
   Put,
   Query,
   Request,
+  Res,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam } from '@nestjs/swagger';
 import { ScanStatus } from '@prisma/client';
+import { Response } from 'express';
 import { Public } from 'src/decorators/public';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { RepositoryScanService } from './repositoryScan.service';
@@ -96,14 +98,90 @@ export class RepositoryScanController {
     @Param('repositoryId') repositoryId: string,
     @Body() body: any,
     @Request() req: any,
+    @Res() res: Response,
   ) {
-    return await this._repositoryScanService.analyzeRepositoryRefactored(
-      repositoryId,
-      body.query,
-      req.user.accountId,
-      body.threadId,
-      body.analysisMode,
-    );
+    // Set headers for Server-Sent Events
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+    try {
+      // Stream progress updates with thinking mechanism
+      const streamProgress = (step: string, message: string, data?: any) => {
+        try {
+          const eventData = {
+            step,
+            message,
+            timestamp: new Date().toISOString(),
+            thinking: true,
+            ...(data && { data }),
+          };
+
+          // Safely stringify the data
+          const jsonString = JSON.stringify(eventData);
+          res.write(`data: ${jsonString}\n\n`);
+        } catch (stringifyError) {
+          console.error('Error stringifying progress data:', stringifyError);
+          // Send minimal data
+          const minimalData = {
+            step,
+            message,
+            timestamp: new Date().toISOString(),
+            thinking: true,
+          };
+          res.write(`data: ${JSON.stringify(minimalData)}\n\n`);
+        }
+      };
+
+      // Start analysis in background
+      const analysisPromise =
+        this._repositoryScanService.analyzeRepositoryRefactored(
+          repositoryId,
+          body.query,
+          req.user.accountId,
+          body.threadId,
+          body.analysisMode,
+          streamProgress,
+        );
+
+      // Send initial thinking events immediately
+      streamProgress('thinking', 'Analyzing your question...');
+      streamProgress(
+        'thinking',
+        'Understanding the context and requirements...',
+      );
+      streamProgress(
+        'thinking',
+        'Scanning repository structure and codebase...',
+      );
+      streamProgress('initializing', 'Setting up AI analysis pipeline...');
+
+      // Wait for analysis to complete
+      const result = await analysisPromise;
+
+      // Send final events
+      streamProgress('finalizing', 'Finalizing analysis results...');
+      delete result.codeInsights;
+      delete result.resourceAnalysis;
+      delete result.architecturalGuidance;
+      streamProgress('completed', 'Analysis completed successfully', result);
+
+      // End the stream
+      res.write('event: end\ndata: {}\n\n');
+      res.end();
+    } catch (error) {
+      console.error('Error in streaming analysis:', error);
+      const errorData = {
+        step: 'error',
+        message: error.message || 'An error occurred during analysis',
+        timestamp: new Date().toISOString(),
+      };
+      res.write(`data: ${JSON.stringify(errorData)}\n\n`);
+      res.write('event: end\ndata: {}\n\n');
+      res.end();
+    }
   }
 
   @ApiBearerAuth()
@@ -212,10 +290,7 @@ export class RepositoryScanController {
   @ApiParam({ name: 'repositoryId', type: 'string', required: false })
   @ApiBearerAuth()
   @Post('/rescan/:repositoryId?')
-  async triggerRescan(
-    @Param('repositoryId') repositoryId?: string,
-    @Request() req?: any,
-  ) {
+  async triggerRescan(@Param('repositoryId') repositoryId?: string) {
     try {
       // If repository ID is provided, scan only that repository
       if (repositoryId) {
@@ -244,12 +319,7 @@ export class RepositoryScanController {
           );
         }
 
-        // Mock the structure needed for rescanMissingFiles to process just this repository
-        const mockLatestScanByRepo = {
-          [repositoryId]: scan,
-        };
-
-        // Call the protected method with our mock data
+        // Call the protected method
         return this._repositoryScanService.rescanMissingFiles();
       }
 

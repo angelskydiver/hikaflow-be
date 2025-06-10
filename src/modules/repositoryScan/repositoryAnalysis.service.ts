@@ -33,6 +33,7 @@ export interface QueryAnalysisRequest {
     | 'architecture'
     | 'release_analysis';
   includeTracing?: boolean;
+  streamProgress?: (step: string, message: string, data?: any) => void;
 }
 
 export interface QueryAnalysisResponse {
@@ -293,6 +294,14 @@ export class RepositoryAnalysisService {
       );
       trace.executionPath.push('enhanceQueryWithContext');
 
+      // Progress update for analysis
+      if (request.streamProgress) {
+        request.streamProgress(
+          'processing',
+          'Processing query with AI analysis...',
+        );
+      }
+
       // Categorize query type with enhanced AI analysis
       const gemini = new Gemini();
       const queryType = await this.categorizeQueryWithSeniorAnalysis(
@@ -304,31 +313,49 @@ export class RepositoryAnalysisService {
       );
       trace.performanceMetrics.aiCallsCount++;
 
-      console.log(`[analyzeRepository] Query categorized as: ${queryType}`);
-
-      // Route to appropriate handler with enhanced capabilities
-      const response = await this.routeQueryToEnhancedHandler(
-        queryType,
-        request.query,
-        enhancedQuery,
-        context,
-        request.threadId,
-        request.analysisMode || 'standard',
-        trace,
-      );
-
-      // Add tracing data if requested
-      if (request.includeTracing) {
-        trace.performanceMetrics.totalTime = Date.now() - startTime;
-        response.traceData = trace;
+      // Progress update for analysis phase
+      if (request.streamProgress) {
+        request.streamProgress('analyzing', 'Analyzing codebase with AI...');
       }
 
+      // Process based on query type
+      let response: QueryAnalysisResponse;
+      switch (queryType) {
+        case 'performance':
+          response = await this.handlePerformanceAnalysis(
+            request.query,
+            enhancedQuery,
+            context,
+            request.threadId,
+            trace,
+          );
+          break;
+        case 'release':
+          response = await this.handleReleaseAnalysis(
+            request.query,
+            enhancedQuery,
+            context,
+            request.threadId,
+            trace,
+          );
+          break;
+        default:
+          response = await this.handleEnhancedProjectLevelQuery(
+            request.query,
+            enhancedQuery,
+            context,
+            request.threadId,
+            request.analysisMode || 'standard',
+            trace,
+          );
+      }
+
+      // Update trace metrics
+      trace.performanceMetrics.totalTime = Date.now() - startTime;
       return response;
     } catch (error) {
-      console.error('Error in analyzeRepository:', error);
-      throw new BadRequestException(
-        `Failed to analyze repository. ${error.message}`,
-      );
+      console.error(`[analyzeRepository] Error:`, error);
+      throw error;
     }
   }
 
@@ -553,6 +580,7 @@ Return the most appropriate category that allows for the deepest technical analy
     threadId?: string,
     analysisMode: string = 'standard',
     trace?: AnalysisTrace,
+    streamProgress?: (step: string, message: string, data?: any) => void,
   ): Promise<QueryAnalysisResponse> {
     trace?.executionPath.push('routeQueryToEnhancedHandler');
 
@@ -2607,7 +2635,7 @@ Your answer should be immediately useful to someone trying to understand this co
       context,
       this,
       threadId,
-      { resourceAnalysis, codeInsights },
+      // { resourceAnalysis, codeInsights },
     );
   }
 

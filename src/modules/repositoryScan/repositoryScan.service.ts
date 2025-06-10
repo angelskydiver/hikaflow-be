@@ -63,6 +63,7 @@ export class RepositoryScanService {
       | 'code_review'
       | 'architecture'
       | 'release_analysis',
+    streamProgress?: (step: string, message: string, data?: any) => void,
   ) {
     try {
       console.log(
@@ -84,7 +85,8 @@ export class RepositoryScanService {
           ? threadId
           : undefined;
 
-      return await analysisService.analyzeRepository({
+      // Start analysis immediately
+      const result = await analysisService.analyzeRepository({
         repositoryId,
         query,
         accountId,
@@ -92,9 +94,15 @@ export class RepositoryScanService {
         analysisMode: analysisMode || 'standard',
         includeTracing:
           analysisMode === 'senior' || analysisMode === 'release_analysis',
+        streamProgress,
       });
+
+      return result;
     } catch (error) {
       console.error(`[analyzeRepositoryRefactored] Error:`, error);
+      if (streamProgress) {
+        streamProgress('error', `Error during analysis: ${error.message}`);
+      }
       throw error;
     }
   }

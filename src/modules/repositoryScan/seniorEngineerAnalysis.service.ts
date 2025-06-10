@@ -703,9 +703,9 @@ Provide comprehensive technical analysis covering implementation details, best p
     // Enhance the response with additional analysis data
     return {
       ...baseResponse,
-      resourceAnalysis: analysisData.resourceAnalysis,
-      codeInsights: analysisData.codeInsights,
-      architecturalGuidance: analysisData.architecturalGuidance,
+      // resourceAnalysis: analysisData.resourceAnalysis,
+      // codeInsights: analysisData.codeInsights,
+      // architecturalGuidance: analysisData.architecturalGuidance,
     };
   }
 
