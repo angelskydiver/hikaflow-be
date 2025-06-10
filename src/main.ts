@@ -21,7 +21,51 @@ async function bootstrap() {
     .setVersion('1.0')
     .build();
 
-  app.enableCors();
+  // Enhanced CORS configuration for production SSE streaming
+  app.enableCors({
+    origin:
+      process.env.NODE_ENV === 'production'
+        ? (origin, callback) => {
+            // Allow any hikaflow.com subdomain and specific origins
+            const allowedOrigins = [
+              'https://hikaflow.com',
+              'https://app.hikaflow.com',
+              'https://api.hikaflow.com',
+            ];
+
+            if (
+              !origin ||
+              allowedOrigins.includes(origin) ||
+              origin.endsWith('.hikaflow.com')
+            ) {
+              callback(null, true);
+            } else {
+              callback(null, false);
+            }
+          }
+        : true, // Allow all origins in development
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Accept',
+      'Cache-Control',
+      'Connection',
+      'X-Requested-With',
+      'Accept-Encoding',
+      'Accept-Language',
+      'Origin',
+      'Referer',
+      'User-Agent',
+    ],
+    exposedHeaders: [
+      'Content-Type',
+      'Cache-Control',
+      'Connection',
+      'Transfer-Encoding',
+    ],
+  });
 
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document); // Setup Swagger UI at /api-docs

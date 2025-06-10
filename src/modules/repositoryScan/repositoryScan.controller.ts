@@ -102,10 +102,16 @@ export class RepositoryScanController {
   ) {
     // Set headers for Server-Sent Events
     res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+    // Disable buffering for reverse proxies (critical for HTTPS production)
+    res.setHeader('X-Accel-Buffering', 'no'); // Nginx
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Transfer-Encoding', 'chunked');
 
     try {
       // Stream progress updates with thinking mechanism
@@ -122,6 +128,12 @@ export class RepositoryScanController {
           // Safely stringify the data
           const jsonString = JSON.stringify(eventData);
           res.write(`data: ${jsonString}\n\n`);
+
+          // Force flush for production environments (Express/Node.js way)
+          (res as any).flushHeaders?.();
+          if (typeof (res as any).flush === 'function') {
+            (res as any).flush();
+          }
         } catch (stringifyError) {
           console.error('Error stringifying progress data:', stringifyError);
           // Send minimal data
@@ -132,6 +144,12 @@ export class RepositoryScanController {
             thinking: true,
           };
           res.write(`data: ${JSON.stringify(minimalData)}\n\n`);
+
+          // Force flush for production environments (Express/Node.js way)
+          (res as any).flushHeaders?.();
+          if (typeof (res as any).flush === 'function') {
+            (res as any).flush();
+          }
         }
       };
 
