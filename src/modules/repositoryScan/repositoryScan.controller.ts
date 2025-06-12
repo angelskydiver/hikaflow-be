@@ -446,4 +446,94 @@ export class RepositoryScanController {
       organizationId,
     );
   }
+
+  /**
+   * Get comprehensive impact analytics for dashboard
+   */
+  @ApiBearerAuth()
+  @Get('/impactAnalytics/:repositoryId')
+  async GetImpactAnalytics(
+    @Param('repositoryId') repositoryId: string,
+    @Query('timeframe') timeframe: string = '30d',
+    @Query('includeRecommendations') includeRecommendations: boolean = true,
+  ) {
+    try {
+      return await this._repositoryScanService.getImpactAnalytics(
+        repositoryId,
+        timeframe,
+        includeRecommendations,
+      );
+    } catch (error) {
+      console.error('Error fetching impact analytics:', error);
+      throw new BadRequestException(
+        error.message || 'Failed to fetch impact analytics',
+      );
+    }
+  }
+
+  /**
+   * Get real-time impact insights for active PRs
+   */
+  @ApiBearerAuth()
+  @Get('/realtimeInsights/:repositoryId')
+  async GetRealtimeInsights(
+    @Param('repositoryId') repositoryId: string,
+    @Request() req: any,
+  ) {
+    try {
+      return await this._repositoryScanService.getRealtimeInsights(
+        repositoryId,
+        req.user.accountId,
+      );
+    } catch (error) {
+      console.error('Error fetching realtime insights:', error);
+      throw new BadRequestException(
+        error.message || 'Failed to fetch realtime insights',
+      );
+    }
+  }
+
+  /**
+   * Get impact trends and patterns analysis
+   */
+  @ApiBearerAuth()
+  @Get('/impactTrends/:repositoryId')
+  async GetImpactTrends(
+    @Param('repositoryId') repositoryId: string,
+    @Query('period') period: string = '3m',
+  ) {
+    try {
+      return await this._repositoryScanService.getImpactTrends(
+        repositoryId,
+        period,
+      );
+    } catch (error) {
+      console.error('Error fetching impact trends:', error);
+      throw new BadRequestException(
+        error.message || 'Failed to fetch impact trends',
+      );
+    }
+  }
+
+  /**
+   * Get flow dependency visualization data
+   */
+  @ApiBearerAuth()
+  @Get('/flowDependencies/:repositoryId')
+  async GetFlowDependencies(
+    @Param('repositoryId') repositoryId: string,
+    @Query('depth') depth: number = 3,
+  ) {
+    try {
+      return await this._repositoryScanService.getFlowDependencies(
+        repositoryId,
+        depth,
+      );
+    } catch (error) {
+      console.error('Error fetching flow dependencies:', error);
+      throw new BadRequestException(
+        error.message || 'Failed to fetch flow dependencies',
+      );
+    }
+  }
 }
