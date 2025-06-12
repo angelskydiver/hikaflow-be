@@ -3549,4 +3549,568 @@ export class RepositoryScanService {
       },
     }));
   }
+
+  /**
+   * Get comprehensive impact analytics for dashboard
+   */
+  async getImpactAnalytics(
+    repositoryId: string,
+    timeframe: string = '30d',
+    includeRecommendations: boolean = true,
+  ) {
+    try {
+      // Parse timeframe
+      const days = parseInt(timeframe.replace('d', '')) || 30;
+      const fromDate = new Date();
+      fromDate.setDate(fromDate.getDate() - days);
+
+      // Get regression reports for the timeframe
+      const reports = await this.prisma.regressionReport.findMany({
+        where: {
+          repositoryId,
+          createdAt: {
+            gte: fromDate,
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          repository: true,
+        },
+      });
+
+      // Calculate analytics
+      const totalReports = reports.length;
+      const highRiskReports = reports.filter(
+        (r) => this._calculateRiskScore(r) >= 7,
+      ).length;
+      const criticalFlows = reports.reduce(
+        (acc, r) =>
+          acc + (Array.isArray(r.impactedFlows) ? r.impactedFlows.length : 0),
+        0,
+      );
+      const avgImpactScore =
+        totalReports > 0
+          ? reports.reduce((acc, r) => acc + this._calculateRiskScore(r), 0) /
+            totalReports
+          : 0;
+
+      // Risk distribution
+      const riskDistribution = { low: 0, medium: 0, high: 0, critical: 0 };
+      reports.forEach((report) => {
+        const score = this._calculateRiskScore(report);
+        if (score <= 3) riskDistribution.low++;
+        else if (score <= 5) riskDistribution.medium++;
+        else if (score <= 7) riskDistribution.high++;
+        else riskDistribution.critical++;
+      });
+
+      // Timeline data
+      const timelineData = reports.slice(0, 20).map((report) => ({
+        date: report.createdAt.toISOString(),
+        riskScore: this._calculateRiskScore(report),
+        prNumber: report.prNumber,
+        flows: Array.isArray(report.impactedFlows)
+          ? report.impactedFlows.length
+          : 0,
+        breakages: Array.isArray(report.potentialBreakages)
+          ? report.potentialBreakages.length
+          : 0,
+      }));
+
+      // Flow analysis
+      const flowMap = {};
+      reports.forEach((report) => {
+        if (Array.isArray(report.impactedFlows)) {
+          report.impactedFlows.forEach((flow: any) => {
+            const flowName = flow.flowName || 'Unknown Flow';
+            if (!flowMap[flowName]) {
+              flowMap[flowName] = {
+                count: 0,
+                severity: flow.impactSeverity || 'medium',
+              };
+            }
+            flowMap[flowName].count++;
+          });
+        }
+      });
+
+      const flowAnalysis = Object.entries(flowMap)
+        .map(([name, data]) => ({ name, ...(data as any) }))
+        .sort((a: any, b: any) => b.count - a.count)
+        .slice(0, 10);
+
+      // Generate recommendations if requested
+      const recommendations = includeRecommendations
+        ? this._generateSmartRecommendations(reports, riskDistribution)
+        : [];
+
+      return {
+        summary: {
+          totalReports,
+          highRiskReports,
+          criticalFlows,
+          avgImpactScore: avgImpactScore.toFixed(1),
+          riskTrend: this._calculateTrend(reports),
+          lastAnalysis: reports[0]?.createdAt || null,
+        },
+        riskDistribution,
+        timelineData,
+        flowAnalysis,
+        recommendations,
+        metadata: {
+          timeframe,
+          generatedAt: new Date().toISOString(),
+          repositoryId,
+        },
+      };
+    } catch (error) {
+      console.error('Error getting impact analytics:', error);
+      throw new BadRequestException(
+        error.message || 'Failed to get impact analytics',
+      );
+    }
+  }
+
+  /**
+   * Get real-time impact insights for active PRs
+   */
+  async getRealtimeInsights(repositoryId: string, accountId: string) {
+    try {
+      const repository = await this.prisma.repository.findUnique({
+        where: { id: repositoryId },
+      });
+
+      if (!repository) {
+        throw new NotFoundException(
+          `Repository with ID ${repositoryId} not found`,
+        );
+      }
+
+      // Get account credentials for API access
+      const accountCredentials =
+        await this.accountCredentialService.getAccountToken({ accountId });
+
+      // Get recent reports (last 7 days)
+      const recentDate = new Date();
+      recentDate.setDate(recentDate.getDate() - 7);
+
+      const recentReports = await this.prisma.regressionReport.findMany({
+        where: {
+          repositoryId,
+          createdAt: {
+            gte: recentDate,
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      });
+
+      // Calculate real-time metrics
+      const activePRs = recentReports.length;
+      const highRiskPRs = recentReports.filter(
+        (r) => this._calculateRiskScore(r) >= 7,
+      ).length;
+      const criticalIssues = recentReports.reduce(
+        (acc, r) =>
+          acc +
+          (Array.isArray(r.potentialBreakages)
+            ? r.potentialBreakages.length
+            : 0),
+        0,
+      );
+
+      // Recent activity
+      const recentActivity = recentReports.slice(0, 5).map((report) => ({
+        prNumber: report.prNumber,
+        summary: report.summary,
+        riskScore: this._calculateRiskScore(report),
+        createdAt: report.createdAt,
+        status: report.status,
+      }));
+
+      // Alert conditions
+      const alerts = [];
+      if (highRiskPRs / activePRs > 0.5 && activePRs > 2) {
+        alerts.push({
+          type: 'high_risk_ratio',
+          severity: 'warning',
+          message: `${Math.round((highRiskPRs / activePRs) * 100)}% of recent PRs are high risk`,
+          action: 'Consider additional code review',
+        });
+      }
+
+      if (criticalIssues > 10) {
+        alerts.push({
+          type: 'critical_issues',
+          severity: 'critical',
+          message: `${criticalIssues} critical issues detected in recent PRs`,
+          action: 'Immediate attention required',
+        });
+      }
+
+      return {
+        metrics: {
+          activePRs,
+          highRiskPRs,
+          criticalIssues,
+          averageRiskScore:
+            activePRs > 0
+              ? (
+                  recentReports.reduce(
+                    (acc, r) => acc + this._calculateRiskScore(r),
+                    0,
+                  ) / activePRs
+                ).toFixed(1)
+              : 0,
+        },
+        recentActivity,
+        alerts,
+        lastUpdated: new Date().toISOString(),
+      };
+    } catch (error) {
+      console.error('Error getting realtime insights:', error);
+      throw new BadRequestException(
+        error.message || 'Failed to get realtime insights',
+      );
+    }
+  }
+
+  /**
+   * Get impact trends and patterns analysis
+   */
+  async getImpactTrends(repositoryId: string, period: string = '3m') {
+    try {
+      // Parse period
+      const months = parseInt(period.replace('m', '')) || 3;
+      const fromDate = new Date();
+      fromDate.setMonth(fromDate.getMonth() - months);
+
+      const reports = await this.prisma.regressionReport.findMany({
+        where: {
+          repositoryId,
+          createdAt: {
+            gte: fromDate,
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      // Group by week for trend analysis
+      const weeklyData = {};
+      reports.forEach((report) => {
+        const weekKey = this._getWeekKey(report.createdAt);
+        if (!weeklyData[weekKey]) {
+          weeklyData[weekKey] = {
+            week: weekKey,
+            reports: [],
+            totalRisk: 0,
+            avgRisk: 0,
+            highRiskCount: 0,
+          };
+        }
+
+        const riskScore = this._calculateRiskScore(report);
+        weeklyData[weekKey].reports.push(report);
+        weeklyData[weekKey].totalRisk += riskScore;
+        if (riskScore >= 7) weeklyData[weekKey].highRiskCount++;
+      });
+
+      // Calculate averages
+      const trendData = Object.values(weeklyData).map((week: any) => {
+        week.avgRisk =
+          week.reports.length > 0 ? week.totalRisk / week.reports.length : 0;
+        return week;
+      });
+
+      // Identify patterns
+      const patterns = this._identifyTrendPatterns(trendData);
+
+      return {
+        trendData,
+        patterns,
+        summary: {
+          totalWeeks: trendData.length,
+          peakRiskWeek: trendData.reduce(
+            (max, week) => (week.avgRisk > max.avgRisk ? week : max),
+            trendData[0] || {},
+          ),
+          improvementTrend: this._calculateImprovementTrend(trendData),
+        },
+        period,
+        generatedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      console.error('Error getting impact trends:', error);
+      throw new BadRequestException(
+        error.message || 'Failed to get impact trends',
+      );
+    }
+  }
+
+  /**
+   * Get flow dependency visualization data
+   */
+  async getFlowDependencies(repositoryId: string, depth: number = 3) {
+    try {
+      // Get recent reports to analyze flow dependencies
+      const reports = await this.prisma.regressionReport.findMany({
+        where: { repositoryId },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
+
+      // Build dependency graph
+      const flowNodes = new Map();
+      const flowConnections = new Map();
+
+      reports.forEach((report) => {
+        if (Array.isArray(report.impactedFlows)) {
+          report.impactedFlows.forEach((flow: any, index: number) => {
+            const flowName = flow.flowName || `Flow-${index}`;
+
+            // Add node
+            if (!flowNodes.has(flowName)) {
+              flowNodes.set(flowName, {
+                id: flowName,
+                name: flowName,
+                severity: flow.impactSeverity || 'medium',
+                count: 0,
+                connectedTo: new Set<string>(),
+              });
+            }
+
+            flowNodes.get(flowName).count++;
+
+            // Add connections between flows in the same report
+            (report.impactedFlows as any[]).forEach(
+              (otherFlow: any, otherIndex: number) => {
+                if (index !== otherIndex) {
+                  const otherFlowName =
+                    otherFlow.flowName || `Flow-${otherIndex}`;
+                  flowNodes.get(flowName).connectedTo.add(otherFlowName);
+                }
+              },
+            );
+          });
+        }
+      });
+
+      // Convert to array and add position data for visualization
+      const nodes = Array.from(flowNodes.values()).map((node, index) => ({
+        ...node,
+        connectedTo: Array.from(node.connectedTo),
+        position: this._calculateNodePosition(index, flowNodes.size),
+      }));
+
+      // Create connections array
+      const connections = [];
+      nodes.forEach((node) => {
+        node.connectedTo.forEach((targetName) => {
+          connections.push({
+            source: node.id,
+            target: targetName,
+            strength: this._calculateConnectionStrength(
+              node.id,
+              targetName,
+              reports,
+            ),
+          });
+        });
+      });
+
+      // Analyze clusters
+      const clusters = this._identifyFlowClusters(nodes, connections);
+
+      return {
+        nodes: nodes.slice(0, depth * 10), // Limit based on depth
+        connections: connections.slice(0, depth * 20),
+        clusters,
+        metadata: {
+          totalFlows: nodes.length,
+          totalConnections: connections.length,
+          avgConnections:
+            nodes.length > 0 ? connections.length / nodes.length : 0,
+          depth,
+        },
+        generatedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      console.error('Error getting flow dependencies:', error);
+      throw new BadRequestException(
+        error.message || 'Failed to get flow dependencies',
+      );
+    }
+  }
+
+  // Helper methods for the new analytics features
+
+  private _calculateRiskScore(report: any): number {
+    const flows = Array.isArray(report.impactedFlows)
+      ? report.impactedFlows.length
+      : 0;
+    const breakages = Array.isArray(report.potentialBreakages)
+      ? report.potentialBreakages.length
+      : 0;
+    return Math.min(10, Math.max(1, Math.round(flows * 1.5 + breakages * 2)));
+  }
+
+  private _calculateTrend(reports: any[]): number {
+    if (reports.length < 2) return 0;
+    const recent = reports.slice(0, Math.ceil(reports.length / 2));
+    const older = reports.slice(Math.ceil(reports.length / 2));
+
+    const recentAvg =
+      recent.reduce((acc, r) => acc + this._calculateRiskScore(r), 0) /
+      recent.length;
+    const olderAvg =
+      older.reduce((acc, r) => acc + this._calculateRiskScore(r), 0) /
+      older.length;
+
+    return olderAvg > 0 ? ((recentAvg - olderAvg) / olderAvg) * 100 : 0;
+  }
+
+  private _generateSmartRecommendations(reports: any[], riskDistribution: any) {
+    const recommendations = [];
+    const totalReports = reports.length;
+
+    if (riskDistribution.critical > 0) {
+      recommendations.push({
+        type: 'critical',
+        priority: 'high',
+        title: 'Critical Risk Detected',
+        description: `${riskDistribution.critical} reports show critical risk levels`,
+        action: 'Immediate review required',
+      });
+    }
+
+    if (riskDistribution.high / totalReports > 0.3) {
+      recommendations.push({
+        type: 'warning',
+        priority: 'medium',
+        title: 'High Risk Pattern',
+        description: 'Consider implementing additional testing',
+        action: 'Enhance testing strategy',
+      });
+    }
+
+    return recommendations;
+  }
+
+  private _getWeekKey(date: Date): string {
+    const year = date.getFullYear();
+    const week = Math.ceil(
+      (date.getTime() - new Date(year, 0, 1).getTime()) /
+        (7 * 24 * 60 * 60 * 1000),
+    );
+    return `${year}-W${week}`;
+  }
+
+  private _identifyTrendPatterns(trendData: any[]): any[] {
+    const patterns = [];
+
+    // Check for increasing trend
+    if (trendData.length >= 3) {
+      const recent = trendData.slice(-3);
+      const isIncreasing = recent.every(
+        (week, i) => i === 0 || week.avgRisk > recent[i - 1].avgRisk,
+      );
+
+      if (isIncreasing) {
+        patterns.push({
+          type: 'increasing_risk',
+          severity: 'warning',
+          description: 'Risk levels are trending upward',
+        });
+      }
+    }
+
+    return patterns;
+  }
+
+  private _calculateImprovementTrend(trendData: any[]): number {
+    if (trendData.length < 2) return 0;
+    const first = trendData[0].avgRisk;
+    const last = trendData[trendData.length - 1].avgRisk;
+    return first > 0 ? ((first - last) / first) * 100 : 0;
+  }
+
+  private _calculateNodePosition(
+    index: number,
+    total: number,
+  ): { x: number; y: number } {
+    const angle = (index / total) * 2 * Math.PI;
+    return {
+      x: Math.cos(angle) * 200 + 300,
+      y: Math.sin(angle) * 200 + 300,
+    };
+  }
+
+  private _calculateConnectionStrength(
+    source: string,
+    target: string,
+    reports: any[],
+  ): number {
+    let strength = 0;
+    reports.forEach((report) => {
+      if (Array.isArray(report.impactedFlows)) {
+        const hasSource = report.impactedFlows.some(
+          (f) => f.flowName === source,
+        );
+        const hasTarget = report.impactedFlows.some(
+          (f) => f.flowName === target,
+        );
+        if (hasSource && hasTarget) strength++;
+      }
+    });
+    return strength;
+  }
+
+  private _identifyFlowClusters(nodes: any[], connections: any[]): any[] {
+    // Simple clustering based on connection density
+    const clusters = [];
+    const visited = new Set<string>();
+
+    nodes.forEach((node) => {
+      if (!visited.has(node.id)) {
+        const cluster = this._buildCluster(node, nodes, connections, visited);
+        if (cluster.length > 1) {
+          clusters.push({
+            id: `cluster-${clusters.length}`,
+            nodes: cluster,
+            strength: cluster.length,
+          });
+        }
+      }
+    });
+
+    return clusters;
+  }
+
+  private _buildCluster(
+    startNode: any,
+    allNodes: any[],
+    connections: any[],
+    visited: Set<string>,
+  ): any[] {
+    const cluster = [startNode];
+    visited.add(startNode.id);
+
+    const connectedNodes = connections
+      .filter(
+        (conn) => conn.source === startNode.id || conn.target === startNode.id,
+      )
+      .map((conn) => (conn.source === startNode.id ? conn.target : conn.source))
+      .filter((nodeId) => !visited.has(nodeId));
+
+    connectedNodes.forEach((nodeId) => {
+      const node = allNodes.find((n) => n.id === nodeId);
+      if (node) {
+        cluster.push(
+          ...this._buildCluster(node, allNodes, connections, visited),
+        );
+      }
+    });
+
+    return cluster;
+  }
 }
