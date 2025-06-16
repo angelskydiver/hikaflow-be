@@ -550,4 +550,33 @@ export class OrganizationService {
 
     return frequency;
   }
+
+  async getUserOrganizations(userId: string) {
+    try {
+      const account = await this._prismaService.account.findUnique({
+        where: { userId: userId },
+      });
+
+      if (!account) {
+        throw new NotFoundException('Account not found');
+      }
+
+      const organizations =
+        await this._prismaService.organizationAccounts.findMany({
+          where: { accountId: account.id },
+          include: {
+            organization: true,
+          },
+        });
+
+      return organizations.map((org) => ({
+        organizationId: org.organizationId,
+        role: org.role,
+        organization: org.organization,
+      }));
+    } catch (error) {
+      console.log(error.message);
+      throw new BadRequestException(error.message);
+    }
+  }
 }

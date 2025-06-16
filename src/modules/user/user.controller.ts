@@ -7,8 +7,10 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { Public } from 'src/decorators/public';
-import { LocalAuthGuard } from 'src/passport/guards/local.guard';
+import { Public } from '../../decorators/public';
+import { JwtAuthGuard } from '../../passport/guards/jwt.guard';
+import { LocalAuthGuard } from '../../passport/guards/local.guard';
+import { UserTaskProgressDto } from './dto/user.task-progress.dto';
 import {
   CreateUserRequestDto,
   LoginRequestDto,
@@ -59,5 +61,12 @@ export class UserController {
   @Get('getUserInfo')
   async GetUserInfo(@Request() req: any) {
     return await this._userService.getUserInfo(req.user.userId);
+  }
+
+  @Get('task-progress')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async getUserTaskProgress(@Request() req): Promise<UserTaskProgressDto> {
+    return this._userService.getUserTaskProgress(req.user.accountId);
   }
 }

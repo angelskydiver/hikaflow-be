@@ -40,6 +40,7 @@ export interface IInvoice {
   invoiceNumber: string;
   amount: number;
   tax: number;
+  discountAmount: number;
   total: number;
   status: InvoiceStatus;
   dueDate: Date;
@@ -47,6 +48,7 @@ export interface IInvoice {
   stripeInvoiceId?: string;
   stripePaymentIntentId?: string;
   description?: string;
+  appliedDiscountId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
