@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { InvoiceStatus, SubscriptionPlanType } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import Stripe from 'stripe';
+import { DiscountService } from '../discount/discount.service';
 import {
   CreatePricingPlanDto,
   CreateSubscriptionDto,
@@ -29,6 +30,7 @@ import {
 @Injectable()
 export class BillingService {
   private stripe: Stripe;
+  private discountService: DiscountService;
 
   constructor(
     private readonly _prismaService: PrismaService,
@@ -41,6 +43,9 @@ export class BillingService {
         apiVersion: '2023-10-16', // Use the latest API version
       },
     );
+
+    // Initialize DiscountService
+    this.discountService = new DiscountService(this._prismaService);
   }
 
   // ================== PRICING PLAN METHODS ==================
@@ -375,40 +380,48 @@ export class BillingService {
         throw new NotFoundException('Subscription not found');
       }
 
-      // Only process final invoice for plan changes, and only for non-TRIAL plans
+      // Handle plan changes - reset subscription period for any plan change
       if (
         data.pricingPlanId &&
-        data.pricingPlanId !== subscription.pricingPlanId &&
-        subscription.pricingPlan.planType !== SubscriptionPlanType.TRIAL
+        data.pricingPlanId !== subscription.pricingPlanId
       ) {
         try {
-          // Generate a final invoice for the current subscription period
+          // Only generate final invoice for non-TRIAL plans (trials don't get invoiced)
+          if (
+            subscription.pricingPlan.planType !== SubscriptionPlanType.TRIAL
+          ) {
+            // Generate a final invoice for the current subscription period
+            console.log(
+              `Generating final invoice for subscription ${subscriptionId} before plan change`,
+            );
+
+            // Calculate the exact number of days the current subscription has been active
+            const today = new Date();
+            const startDate = subscription.startDate;
+            const daysActive = Math.ceil(
+              (today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24),
+            );
+
+            console.log(
+              `Subscription was active for ${daysActive} days before change`,
+            );
+
+            await this.generateInvoice({
+              organizationId: subscription.organizationId,
+              fromDate: subscription.startDate.toISOString(),
+              toDate: today.toISOString(), // Invoice up to current date
+              isForSubscriptionUpdate: true,
+            });
+          }
+
+          // Reset subscription period for ANY plan change (including from TRIAL to paid)
+          const newStartDate = new Date();
+          const newEndDate = new Date();
+          newEndDate.setDate(newStartDate.getDate() + 30); // 30 days from now
+
           console.log(
-            `Generating final invoice for subscription ${subscriptionId} before plan change`,
+            `Resetting subscription period: ${newStartDate.toISOString()} to ${newEndDate.toISOString()}`,
           );
-
-          // Calculate the exact number of days the current subscription has been active
-          const today = new Date();
-          const startDate = subscription.startDate;
-          const daysActive = Math.ceil(
-            (today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24),
-          );
-
-          console.log(
-            `Subscription was active for ${daysActive} days before change`,
-          );
-
-          await this.generateInvoice({
-            organizationId: subscription.organizationId,
-            fromDate: subscription.startDate.toISOString(),
-            toDate: today.toISOString(), // Invoice up to current date
-            isForSubscriptionUpdate: true,
-          });
-
-          // After generating the invoice, we can set up the new subscription period
-          const newStartDate = today;
-          const newEndDate = new Date(today);
-          newEndDate.setDate(today.getDate() + 30); // 30 days from now
 
           // Add new dates to the update data
           data = {
@@ -422,6 +435,17 @@ export class BillingService {
             invoiceError.message,
           );
           // Continue with subscription update even if invoicing fails
+
+          // Still reset the subscription period even if invoicing fails
+          const newStartDate = new Date();
+          const newEndDate = new Date();
+          newEndDate.setDate(newStartDate.getDate() + 30);
+
+          data = {
+            ...data,
+            startDate: newStartDate,
+            endDate: newEndDate,
+          };
         }
       }
 
@@ -864,7 +888,7 @@ export class BillingService {
       console.log('check post 08');
 
       // Create initial invoice in database with PENDING status
-      const invoice = await this._prismaService.invoice.create({
+      let invoice = await this._prismaService.invoice.create({
         data: {
           subscriptionId: subscription.id,
           invoiceNumber,
@@ -880,6 +904,23 @@ export class BillingService {
           },
         },
       });
+
+      // Apply any available discounts to the invoice
+      try {
+        invoice = await this.discountService.applyDiscountToInvoice(
+          invoice.id,
+          data.organizationId,
+        );
+        console.log(
+          `Applied discount to invoice ${invoice.id}. New total: $${invoice.total}`,
+        );
+      } catch (discountError) {
+        console.log(
+          'No discounts applied or discount error:',
+          discountError.message,
+        );
+        // Continue without discount if there's an error
+      }
 
       // Mark usage logs as counted and update with invoice ID
       if (usageLogs.length > 0) {
@@ -960,6 +1001,47 @@ export class BillingService {
       }
 
       let paymentIntent;
+
+      // Check if invoice total is $0 or less due to discounts
+      if (invoice.total <= 0) {
+        console.log(
+          `Invoice ${invoice.invoiceNumber} total is $${invoice.total} - marking as paid without payment processing`,
+        );
+
+        // Mark invoice as paid without processing payment
+        const paidInvoice = await this._prismaService.invoice.update({
+          where: { id: invoiceId },
+          data: {
+            status: InvoiceStatus.PAID,
+            paidDate: new Date(),
+            stripePaymentIntentId: 'DISCOUNT_COVERED', // Indicate this was covered by discount
+          },
+        });
+
+        // Reactivate subscription if needed
+        await this._prismaService.subscription.updateMany({
+          where: {
+            id: invoice.subscriptionId,
+            isActive: false,
+            NOT: {
+              invoices: {
+                some: {
+                  id: { not: invoiceId },
+                  status: InvoiceStatus.PENDING,
+                  dueDate: { lt: new Date() },
+                },
+              },
+            },
+          },
+          data: {
+            isActive: true,
+          },
+        });
+
+        return paidInvoice;
+      }
+
+      // Process normal payment for invoices with amount > $0
       data.paymentMethodId =
         data.paymentMethodId ||
         invoice.subscription.organization.defaultPaymentMethodId;
@@ -2103,6 +2185,16 @@ export class BillingService {
         },
         include: {
           invoiceItems: true,
+          appliedDiscount: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              type: true,
+              value: true,
+              status: true,
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
       });

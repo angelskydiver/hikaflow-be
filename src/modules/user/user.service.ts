@@ -2,11 +2,13 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { User, UserLoginType } from '@prisma/client';
 // import { hashPassword, comparePasswords } from '../../utils/bcrypt.utils'; // Import bcrypt utils
 import { JwtService } from '@nestjs/jwt';
+import { CommentType } from '@prisma/client';
 import { MailService } from 'src/mail/mail.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { comparePasswords, hashPassword } from 'src/utils/bcrypt.util';
 import { AccountService } from '../account/account.service';
 import { VerificationCodeService } from '../verificationCode/verificationCode.service';
+import { UserTaskProgressDto } from './dto/user.response.dto';
 import {
   CreateUserRequestDto,
   VerificationRequestDto,
@@ -251,5 +253,84 @@ export class UserService {
       console.log(error.message);
       throw new BadRequestException(error.message);
     }
+  }
+
+  async getUserTaskProgress(accountId: string): Promise<UserTaskProgressDto> {
+    const account = await this._prismaService.account.findUnique({
+      where: { id: accountId },
+      include: {
+        accountCredentials: true,
+        accountOrganization: {
+          include: {
+            organization: {
+              include: {
+                repositories: {
+                  include: {
+                    scan: true,
+                    AssistedQuestions: true,
+                    comments: {
+                      where: {
+                        type: CommentType.PULL_REQUEST,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!account) {
+      throw new Error('Account not found');
+    }
+
+    const hasConnectedGit = account.accountCredentials ? true : false;
+    const hasCreatedOrganization = account.accountOrganization?.length > 0;
+    const hasConnectedRepository = account.accountOrganization?.some(
+      (org) => org.organization.repositories?.length > 0,
+    );
+    const hasScannedRepository = account.accountOrganization?.some((org) =>
+      org.organization.repositories?.some((repo) => repo.scan?.length > 0),
+    );
+    const hasAskedQuestion = account.accountOrganization?.some((org) =>
+      org.organization.repositories?.some(
+        (repo) => repo.AssistedQuestions?.length > 0,
+      ),
+    );
+    const prCount =
+      account.accountOrganization?.reduce(
+        (count, org) =>
+          count +
+          org.organization.repositories?.reduce(
+            (repoCount, repo) => repoCount + (repo.comments?.length || 0),
+            0,
+          ),
+        0,
+      ) || 0;
+
+    const totalTasks = 6;
+    const completedTasks = [
+      hasConnectedGit,
+      hasCreatedOrganization,
+      hasConnectedRepository,
+      hasScannedRepository,
+      hasAskedQuestion,
+      prCount >= 3,
+    ].filter(Boolean).length;
+
+    const progressPercentage = Math.round((completedTasks / totalTasks) * 100);
+
+    return {
+      hasConnectedGit,
+      hasCreatedOrganization,
+      hasConnectedRepository,
+      hasScannedRepository,
+      hasAskedQuestion,
+      prCount,
+      progressPercentage,
+      discountClaimed: progressPercentage === 100,
+    };
   }
 }

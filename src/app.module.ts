@@ -16,6 +16,7 @@ import { BillingModule } from './modules/billing/billing.module';
 import { CodeOverviewModule } from './modules/codeOverview/codeOverview.module';
 import { CommentModule } from './modules/comment/comment.module';
 import { CommitSummaryModule } from './modules/commitSummary/commitSummary.module';
+import { DiscountModule } from './modules/discount/discount.module';
 import { ExecutiveReportModule } from './modules/executiveReport/executiveReport.module';
 import { OrganizationModule } from './modules/organization/organization.module';
 import { PrTrackerModule } from './modules/prTracker/prTracker.module';
@@ -65,6 +66,7 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
     CommitSummaryModule,
     RepositoryScanModule,
     BillingModule,
+    DiscountModule,
   ],
   controllers: [AppController],
   providers: [

@@ -110,6 +110,18 @@ enum FileDocumentationType {
   UNKNOWN
 }
 
+enum DiscountType {
+  PERCENTAGE @map("PERCENTAGE")
+  FIXED      @map("FIXED")
+}
+
+enum DiscountStatus {
+  ACTIVE   @map("ACTIVE")
+  INACTIVE @map("INACTIVE")
+  EXPIRED  @map("EXPIRED")
+  CLAIMED  @map("CLAIMED")
+}
+
 model User {
   id        String        @id @default(uuid())
   firstName String
@@ -159,6 +171,7 @@ model Organization {
   subscriptions          Subscription[]
   usageLogs              UsageLog[]
   collaborators          Collaborator[]
+  discounts              Discount[] // One-to-many relation with discounts
   // Researcher             Researcher[]
   // ResearchAssistant      ResearchAssistant[]
 
@@ -569,6 +582,7 @@ model Invoice {
   invoiceNumber         String        @unique
   amount                Float
   tax                   Float         @default(0)
+  discountAmount        Float         @default(0) // Added discount amount
   total                 Float
   status                InvoiceStatus @default(DRAFT)
   dueDate               DateTime
@@ -576,10 +590,34 @@ model Invoice {
   stripeInvoiceId       String? // Stripe invoice ID
   stripePaymentIntentId String? // Stripe payment intent ID
   description           String?
+  appliedDiscountId     String? // Reference to applied discount
+  appliedDiscount       Discount?     @relation(fields: [appliedDiscountId], references: [id])
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
 
   invoiceItems InvoiceItem[]
+}
+
+model Discount {
+  id             String         @id @default(uuid())
+  name           String // e.g., "Task Completion Bonus", "New User Discount"
+  description    String? // Optional description
+  type           DiscountType // PERCENTAGE or FIXED
+  value          Float // Percentage (0-100) or fixed amount in dollars
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  status         DiscountStatus @default(ACTIVE)
+  durationMonths Int            @default(1) // How many months the discount is valid
+  claimedAt      DateTime? // When the discount was claimed
+  expiresAt      DateTime? // When the discount expires
+  isAutoApplied  Boolean        @default(false) // Whether to auto-apply on invoices
+  maxUsageCount  Int            @default(1) // How many times it can be used
+  usedCount      Int            @default(0) // How many times it has been used
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  // Relations
+  appliedInvoices Invoice[] // Invoices where this discount was applied
 }
 
 model InvoiceItem {
