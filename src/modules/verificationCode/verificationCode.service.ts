@@ -28,6 +28,42 @@ export class VerificationCodeService {
     }
   }
 
+  async validateAffiliateUserCode(userId: string, inputCode: string) {
+    try {
+      // Retrieve the verification code from the database
+      const verificationCodes =
+        await this._prismaService.verificationCode.findMany({
+          where: { accountId: userId },
+        });
+
+      const verificationCode = verificationCodes[verificationCodes.length - 1];
+
+      // If no code exists for this account, throw an error
+      if (!verificationCode) {
+        throw new BadRequestException(
+          'Verification code does not exist for this account.',
+        );
+      }
+
+      // Check if the code has expired
+      // const currentTime = new Date();
+      // if (verificationCode.expiresAt < currentTime) {
+      //   console.log('Verification code has expired.');
+      //   throw new BadRequestException('Verification code has expired.');
+      // }
+
+      if (verificationCode.code !== inputCode) {
+        console.log('Invalid verification code.');
+        throw new BadRequestException('Invalid verification code.');
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.log(error.message);
+      throw new BadRequestException(error.message); // Handle errors by throwing a BadRequestException
+    }
+  }
+
   async validateCode(accountId: string, inputCode: string) {
     try {
       // Retrieve the verification code from the database
