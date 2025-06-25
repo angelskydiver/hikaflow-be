@@ -12,6 +12,7 @@ import { RepositoryScanCronService } from './cron/repositoryScan.cron';
 import { MailModule } from './mail/mail.module';
 import { AccountModule } from './modules/account/account.module';
 import { AccountCredentialModule } from './modules/accountCredentials/accountCredentials.module';
+import { AffiliateUserModule } from './modules/affiliateUser/affiliateUser.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { CodeOverviewModule } from './modules/codeOverview/codeOverview.module';
 import { CommentModule } from './modules/comment/comment.module';
@@ -29,6 +30,7 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { JwtAuthGuard } from './passport/guards/jwt.guard';
 import { JwtStrategy } from './passport/strategies/jwt.strategy';
 import { LocalStrategy } from './passport/strategies/local.strategy';
+import { PartnerProgramLocalAuthStrategy } from './passport/strategies/partner-program.local.strategy';
 import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
 // import { UsersModule } from './users/users.module'; // Your Users module
 
@@ -52,6 +54,7 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
     PassportModule,
     PrismaModule, // Register PrismaModule
     UsersModule,
+    AffiliateUserModule,
     AccountModule,
     VerificationCodeModule,
     RepositoryModule,
@@ -72,6 +75,7 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
   providers: [
     AppService,
     LocalStrategy,
+    PartnerProgramLocalAuthStrategy,
     JwtStrategy,
     PrTrackerCronService,
     BillingCronService,

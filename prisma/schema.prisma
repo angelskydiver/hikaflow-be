@@ -122,6 +122,11 @@ enum DiscountStatus {
   CLAIMED  @map("CLAIMED")
 }
 
+enum AffiliateUserType {
+  INDIVIDUAL @map("INDIVIDUAL")
+  BUSINESS   @map("BUSINESS")
+}
+
 model User {
   id        String        @id @default(uuid())
   firstName String
@@ -135,8 +140,42 @@ model User {
   updatedAt DateTime      @updatedAt
 
   account                Account?
-  // accountId String? // Foreign key for the Account relation
   OrganizationInvitation OrganizationInvitation[]
+  referredBy             UserReferral[] // Referrals where this user was referred
+}
+
+model AffiliateUser {
+  id          String            @id @default(uuid())
+  name        String
+  email       String            @unique
+  phoneNumber String?
+  password    String
+  type        AffiliateUserType @default(INDIVIDUAL)
+  verified    Boolean           @default(false)
+  sendEmail   Boolean           @default(true)
+  loginType   UserLoginType     @default(CUSTOM)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  // Referral system relations
+  referrals UserReferral[] // Users referred by this affiliate
+}
+
+model UserReferral {
+  id               String   @id @default(uuid())
+  affiliateUserId  String // The affiliate who made the referral
+  userId           String // The user who was referred
+  registrationDate DateTime @default(now())
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  affiliate AffiliateUser @relation(fields: [affiliateUserId], references: [id])
+  user      User          @relation(fields: [userId], references: [id])
+
+  @@unique([affiliateUserId, userId]) // Prevent duplicate referrals
+  @@map("user_referrals")
 }
 
 model Account {
