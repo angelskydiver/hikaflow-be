@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { IsOptional, IsString } from 'class-validator';
 
 export class CreateUserRequestDto {
   @ApiProperty({ example: 'John' }) // Swagger docs show example data
@@ -12,6 +13,15 @@ export class CreateUserRequestDto {
 
   @ApiProperty({ example: 'password123' })
   password: string;
+
+  @ApiProperty({
+    example: 'affiliate-user-uuid',
+    description: 'Optional affiliate partner ID for referral tracking',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  partnerId?: string;
 }
 
 export class LoginRequestDto {

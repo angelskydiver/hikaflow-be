@@ -29,12 +29,23 @@ export class UserService {
   // Register a new user
   async createUser(data: CreateUserRequestDto): Promise<User> {
     try {
-      const { firstName, lastName, email, password } = data;
+      const { firstName, lastName, email, password, partnerId } = data;
       const IsUserExist = await this._prismaService.user.count({
         where: { email },
       });
       if (IsUserExist > 0) {
         throw new BadRequestException('Email already exists');
+      }
+
+      // If partnerId provided, verify the affiliate exists
+      if (partnerId) {
+        const affiliateExists =
+          await this._prismaService.affiliateUser.findUnique({
+            where: { id: partnerId },
+          });
+        if (!affiliateExists) {
+          throw new BadRequestException('Invalid partner ID');
+        }
       }
 
       const hashedPassword = await hashPassword(password); // Hash the password
@@ -49,6 +60,19 @@ export class UserService {
       });
 
       await this._accountService.createAccount({ userId: User.id });
+
+      // Create referral relationship if partnerId provided
+      if (partnerId) {
+        await this._prismaService.userReferral.create({
+          data: {
+            affiliateUserId: partnerId,
+            userId: User.id,
+            registrationDate: new Date(),
+            isActive: true,
+          },
+        });
+      }
+
       await this.verificationCode({ email: data.email });
       return User;
     } catch (error) {
