@@ -1224,7 +1224,7 @@ export class RepositoryScanService {
           `https://api.bitbucket.org/2.0/repositories/${repository.owner}/${repository.name}/pullrequests/${prNumber}`,
           {
             headers: {
-              Authorization: `Bearer ${credentials.decryptedToken}`,
+              Authorization: `${credentials.decryptedToken}`,
             },
           },
         );
