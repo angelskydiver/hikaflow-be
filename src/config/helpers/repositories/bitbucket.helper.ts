@@ -386,7 +386,7 @@ ${issue.reason}
       issue.improvedCodeBlock
     ) {
       // Refactoring suggestion
-      commentBody = `## ♻️ Refactoring Opportunity: ${issue.issue}
+      commentBody = `## ♻️ ${issue.issue}
 **Priority:** ${issue.priority} | **Focus:** Code Quality
 
 ### 📍 Current Implementation
