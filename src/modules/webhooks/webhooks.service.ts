@@ -8,7 +8,7 @@ import { CommentType, PrTrackerStatus } from '@prisma/client';
 import * as gptTokenizer from 'gpt-3-encoder';
 import { shouldAnalyze } from 'src/config/constants/unnecessary.files.constant';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
-import { filterHighPriorityComments } from 'src/config/helpers/comment.helper';
+import { advancedIssueFiltering } from 'src/config/helpers/comment.helper';
 import {
   commentBitbucketPr,
   commitInfoBitbucket,
@@ -1428,22 +1428,28 @@ export class WebhooksService {
         });
       });
 
-      // Reliability analysis can be done while other operations are in progress
-      // const reliabilityAnalysisPromise =
-      //   deepSeekWrapper.deepAnalyzeCodeFilesForIssuesReliability(allIssues);
-
       const combinedSummary = allSummaries;
 
-      // Wait for reliability analysis and prepare filtered issues
-      // const reliabilityResult = await reliabilityAnalysisPromise;
-      // allIssues = reliabilityResult?.codeIssues || allIssues;
+      // **NEW ADVANCED FILTERING SYSTEM**
+      console.log(
+        `Applying advanced quality filtering to ${allIssues.length} issues`,
+      );
 
-      const filteredIssues = filterHighPriorityComments(allIssues);
+      // Apply advanced filtering pipeline
+      const highQualityIssues = await advancedIssueFiltering(
+        allIssues,
+        repository?.repositorySettings || [],
+        deepSeekWrapper,
+      );
+
+      console.log(
+        `Quality filtering: ${allIssues.length} -> ${highQualityIssues.length} issues`,
+      );
 
       // Post high-priority issues as inline comments on Bitbucket and analyze summary in parallel
       const [, analyzeCombineSummary] = await Promise.all([
         Promise.allSettled(
-          filteredIssues.map((currentIssue) =>
+          highQualityIssues.map((currentIssue) =>
             commentBitbucketPr({
               token: prInfo.token,
               commentUrl: prInfo.links.comments.href,
@@ -1462,7 +1468,7 @@ export class WebhooksService {
         deepSeekWrapper.analyzeCombineSummary(combinedSummary),
       ]);
 
-      const createCommentsMapping = filteredIssues
+      const createCommentsMapping = highQualityIssues
         .map((data) => {
           const payload = {
             repositoryId: prInfo.id,
@@ -1499,6 +1505,10 @@ export class WebhooksService {
         Promise.allSettled(createCommentsMapping),
       ]);
 
+      await commentPrSummary(prInfo, {
+        issue: analyzeCombineSummary.prSummary,
+      });
+
       // Notification and status update can be done in parallel
       const payload = {
         accountId: prInfo.accountId,
@@ -1530,9 +1540,8 @@ export class WebhooksService {
       ]);
 
       return {
-        // fileChanges,
         AiResponse: {
-          codeIssues: allIssues,
+          codeIssues: highQualityIssues,
           prSummary: analyzeCombineSummary.prSummary,
         },
       };
@@ -1542,252 +1551,6 @@ export class WebhooksService {
         PrTrackerStatus.REJECTED,
       );
       console.log(error.message);
-      throw new BadRequestException(error.message);
-    }
-  }
-
-  async diffFunctionality3(prInfo: any) {
-    const startTime = Date.now();
-    try {
-      const fileChanges = await fetchPrFiles(prInfo);
-      const filePaths = await fileChanges.map((data) => data.file);
-
-      const fileMapping = filePaths.map((data) => fetchFiles(prInfo, data));
-      let files = await Promise.all(fileMapping);
-      files = files
-        .filter((data) => data)
-        .map((data, i) => ({
-          fileName: filePaths[i],
-          content: data.toString(),
-        }));
-
-      files = files.filter((file) => shouldAnalyze(file.fileName));
-      const filesContent = [];
-
-      files.forEach((data) => {
-        const lines = data.content.split('\n');
-        const withLineNumbers = lines
-          .map((line, index) => `${index + 1}: ${line}`)
-          .join('\n');
-        filesContent.push({ file: data.fileName, content: withLineNumbers });
-      });
-
-      console.log(
-        `Starting optimized PR analysis for ${filesContent.length} files`,
-      );
-
-      // Parallel optimization: Start duplicate code analysis and repository settings fetch concurrently
-      const [
-        { duplicateIdenticalCodeIssue, duplicateCodes },
-        { repositorySettings },
-      ] = await Promise.all([
-        this.detectDuplicateAndIdenticalCode(fileChanges),
-        this._prismaService.repository.findFirst({
-          where: { id: prInfo.repositoryId },
-          include: {
-            repositorySettings: true,
-          },
-        }),
-      ]);
-
-      const deepSeekWrapper = new DeepSeek();
-      let allIssues = duplicateIdenticalCodeIssue;
-      const allSummaries = [];
-
-      // **MAJOR OPTIMIZATION**: Parallel AI analysis instead of sequential
-      const BATCH_SIZE = 3; // Process files in batches of 3 to balance speed and rate limits
-      const batches = [];
-
-      for (let i = 0; i < filesContent.length; i += BATCH_SIZE) {
-        batches.push(filesContent.slice(i, i + BATCH_SIZE));
-      }
-
-      console.log(
-        `Processing ${filesContent.length} files in ${batches.length} parallel batches`,
-      );
-      const aiAnalysisStartTime = Date.now();
-
-      // Process batches in parallel
-      const batchPromises = batches.map(async (batch, batchIndex) => {
-        console.log(
-          `Processing batch ${batchIndex + 1}/${batches.length} with ${batch.length} files`,
-        );
-
-        // Parallel processing within each batch
-        const batchResults = await Promise.all(
-          batch.map(async (changes) => {
-            try {
-              const AiResponse =
-                await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(
-                  changes,
-                  repositorySettings,
-                );
-              return {
-                codeIssues: AiResponse.codeIssues,
-                chunkSummary: AiResponse.chunkSummary,
-              };
-            } catch (error) {
-              console.error(`Error analyzing file ${changes.file}:`, error);
-              return { codeIssues: [], chunkSummary: '' };
-            }
-          }),
-        );
-
-        // Small delay between batches to respect rate limits
-        if (batchIndex < batches.length - 1) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-
-        return batchResults;
-      });
-
-      // Wait for all batches to complete
-      const allBatchResults = await Promise.all(batchPromises);
-
-      // Flatten results
-      allBatchResults.forEach((batchResults) => {
-        batchResults.forEach((result) => {
-          allIssues = [...allIssues, ...result.codeIssues];
-          if (result.chunkSummary) {
-            allSummaries.push(result.chunkSummary);
-          }
-        });
-      });
-
-      const aiAnalysisTime = Date.now() - aiAnalysisStartTime;
-      console.log(
-        `AI analysis completed in ${aiAnalysisTime}ms for ${filesContent.length} files`,
-      );
-
-      // Update performance metrics
-      this.performanceMetrics.aiAnalysisTime += aiAnalysisTime;
-      this.performanceMetrics.filesProcessed += filesContent.length;
-      this.performanceMetrics.batchesProcessed += batches.length;
-
-      // Reliability analysis can be done while other operations are in progress
-      // const reliabilityAnalysisPromise =
-      //   deepSeekWrapper.deepAnalyzeCodeFilesForIssuesReliability(allIssues);
-
-      // Step 3: Combine summaries into a single PR summary
-      const combinedSummary = allSummaries;
-
-      // Step 4: Create comments mapping - prepare this early
-      const commentsMapping = allIssues.map((data) => commentPr(data, prInfo));
-
-      // Wait for reliability analysis and execute comments in parallel
-      const [comments, analyzeCombineSummary] = await Promise.all([
-        Promise.allSettled(commentsMapping),
-        deepSeekWrapper.analyzeCombineSummary(combinedSummary),
-      ]);
-
-      // Update allIssues with reliability results
-      // allIssues = reliabilityResult?.codeIssues || allIssues;
-
-      // Parallel execution of database operations
-      const createCommentsMapping = allIssues
-        .map((data, index) => {
-          // Check if it's a PR comment by checking the 'isPrIssue' flag
-          // @ts-expect-error - The comments array is guaranteed to have the same length as allIssues
-          if (comments[index].value?.isPrIssue) {
-            const payload = {
-              repositoryId: prInfo.id,
-              prId: prInfo.prId,
-              content: data.content,
-              line: parseInt(data.line),
-              file: data.file,
-              issue: data.issue,
-              issueCategory: data.category,
-              severity: data.priority,
-              reason: data.reason,
-              type: CommentType.PULL_REQUEST,
-              enhancementType: data.enhancementType,
-              affectedCodeBlock: data.affectedCodeBlock || {},
-              improvedCodeBlock: data.improvedCodeBlock || {},
-              tags: data.tags || [],
-            };
-            return this._commentService.createComment(payload);
-          }
-          return undefined;
-        })
-        .filter((comment) => comment !== undefined);
-
-      // Execute final operations in parallel
-      await Promise.all([
-        this._pullRequestService.updatePullRequest(prInfo.prId, {
-          summary: analyzeCombineSummary.prSummary,
-        }),
-        this._commentService.registerDuplicateCode(
-          duplicateCodes.map((data) => ({
-            ...data,
-            repositoryId: prInfo.repositoryId,
-            prId: prInfo.prNumber.toString(),
-          })),
-        ),
-        Promise.allSettled(createCommentsMapping),
-      ]);
-
-      await commentPrSummary(prInfo, {
-        issue: analyzeCombineSummary.prSummary,
-      });
-
-      // Notification and status update can be done in parallel
-      const notificationPayload = {
-        accountId: prInfo.accountId,
-        authorName: prInfo.owner,
-        repositoryInfo: {
-          repositoryName: prInfo.repo,
-          repositoryId: prInfo.repositoryId,
-        },
-        organizationId: prInfo.organizationId,
-      };
-
-      await Promise.all([
-        this.sendPrCreateNotification(notificationPayload),
-        this._prTrackerService.updatePrInfo(
-          `${prInfo.repo}-${prInfo.prNumber}-${prInfo.action}`,
-          PrTrackerStatus.APPROVED,
-        ),
-        // Log billing usage
-        this._billingService
-          .trackUsageWithQuota({
-            organizationId: prInfo.organizationId,
-            repositoryId: prInfo.repositoryId,
-            type: 'PR_ANALYSIS',
-            description: `PR Analysis: #${prInfo.prNumber} in ${prInfo.repo}`,
-          })
-          .catch((logError) => {
-            console.error('Error logging PR analysis usage:', logError);
-          }),
-      ]);
-
-      const totalTime = Date.now() - startTime;
-      this.performanceMetrics.totalProcessingTime += totalTime;
-
-      console.log(
-        `PR analysis completed successfully in ${totalTime}ms (AI: ${aiAnalysisTime}ms, Files: ${filesContent.length})`,
-      );
-
-      return {
-        fileChanges,
-        AiResponse: {
-          codeIssues: allIssues,
-          prSummary: analyzeCombineSummary.prSummary,
-        },
-        performanceMetrics: {
-          totalTime,
-          aiAnalysisTime,
-          filesProcessed: filesContent.length,
-          batchesProcessed: batches.length,
-        },
-      };
-    } catch (error) {
-      const totalTime = Date.now() - startTime;
-      console.error(`PR analysis failed after ${totalTime}ms:`, error.message);
-
-      this._prTrackerService.updatePrInfo(
-        `${prInfo.repo}-${prInfo.prNumber}-${prInfo.action}`,
-        PrTrackerStatus.REJECTED,
-      );
       throw new BadRequestException(error.message);
     }
   }
@@ -2247,5 +2010,268 @@ ${issue.reason}`;
 
   private generateBenefits(currentIssue: any): string {
     return `Benefits of fixing: ${currentIssue.reason}`;
+  }
+
+  async diffFunctionality3(prInfo: any) {
+    const startTime = Date.now();
+    try {
+      const fileChanges = await fetchPrFiles(prInfo);
+      const filePaths = await fileChanges.map((data) => data.file);
+
+      const fileMapping = filePaths.map((data) => fetchFiles(prInfo, data));
+      let files = await Promise.all(fileMapping);
+      files = files
+        .filter((data) => data)
+        .map((data, i) => ({
+          fileName: filePaths[i],
+          content: data.toString(),
+        }));
+
+      files = files.filter((file) => shouldAnalyze(file.fileName));
+      const filesContent = [];
+
+      files.forEach((data) => {
+        const lines = data.content.split('\n');
+        const withLineNumbers = lines
+          .map((line, index) => `${index + 1}: ${line}`)
+          .join('\n');
+        filesContent.push({ file: data.fileName, content: withLineNumbers });
+      });
+
+      console.log(
+        `Starting optimized PR analysis for ${filesContent.length} files`,
+      );
+
+      // Parallel optimization: Start duplicate code analysis and repository settings fetch concurrently
+      const [{ duplicateIdenticalCodeIssue, duplicateCodes }, repository] =
+        await Promise.all([
+          this.detectDuplicateAndIdenticalCode(fileChanges),
+          this._prismaService.repository.findFirst({
+            where: { id: prInfo.repositoryId },
+            include: {
+              repositorySettings: true,
+            },
+          }),
+        ]);
+
+      const deepSeekWrapper = new DeepSeek();
+      let allIssues = duplicateIdenticalCodeIssue;
+      const allSummaries = [];
+
+      // **MAJOR OPTIMIZATION**: Parallel AI analysis instead of sequential
+      const BATCH_SIZE = 3; // Process files in batches of 3 to balance speed and rate limits
+      const batches = [];
+
+      for (let i = 0; i < filesContent.length; i += BATCH_SIZE) {
+        batches.push(filesContent.slice(i, i + BATCH_SIZE));
+      }
+
+      console.log(
+        `Processing ${filesContent.length} files in ${batches.length} parallel batches`,
+      );
+      const aiAnalysisStartTime = Date.now();
+
+      // Process batches in parallel
+      const batchPromises = batches.map(async (batch, batchIndex) => {
+        console.log(
+          `Processing batch ${batchIndex + 1}/${batches.length} with ${batch.length} files`,
+        );
+
+        // Parallel processing within each batch
+        const batchResults = await Promise.all(
+          batch.map(async (changes) => {
+            try {
+              const AiResponse =
+                await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(
+                  changes,
+                  repository?.repositorySettings || [],
+                );
+              return {
+                codeIssues: AiResponse.codeIssues,
+                chunkSummary: AiResponse.chunkSummary,
+              };
+            } catch (error) {
+              console.error(`Error analyzing file ${changes.file}:`, error);
+              return { codeIssues: [], chunkSummary: '' };
+            }
+          }),
+        );
+
+        // Small delay between batches to respect rate limits
+        if (batchIndex < batches.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+
+        return batchResults;
+      });
+
+      // Wait for all batches to complete
+      const allBatchResults = await Promise.all(batchPromises);
+
+      // Flatten results
+      allBatchResults.forEach((batchResults) => {
+        batchResults.forEach((result) => {
+          allIssues = [...allIssues, ...result.codeIssues];
+          if (result.chunkSummary) {
+            allSummaries.push(result.chunkSummary);
+          }
+        });
+      });
+
+      const aiAnalysisTime = Date.now() - aiAnalysisStartTime;
+      console.log(
+        `AI analysis completed in ${aiAnalysisTime}ms for ${filesContent.length} files`,
+      );
+
+      // Update performance metrics
+      this.performanceMetrics.aiAnalysisTime += aiAnalysisTime;
+      this.performanceMetrics.filesProcessed += filesContent.length;
+      this.performanceMetrics.batchesProcessed += batches.length;
+
+      // Step 3: Combine summaries into a single PR summary
+      const combinedSummary = allSummaries;
+
+      // Step 4: Create comments mapping - prepare this early
+      const commentsMapping = allIssues.map((data) => commentPr(data, prInfo));
+
+      // Wait for reliability analysis and execute comments in parallel
+      const [comments, analyzeCombineSummary] = await Promise.all([
+        Promise.allSettled(commentsMapping),
+        deepSeekWrapper.analyzeCombineSummary(combinedSummary),
+      ]);
+
+      // **NEW ADVANCED FILTERING SYSTEM**
+      console.log(
+        `Applying advanced quality filtering to ${allIssues.length} issues`,
+      );
+
+      // Apply advanced filtering pipeline
+      const highQualityIssues = await advancedIssueFiltering(
+        allIssues,
+        repository?.repositorySettings || [],
+        deepSeekWrapper,
+      );
+
+      console.log(
+        `Quality filtering: ${allIssues.length} -> ${highQualityIssues.length} issues`,
+      );
+
+      // Parallel execution of database operations - use filtered issues
+      const createCommentsMapping = highQualityIssues
+        .map((data, index) => {
+          // Check if it's a PR comment by checking the 'isPrIssue' flag
+          const originalIndex = allIssues.findIndex(
+            (issue) =>
+              issue.file === data.file &&
+              issue.line === data.line &&
+              issue.issue === data.issue,
+          );
+
+          if (
+            originalIndex >= 0 &&
+            comments[originalIndex]?.status === 'fulfilled' &&
+            comments[originalIndex]?.value?.isPrIssue
+          ) {
+            const payload = {
+              repositoryId: prInfo.id,
+              prId: prInfo.prId,
+              content: data.content,
+              line: parseInt(data.line),
+              file: data.file,
+              issue: data.issue,
+              issueCategory: data.category,
+              severity: data.priority,
+              reason: data.reason,
+              type: CommentType.PULL_REQUEST,
+              enhancementType: data.enhancementType,
+              affectedCodeBlock: data.affectedCodeBlock || {},
+              improvedCodeBlock: data.improvedCodeBlock || {},
+              tags: data.tags || [],
+            };
+            return this._commentService.createComment(payload);
+          }
+          return undefined;
+        })
+        .filter((comment) => comment !== undefined);
+
+      // Execute final operations in parallel
+      await Promise.all([
+        this._pullRequestService.updatePullRequest(prInfo.prId, {
+          summary: analyzeCombineSummary.prSummary,
+        }),
+        this._commentService.registerDuplicateCode(
+          duplicateCodes.map((data) => ({
+            ...data,
+            repositoryId: prInfo.repositoryId,
+            prId: prInfo.prNumber.toString(),
+          })),
+        ),
+        Promise.allSettled(createCommentsMapping),
+      ]);
+
+      await commentPrSummary(prInfo, {
+        issue: analyzeCombineSummary.prSummary,
+      });
+
+      // Notification and status update can be done in parallel
+      const notificationPayload = {
+        accountId: prInfo.accountId,
+        authorName: prInfo.owner,
+        repositoryInfo: {
+          repositoryName: prInfo.repo,
+          repositoryId: prInfo.repositoryId,
+        },
+        organizationId: prInfo.organizationId,
+      };
+
+      await Promise.all([
+        this.sendPrCreateNotification(notificationPayload),
+        this._prTrackerService.updatePrInfo(
+          `${prInfo.repo}-${prInfo.prNumber}-${prInfo.action}`,
+          PrTrackerStatus.APPROVED,
+        ),
+        // Log billing usage
+        this._billingService
+          .trackUsageWithQuota({
+            organizationId: prInfo.organizationId,
+            repositoryId: prInfo.repositoryId,
+            type: 'PR_ANALYSIS',
+            description: `PR Analysis: #${prInfo.prNumber} in ${prInfo.repo}`,
+          })
+          .catch((logError) => {
+            console.error('Error logging PR analysis usage:', logError);
+          }),
+      ]);
+
+      const totalTime = Date.now() - startTime;
+      this.performanceMetrics.totalProcessingTime += totalTime;
+
+      console.log(
+        `PR analysis completed successfully in ${totalTime}ms (AI: ${aiAnalysisTime}ms, Files: ${filesContent.length})`,
+      );
+
+      return {
+        fileChanges,
+        AiResponse: {
+          codeIssues: highQualityIssues,
+          prSummary: analyzeCombineSummary.prSummary,
+        },
+        performanceMetrics: {
+          totalTime,
+          aiAnalysisTime,
+          filesProcessed: filesContent.length,
+          batchesProcessed: batches.length,
+        },
+      };
+    } catch (error) {
+      const totalTime = Date.now() - startTime;
+      console.error(`PR analysis failed after ${totalTime}ms:`, error.message);
+
+      this._prTrackerService.updatePrInfo(
+        `${prInfo.repo}-${prInfo.prNumber}-${prInfo.action}`,
+        PrTrackerStatus.REJECTED,
+      );
+      throw new BadRequestException(error.message);
+    }
   }
 }
