@@ -1,20 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const apiKey = ***REMOVED_SECRET***;
-const genAI = new GoogleGenerativeAI(apiKey);
-
-const model = genAI.getGenerativeModel({
-  model: 'gemini-1.5-flash',
-});
-
-const generationConfig = {
-  temperature: 0,
-  topP: 0.95,
-  topK: 40,
-  maxOutputTokens: 8192,
-  responseMimeType: 'application/json',
-};
-
 /**
  * Gemini AI helper for analysis and embeddings
  */
@@ -138,7 +123,8 @@ export class Gemini {
 
       // Third attempt: Use Gemini to repair the JSON
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-1.5-flash',
+        // model: 'gemini-1.5-pro',
+        model: 'gemini-1.5-pro',
       });
 
       const prompt = `
@@ -277,6 +263,9 @@ Return ONLY the fixed JSON with no other text, explanations, or code formatting.
       Files: ${JSON.stringify(files)}
       `;
 
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-1.5-pro',
+      });
       let resp: any = await model.generateContent([prompt]);
       resp = this.extractCleanJSON(
         resp.response.candidates[0].content.parts[0].text,
@@ -311,16 +300,23 @@ Return ONLY the fixed JSON with no other text, explanations, or code formatting.
    * @returns AI response with references
    */
   async generateAnswer(input: string, result, previousQuestions?: string) {
-    const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    let modelToUse = 'gemini-1.5-pro';
+    let retryCount = 0;
+    const MAX_RETRIES = 3;
+    let lastError = null;
 
-    try {
-      let context = '';
+    // Try with Flash model first, fall back to Pro if needed
+    while (retryCount <= MAX_RETRIES) {
+      try {
+        const model = this.genAI.getGenerativeModel({ model: modelToUse });
 
-      for (const r of result) {
-        context += `source:${r.fileName}\ncode content:${r.sourceCode}\nsummary of file:${r.summary}\n\n`;
-      }
+        let context = '';
 
-      const prompt = `
+        for (const r of result) {
+          context += `source:${r.fileName}\ncode content:${r.sourceCode}\nsummary of file:${r.summary}\n\n`;
+        }
+
+        const prompt = `
 You are an AI code assistant helping technical team members understand this codebase, debug issues, and complete tasks with high accuracy. You have deep knowledge of the codebase and can answer questions directly and naturally, as if you were a senior developer who wrote the code.
 
 IMPORTANT GUIDELINES:
@@ -368,16 +364,78 @@ ${previousQuestions || 'No previous questions'}
 END OF PREVIOUS QUESTIONS
 `;
 
-      const resp = await model.generateContent([prompt]);
+        console.log(
+          `Generating answer using ${modelToUse} (attempt ${retryCount + 1})`,
+        );
 
-      return {
-        output: resp,
-        filesReferenced: result,
-      };
-    } catch (err) {
-      console.error('generateAnswer error:', err.message);
-      throw new Error('Failed to generate answer');
+        const resp = await model.generateContent([prompt]);
+
+        return {
+          output: resp,
+          filesReferenced: result,
+        };
+      } catch (apiError) {
+        console.error(
+          `API error during generateAnswer (attempt ${retryCount + 1}):`,
+          apiError,
+        );
+        lastError = apiError;
+
+        // Handle specific error types
+        if (
+          apiError.status === 503 ||
+          apiError.message?.includes('overloaded')
+        ) {
+          // Model overloaded - wait and retry with exponential backoff
+          const waitTime = Math.min(2000 * Math.pow(2, retryCount), 30000); // Max 30 seconds
+          console.log(
+            `Model overloaded, waiting ${waitTime / 1000} seconds before retry...`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
+
+          // Switch model if we're not making progress
+          if (retryCount >= 1) {
+            modelToUse =
+              modelToUse === 'gemini-1.5-pro'
+                ? 'gemini-1.5-pro'
+                : 'gemini-1.5-pro';
+            console.log(`Switching to ${modelToUse} for retry`);
+          }
+        } else if (apiError.status === 429) {
+          // Rate limit - wait longer
+          const waitTime = Math.min(5000 * (retryCount + 1), 45000);
+          console.log(
+            `Rate limit hit, waiting ${waitTime / 1000} seconds before retry...`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
+        } else {
+          // For other errors, try switching model immediately
+          modelToUse =
+            modelToUse === 'gemini-1.5-pro'
+              ? 'gemini-1.5-pro'
+              : 'gemini-1.5-pro';
+          console.log(`API error, switching to ${modelToUse} for retry`);
+        }
+
+        retryCount++;
+
+        // If we've exhausted retries, throw the last error
+        if (retryCount > MAX_RETRIES) {
+          console.error('All retry attempts exhausted for generateAnswer');
+          throw new Error(
+            `Failed to generate answer after ${MAX_RETRIES} retries: ${lastError?.message || 'Unknown error'}`,
+          );
+        }
+
+        // Continue to next retry iteration
+        continue;
+      }
     }
+
+    // This should only be reached if all retries fail but don't throw specific errors
+    throw new Error(
+      `Failed to generate answer: ${lastError?.message || 'Unknown error'}`,
+    );
   }
 
   /**
@@ -719,9 +777,9 @@ The analysis must be HIGHLY DETAILED and SPECIFIC. Include exact file locations,
             // Try with less intensive model if we're still using pro
             if (modelToUse === 'gemini-1.5-pro') {
               console.log(
-                'Rate limit hit with pro model, switching to gemini-1.5-flash...',
+                'Rate limit hit with pro model, switching to gemini-1.5-pro...',
               );
-              modelToUse = 'gemini-1.5-flash';
+              modelToUse = 'gemini-1.5-pro';
               // Small delay to allow quota to reset
               await new Promise((resolve) => setTimeout(resolve, 2000));
             } else {
@@ -736,7 +794,7 @@ The analysis must be HIGHLY DETAILED and SPECIFIC. Include exact file locations,
             // For other errors, switch model and retry
             modelToUse =
               modelToUse === 'gemini-1.5-pro'
-                ? 'gemini-1.5-flash'
+                ? 'gemini-1.5-pro'
                 : 'gemini-1.5-pro';
           }
 
@@ -1304,7 +1362,7 @@ test('API returns correct response', async () => {
   ): Promise<string> {
     try {
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-1.5-flash',
+        model: 'gemini-1.5-pro',
       });
 
       const prompt = `You are an AI assistant that helps categorize user questions about codebases into one of five types:
@@ -1400,7 +1458,7 @@ Query: ${query}`;
     try {
       // Create generative model
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-1.5-flash',
+        model: 'gemini-1.5-pro',
         generationConfig: {
           temperature: 0,
           maxOutputTokens: 1024,
