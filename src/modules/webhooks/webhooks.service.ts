@@ -745,15 +745,13 @@ export class WebhooksService {
           executiveReportPayload,
         );
 
-      // Create commit summaries
-      await Promise.all(
-        commits.map((commit) =>
-          this._commitSummaryService.createCommitSummary(
-            commit,
-            data.repository.id.toString(),
-            report.id,
-          ),
-        ),
+      // Associate existing commits with the report or create new ones
+      const commitIds = commits.map((commit) => commit.sha);
+
+      // First, try to associate existing commits
+      await this._commitSummaryService.associateCommitsWithReport(
+        commitIds,
+        report.id,
       );
 
       const payload = {
@@ -1021,7 +1019,16 @@ export class WebhooksService {
           executiveReportPayload,
         );
 
-      // Create commit summaries
+      // Associate existing commits with the report or create new ones
+      const commitIds = commits.map((commit) => commit.hash);
+
+      // First, try to associate existing commits
+      await this._commitSummaryService.associateCommitsWithReport(
+        commitIds,
+        report.id,
+      );
+
+      // Create commit summaries for any commits that don't exist yet
       await Promise.all(
         commits.map((commit) => {
           const stats = extractChangesFromPatch(commit.patch[0]);
@@ -2158,7 +2165,7 @@ ${issue.reason}`;
 
       // Parallel execution of database operations - use filtered issues
       const createCommentsMapping = highQualityIssues
-        .map((data, index) => {
+        .map((data) => {
           // Check if it's a PR comment by checking the 'isPrIssue' flag
           const originalIndex = allIssues.findIndex(
             (issue) =>
@@ -2272,6 +2279,173 @@ ${issue.reason}`;
         PrTrackerStatus.REJECTED,
       );
       throw new BadRequestException(error.message);
+    }
+  }
+
+  /**
+   * Handle GitHub push events for individual commit analysis
+   */
+  async handleGithubPushEvent(data: any) {
+    try {
+      const repository = await this._prismaService.repository.findUnique({
+        where: {
+          repositoryId: data.repository.id.toString(),
+        },
+        include: {
+          organization: true,
+        },
+      });
+
+      if (!repository) {
+        console.log('Repository not found for push event');
+        return { success: false, message: 'Repository not found' };
+      }
+
+      // Check if organization has active subscription
+      const subscriptionStatus =
+        await this._billingService.checkSubscriptionStatus(
+          repository.organization.id,
+        );
+
+      if (!subscriptionStatus.isActive) {
+        console.log(
+          `Organization ${repository.organization.id} does not have active subscription for push event processing`,
+        );
+        return {
+          success: false,
+          message:
+            subscriptionStatus.message ||
+            'Active subscription required to process commits',
+        };
+      }
+
+      await Promise.all(
+        data.commits.map((commit) =>
+          this._commitSummaryService.createCommitSummary(
+            {
+              ...commit,
+              branchName: data.ref.replace('refs/heads/', ''),
+              baseBranch: repository.baseBranch,
+            },
+            data.repository.id.toString(),
+          ),
+        ),
+      );
+
+      // const results = await Promise.all(commitPromises);
+      // const successfulCommits = results.filter(Boolean);
+
+      // console.log(
+      //   `Processed ${successfulCommits.length} commits from push event`,
+      // );
+
+      return {
+        success: true,
+        message: `Processed ${data.commits.length} commits`,
+        commits: data.commits,
+      };
+    } catch (error) {
+      console.error('Error handling GitHub push event:', error);
+      return { success: false, message: error.message };
+    }
+  }
+
+  /**
+   * Handle Bitbucket push events for individual commit analysis
+   */
+  async handleBitbucketPushEvent(data: any) {
+    try {
+      const repository = await this._prismaService.repository.findUnique({
+        where: {
+          repositoryId: data.repository.uuid,
+        },
+        include: {
+          organization: true,
+        },
+      });
+
+      if (!repository) {
+        console.log('Repository not found for push event');
+        return { success: false, message: 'Repository not found' };
+      }
+
+      // Check if organization has active subscription
+      const subscriptionStatus =
+        await this._billingService.checkSubscriptionStatus(
+          repository.organization.id,
+        );
+
+      if (!subscriptionStatus.isActive) {
+        console.log(
+          `Organization ${repository.organization.id} does not have active subscription for push event processing`,
+        );
+        return {
+          success: false,
+          message:
+            subscriptionStatus.message ||
+            'Active subscription required to process commits',
+        };
+      }
+
+      // Process each commit in the push
+      const commitPromises = data.push.changes.map(async (change) => {
+        const commits = change.commits || [];
+
+        return Promise.all(
+          commits.map(async (commit) => {
+            try {
+              // Check if commit already exists
+              const existingCommit =
+                await this._prismaService.commitSummary.findFirst({
+                  where: {
+                    commitId: commit.hash,
+                    repositoryId: repository.repositoryId,
+                  },
+                });
+
+              if (existingCommit) {
+                console.log(`Commit ${commit.hash} already exists, skipping`);
+                return null;
+              }
+
+              // Create standalone commit summary for Bitbucket
+              return await this._commitSummaryService.createStandaloneCommitSummary(
+                {
+                  id: commit.hash,
+                  message: commit.message,
+                  author: commit.author,
+                  url: commit.links.html.href,
+                  parents: commit.parents?.map((p) => p.hash) || [],
+                  added: [], // Bitbucket doesn't provide file details in push events
+                  modified: [],
+                  removed: [],
+                  ref: change.new?.name || 'unknown',
+                },
+                repository.repositoryId,
+              );
+            } catch (error) {
+              console.error(`Error processing commit ${commit.hash}:`, error);
+              return null;
+            }
+          }),
+        );
+      });
+
+      const results = await Promise.all(commitPromises);
+      const successfulCommits = results.flat().filter(Boolean);
+
+      console.log(
+        `Processed ${successfulCommits.length} commits from Bitbucket push event`,
+      );
+
+      return {
+        success: true,
+        message: `Processed ${successfulCommits.length} commits`,
+        commits: successfulCommits,
+      };
+    } catch (error) {
+      console.error('Error handling Bitbucket push event:', error);
+      return { success: false, message: error.message };
     }
   }
 }

@@ -12,8 +12,13 @@ export class WebhooksController {
   // Simple POST method to handle the ping and log the body
 
   @Public()
-  @Post('/github') // The route is /webhooks/ping
-  async handlePing(@Body() body: any) {
+  @Post('/github') // The route is /webhooks/github
+  async handleGithubWebhook(@Body() body: any) {
+    // Handle push events for individual commits
+    if (body.commits && body.ref) {
+      return await this._webhooksService.handleGithubPushEvent(body);
+    }
+
     if (body.pull_request) {
       // Get repository to find organization ID
       const repository = await this._webhooksService.getRepositoryById(
@@ -52,8 +57,13 @@ export class WebhooksController {
   }
 
   @Public()
-  @Post('/bitbucket') // The route is /webhooks/ping
+  @Post('/bitbucket') // The route is /webhooks/bitbucket
   async handleBitbucketWebhooks(@Body() body: any) {
+    // Handle push events for individual commits
+    if (body.event === 'repo:push') {
+      return await this._webhooksService.handleBitbucketPushEvent(body);
+    }
+
     if (body.event.includes('pullrequest')) {
       // Get repository to find organization ID
       const repository = await this._webhooksService.getRepositoryById(
