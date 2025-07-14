@@ -34,6 +34,7 @@ export interface QueryAnalysisRequest {
     | 'release_analysis';
   includeTracing?: boolean;
   streamProgress?: (step: string, message: string, data?: any) => void;
+  streamTextChunk?: (chunk: string) => void;
 }
 
 export interface QueryAnalysisResponse {
@@ -340,13 +341,16 @@ export class RepositoryAnalysisService {
           );
           break;
         default:
-          response = await this.handleEnhancedProjectLevelQuery(
+          response = await this.routeQueryToEnhancedHandler(
+            queryType,
             request.query,
             enhancedQuery,
             context,
             request.threadId,
             request.analysisMode || 'standard',
             trace,
+            request.streamProgress,
+            request.streamTextChunk,
           );
       }
 
@@ -570,7 +574,7 @@ Return the most appropriate category that allows for the deepest technical analy
   }
 
   /**
-   * Enhanced routing with senior engineer capabilities
+   * Route query to appropriate enhanced handler with streaming support
    */
   private async routeQueryToEnhancedHandler(
     queryType: string,
@@ -581,11 +585,12 @@ Return the most appropriate category that allows for the deepest technical analy
     analysisMode: string = 'standard',
     trace?: AnalysisTrace,
     streamProgress?: (step: string, message: string, data?: any) => void,
+    streamTextChunk?: (chunk: string) => void,
   ): Promise<QueryAnalysisResponse> {
     trace?.executionPath.push('routeQueryToEnhancedHandler');
 
     switch (queryType) {
-      case 'ARCHITECTURAL_REVIEW':
+      case 'architectural_review':
         return await this.handleArchitecturalReview(
           originalQuery,
           enhancedQuery,
@@ -593,7 +598,7 @@ Return the most appropriate category that allows for the deepest technical analy
           threadId,
           trace,
         );
-      case 'CODE_REVIEW':
+      case 'code_review':
         return await this.handleCodeReview(
           originalQuery,
           enhancedQuery,
@@ -601,7 +606,7 @@ Return the most appropriate category that allows for the deepest technical analy
           threadId,
           trace,
         );
-      case 'PERFORMANCE_ANALYSIS':
+      case 'performance_analysis':
         return await this.handlePerformanceAnalysis(
           originalQuery,
           enhancedQuery,
@@ -609,7 +614,7 @@ Return the most appropriate category that allows for the deepest technical analy
           threadId,
           trace,
         );
-      case 'SECURITY_AUDIT':
+      case 'security_audit':
         return await this.handleSecurityAudit(
           originalQuery,
           enhancedQuery,
@@ -617,7 +622,7 @@ Return the most appropriate category that allows for the deepest technical analy
           threadId,
           trace,
         );
-      case 'MODULE_DESIGN':
+      case 'module_design':
         return await this.handleModuleDesign(
           originalQuery,
           enhancedQuery,
@@ -625,7 +630,7 @@ Return the most appropriate category that allows for the deepest technical analy
           threadId,
           trace,
         );
-      case 'TECHNICAL_DEBT':
+      case 'technical_debt':
         return await this.handleTechnicalDebtAnalysis(
           originalQuery,
           enhancedQuery,
@@ -633,7 +638,7 @@ Return the most appropriate category that allows for the deepest technical analy
           threadId,
           trace,
         );
-      case 'RELEASE_ANALYSIS':
+      case 'release_analysis':
         return await this.handleReleaseAnalysis(
           originalQuery,
           enhancedQuery,
@@ -641,7 +646,7 @@ Return the most appropriate category that allows for the deepest technical analy
           threadId,
           trace,
         );
-      case 'FOLLOW_UP':
+      case 'follow_up':
         return await this.handleEnhancedFollowUpQuery(
           originalQuery,
           enhancedQuery,
@@ -650,7 +655,7 @@ Return the most appropriate category that allows for the deepest technical analy
           analysisMode,
           trace,
         );
-      case 'USER_FLOW':
+      case 'user_flow':
         return await this.handleEnhancedUserFlowQuery(
           originalQuery,
           enhancedQuery,
@@ -659,7 +664,7 @@ Return the most appropriate category that allows for the deepest technical analy
           analysisMode,
           trace,
         );
-      case 'FUNCTION_TRACE':
+      case 'function_trace':
         return await this.handleEnhancedFunctionTraceQuery(
           originalQuery,
           enhancedQuery,
@@ -668,7 +673,8 @@ Return the most appropriate category that allows for the deepest technical analy
           analysisMode,
           trace,
         );
-      case 'PROJECT_LEVEL':
+      case 'project_level':
+      default:
         return await this.handleEnhancedProjectLevelQuery(
           originalQuery,
           enhancedQuery,
@@ -676,15 +682,7 @@ Return the most appropriate category that allows for the deepest technical analy
           threadId,
           analysisMode,
           trace,
-        );
-      default:
-        return await this.handleEnhancedSemanticSearchFallback(
-          originalQuery,
-          enhancedQuery,
-          context,
-          threadId,
-          analysisMode,
-          trace,
+          streamTextChunk,
         );
     }
   }
@@ -1791,7 +1789,7 @@ Your answer should be immediately useful to someone trying to understand this co
       repositoryId: context.repositoryId,
       scanId: context.repositoryScanId,
       tokenUtilized:
-        queryResponse.output.response.usageMetadata.totalTokenCount,
+        queryResponse.output.response.usageMetadata?.totalTokenCount || 0,
       accountId: context.accountId,
       summary: responseSummary,
       threadId: validThreadId,
@@ -2414,7 +2412,7 @@ Your answer should be immediately useful to someone trying to understand this co
   }
 
   /**
-   * Enhanced project level query handler
+   * Enhanced project level query handler with streaming support
    */
   private async handleEnhancedProjectLevelQuery(
     query: string,
@@ -2423,6 +2421,7 @@ Your answer should be immediately useful to someone trying to understand this co
     threadId?: string,
     analysisMode: string = 'standard',
     trace?: AnalysisTrace,
+    streamTextChunk?: (chunk: string) => void,
   ): Promise<QueryAnalysisResponse> {
     trace?.executionPath.push('handleEnhancedProjectLevelQuery');
 
@@ -2495,11 +2494,21 @@ Your answer should be immediately useful to someone trying to understand this co
         analysisMode,
         resourceAnalysis,
       );
-    const queryResponse = await geminiProjectEnhanced.generateAnswer(
-      enhancedPrompt,
-      filesWithCode,
-      enhancedQuery,
-    );
+    
+    // Use streaming generation if streamTextChunk is provided
+    const queryResponse = streamTextChunk 
+      ? await geminiProjectEnhanced.generateAnswerStream(
+          enhancedPrompt,
+          filesWithCode,
+          enhancedQuery,
+          streamTextChunk,
+        )
+      : await geminiProjectEnhanced.generateAnswer(
+          enhancedPrompt,
+          filesWithCode,
+          enhancedQuery,
+        );
+    
     if (trace) {
       trace.performanceMetrics.aiCallsCount += 2;
     }

@@ -384,12 +384,14 @@ END OF PREVIOUS QUESTIONS
         // Handle specific error types
         if (
           apiError.status === 503 ||
-          apiError.message?.includes('overloaded')
+          apiError.message?.includes('overloaded') ||
+          apiError.message?.includes('fetch failed') ||
+          apiError.message?.includes('network')
         ) {
-          // Model overloaded - wait and retry with exponential backoff
+          // Model overloaded or network issue - wait and retry with exponential backoff
           const waitTime = Math.min(2000 * Math.pow(2, retryCount), 30000); // Max 30 seconds
           console.log(
-            `Model overloaded, waiting ${waitTime / 1000} seconds before retry...`,
+            `Model overloaded or network issue, waiting ${waitTime / 1000} seconds before retry...`,
           );
           await new Promise((resolve) => setTimeout(resolve, waitTime));
 
@@ -435,6 +437,198 @@ END OF PREVIOUS QUESTIONS
     // This should only be reached if all retries fail but don't throw specific errors
     throw new Error(
       `Failed to generate answer: ${lastError?.message || 'Unknown error'}`,
+    );
+  }
+
+  /**
+   * Generate an answer with streaming support
+   * @param input User query
+   * @param result Relevant files with their content
+   * @param previousQuestions Previous questions context
+   * @param onChunk Callback for each text chunk
+   * @returns AI response with references
+   */
+  async generateAnswerStream(
+    input: string, 
+    filesWithCode, 
+    previousQuestions?: string,
+    onChunk?: (chunk: string) => void
+  ) {
+    let modelToUse = 'gemini-1.5-pro';
+    let retryCount = 0;
+    const MAX_RETRIES = 3;
+    let lastError = null;
+
+    // Try with Pro model first, fall back to Flash if needed
+    while (retryCount <= MAX_RETRIES) {
+      try {
+        const model = this.genAI.getGenerativeModel({ model: modelToUse });
+
+        let context = '';
+
+        for (const r of filesWithCode) {
+          context += `source:${r.fileName}\ncode content:${r.sourceCode}\nsummary of file:${r.summary}\n\n`;
+        }
+
+        const prompt = `
+You are an AI code assistant helping technical team members understand this codebase, debug issues, and complete tasks with high accuracy. You have deep knowledge of the codebase and can answer questions directly and naturally, as if you were a senior developer who wrote the code.
+
+IMPORTANT GUIDELINES:
+1. Answer questions directly and naturally, without referencing that you're looking at code or analyzing files
+2. Don't start responses with phrases like "Based on the code..." or "Looking at the implementation..."
+3. Speak with authority and confidence about how things work, as if you designed the system
+4. Use a conversational, professional tone as if speaking to a colleague
+5. analyze the query context from relevant files or previous questions and answer the question best and confident way you can.
+
+
+When answering about the project's purpose, focus on:
+1. The specific domain the project serves
+2. Target customers and user personas
+3. Core unique features that differentiate this solution
+4. Business goals and outcomes it aims to achieve
+5. How the various components fit together in the overall architecture
+6. Key technologies and frameworks used in the project
+
+For file-specific questions:
+1. Explain the file's role in the larger system architecture
+2. Describe key classes, functions, and their relationships
+3. Highlight important patterns and design decisions
+4. Connect to other related files and how they interact
+
+For technical assistance:
+1. Prioritize practical, working solutions over theoretical explanations
+2. Provide precise code snippets that follow the codebase patterns
+3. Reference specific files, functions, and components that are relevant
+4. Consider performance and best practices in your suggestions
+
+IMPORTANT: For questions about project purpose or overview, extract information from README files, package configs, and service definitions to provide a comprehensive answer. If the information in the context is limited, synthesize the best answer from what's available rather than saying there's not enough information.
+
+Answer in **markdown syntax**. Be comprehensive yet concise, focusing on the most relevant information to the question.
+
+START CONTEXT BLOCK
+${context}
+END OF CONTEXT BLOCK
+
+START QUESTION
+${input}
+END OF QUESTION
+
+CONTEXT OF PREVIOUS QUESTIONS
+${previousQuestions || 'No previous questions'}
+END OF PREVIOUS QUESTIONS
+`;
+
+        console.log(
+          `Generating streaming answer using ${modelToUse} (attempt ${retryCount + 1})`,
+        );
+
+        // Use streaming generation
+        const streamResult = await model.generateContentStream([prompt]);
+        let fullResponse = '';
+        let buffer = ''; // Buffer to accumulate smaller chunks
+
+        for await (const chunk of streamResult.stream) {
+          const chunkText = chunk.text();
+          if (chunkText) {
+            fullResponse += chunkText;
+            buffer += chunkText;
+            
+            // Send smaller chunks for smoother streaming
+            if (buffer.length >= 20 || buffer.includes('\n')) {
+              // Send the buffered content as a smaller chunk
+              if (onChunk) {
+                onChunk(buffer);
+              }
+              buffer = ''; // Reset buffer
+            }
+          }
+        }
+
+        // Send any remaining buffered content
+        if (buffer.length > 0 && onChunk) {
+          onChunk(buffer);
+        }
+
+        // Create the final response object
+        const finalResponse = {
+          response: {
+            candidates: [{
+              content: {
+                parts: [{
+                  text: fullResponse
+                }]
+              }
+            }]
+          }
+        };
+
+        return {
+          output: finalResponse,
+          filesReferenced: filesWithCode,
+        };
+      } catch (apiError) {
+        console.error(
+          `API error during generateAnswerStream (attempt ${retryCount + 1}):`,
+          apiError,
+        );
+        lastError = apiError;
+
+        // Handle specific error types
+        if (
+          apiError.status === 503 ||
+          apiError.message?.includes('overloaded') ||
+          apiError.message?.includes('fetch failed') ||
+          apiError.message?.includes('network')
+        ) {
+          // Model overloaded or network issue - wait and retry with exponential backoff
+          const waitTime = Math.min(2000 * Math.pow(2, retryCount), 30000); // Max 30 seconds
+          console.log(
+            `Model overloaded or network issue, waiting ${waitTime / 1000} seconds before retry...`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
+
+          // Switch model if we're not making progress
+          if (retryCount >= 1) {
+            modelToUse =
+              modelToUse === 'gemini-1.5-pro'
+                ? 'gemini-1.5-pro'
+                : 'gemini-1.5-pro';
+            console.log(`Switching to ${modelToUse} for retry`);
+          }
+        } else if (apiError.status === 429) {
+          // Rate limit - wait longer
+          const waitTime = Math.min(5000 * (retryCount + 1), 45000);
+          console.log(
+            `Rate limit hit, waiting ${waitTime / 1000} seconds before retry...`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
+        } else {
+          // For other errors, try switching model immediately
+          modelToUse =
+            modelToUse === 'gemini-1.5-pro'
+              ? 'gemini-1.5-pro'
+              : 'gemini-1.5-pro';
+          console.log(`API error, switching to ${modelToUse} for retry`);
+        }
+
+        retryCount++;
+
+        // If we've exhausted retries, throw the last error
+        if (retryCount > MAX_RETRIES) {
+          console.error('All retry attempts exhausted for generateAnswerStream');
+          throw new Error(
+            `Failed to generate streaming answer after ${MAX_RETRIES} retries: ${lastError?.message || 'Unknown error'}`,
+          );
+        }
+
+        // Continue to next retry iteration
+        continue;
+      }
+    }
+
+    // This should only be reached if all retries fail but don't throw specific errors
+    throw new Error(
+      `Failed to generate streaming answer: ${lastError?.message || 'Unknown error'}`,
     );
   }
 

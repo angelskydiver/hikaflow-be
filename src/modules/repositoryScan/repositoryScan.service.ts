@@ -64,6 +64,7 @@ export class RepositoryScanService {
       | 'architecture'
       | 'release_analysis',
     streamProgress?: (step: string, message: string, data?: any) => void,
+    streamTextChunk?: (chunk: string) => void,
   ) {
     try {
       console.log(
@@ -95,6 +96,7 @@ export class RepositoryScanService {
         includeTracing:
           analysisMode === 'senior' || analysisMode === 'release_analysis',
         streamProgress,
+        streamTextChunk,
       });
 
       return result;
