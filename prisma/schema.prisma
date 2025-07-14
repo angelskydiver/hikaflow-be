@@ -401,7 +401,7 @@ model PrTracker {
 model commitSummary {
   id                     String                      @id @default(uuid())
   repositoryId           String
-  reportId               String
+  reportId               String? // Made optional for standalone commits
   commitId               String
   commitMessage          String
   additions              Int
@@ -411,8 +411,16 @@ model commitSummary {
   summary                Json                        @default("{}")
   commitSummaryEmbedding Unsupported("vector(768)")? // Store embeddings as vector for semantic search
 
-  repository Repository      @relation(fields: [repositoryId], references: [repositoryId])
-  report     ExecutiveReport @relation(fields: [reportId], references: [id])
+  // New fields for commit-centric analysis
+  branchName     String? // Branch where commit was made
+  isMerged       Boolean   @default(false) // Whether commit is merged to base branch
+  mergedAt       DateTime? // When it was merged
+  moduleChanges  Json      @default("[]") // List of modules/folders changed
+  commitUrl      String? // URL to the commit
+  parentCommitId String? // Parent commit ID for tracking
+
+  repository Repository       @relation(fields: [repositoryId], references: [repositoryId])
+  report     ExecutiveReport? @relation(fields: [reportId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

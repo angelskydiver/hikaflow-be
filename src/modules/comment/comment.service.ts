@@ -128,8 +128,10 @@ export class CommentService {
           ...(data.category && {
             issueCategory:
               data.category == CommentRequestType.CODE_ISSUES
-                ? { not: CommentCategory.SecurityConcerns }
-                : CommentCategory.SecurityConcerns,
+                ? {
+                    not: { in: [CommentCategory.SecurityConcerns, 'Security'] },
+                  }
+                : { in: [CommentCategory.SecurityConcerns, 'Security'] },
           }),
         },
         skip: (parseInt(data.currentPage) - 1) * parseInt(data.pageSize),
@@ -144,8 +146,10 @@ export class CommentService {
           ...(data.category && {
             issueCategory:
               data.category == CommentRequestType.CODE_ISSUES
-                ? { not: CommentCategory.SecurityConcerns }
-                : CommentCategory.SecurityConcerns,
+                ? {
+                    not: { in: [CommentCategory.SecurityConcerns, 'Security'] },
+                  }
+                : { in: [CommentCategory.SecurityConcerns, 'Security'] },
           }),
         },
       });
