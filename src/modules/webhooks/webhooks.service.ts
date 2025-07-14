@@ -4,11 +4,10 @@ import {
   Inject,
   Injectable,
 } from '@nestjs/common';
-import { CommentType, PrTrackerStatus } from '@prisma/client';
+import { CommentStatus, CommentType, PrTrackerStatus } from '@prisma/client';
 import * as gptTokenizer from 'gpt-3-encoder';
 import { shouldAnalyze } from 'src/config/constants/unnecessary.files.constant';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
-import { advancedIssueFiltering } from 'src/config/helpers/comment.helper';
 import {
   commentBitbucketPr,
   commitInfoBitbucket,
@@ -1019,35 +1018,15 @@ export class WebhooksService {
           executiveReportPayload,
         );
 
-      // Associate existing commits with the report or create new ones
+      // Associate existing commits with the report (same as GitHub flow)
       const commitIds = commits.map((commit) => commit.hash);
 
       // First, try to associate existing commits
-      await this._commitSummaryService.associateCommitsWithReport(
-        commitIds,
-        report.id,
-      );
-
-      // Create commit summaries for any commits that don't exist yet
-      await Promise.all(
-        commits.map((commit) => {
-          const stats = extractChangesFromPatch(commit.patch[0]);
-          return this._commitSummaryService.createCommitSummary(
-            {
-              ...commit,
-              stats: {
-                additions: stats.additionCount,
-                deletions: stats.deletionCount,
-              },
-              commit: { message: commit.message },
-              sha: commit.hash,
-              author: { login: commit.author.user.display_name },
-            },
-            data.repository.uuid.toString(),
-            report.id,
-          );
-        }),
-      );
+      const associationResult =
+        await this._commitSummaryService.associateCommitsWithReport(
+          commitIds,
+          report.id,
+        );
 
       const payload = {
         accountId: prInfo.accountId,
@@ -1443,49 +1422,33 @@ export class WebhooksService {
       );
 
       // Apply advanced filtering pipeline
-      const highQualityIssues = await advancedIssueFiltering(
-        allIssues,
-        repository?.repositorySettings || [],
-        deepSeekWrapper,
-      );
+      // const highQualityIssues = await advancedIssueFiltering(
+      //   allIssues,
+      //   repository?.repositorySettings || [],
+      //   deepSeekWrapper,
+      // );
+      let highQualityIssues = allIssues;
 
       console.log(
         `Quality filtering: ${allIssues.length} -> ${highQualityIssues.length} issues`,
       );
 
-      // Post high-priority issues as inline comments on Bitbucket and analyze summary in parallel
-      const [, analyzeCombineSummary] = await Promise.all([
-        Promise.allSettled(
-          highQualityIssues.map((currentIssue) =>
-            commentBitbucketPr({
-              token: prInfo.token,
-              commentUrl: prInfo.links.comments.href,
-              body: {
-                content: {
-                  raw: this.formatEnhancedComment(currentIssue),
-                },
-                inline: {
-                  to: parseInt(currentIssue.line),
-                  path: currentIssue.file,
-                },
-              },
-            }),
-          ),
-        ),
-        deepSeekWrapper.analyzeCombineSummary(combinedSummary),
-      ]);
+      // Get PR summary analysis
+      const analyzeCombineSummary =
+        await deepSeekWrapper.analyzeCombineSummary(combinedSummary);
 
+      // Simplified comment creation logic - save ALL filtered issues
       const createCommentsMapping = highQualityIssues
         .map((data) => {
           const payload = {
-            repositoryId: prInfo.id,
+            repositoryId: prInfo.repositoryId, // Use the correct internal repository ID
             prId: prInfo.prId,
             content: data.content,
             line: parseInt(data.line),
             file: data.file,
             issue: data.issue,
             issueCategory: data.category,
-            severity: data.priority,
+            severity: data.priority?.split(' ')[0] || data.priority || 'Medium', // Handle priority properly
             reason: data.reason,
             type: CommentType.PULL_REQUEST,
             enhancementType: data.enhancementType,
@@ -1493,27 +1456,56 @@ export class WebhooksService {
             improvedCodeBlock: data.improvedCodeBlock || {},
             tags: data.tags || [],
           };
+
           return this._commentService.createComment(payload);
         })
         .filter((comment) => comment !== undefined);
 
-      // Execute final operations in parallel
-      await Promise.all([
-        this._pullRequestService.updatePullRequest(prInfo.prId, {
-          summary: analyzeCombineSummary.prSummary,
-        }),
-        this._commentService.registerDuplicateCode(
-          duplicateCodes.map((data) => ({
-            ...data,
-            repositoryId: prInfo.repositoryId,
-            prId: prInfo.prNumber.toString(),
-          })),
-        ),
-        Promise.allSettled(createCommentsMapping),
-      ]);
+      console.log(
+        `Attempting to save ${createCommentsMapping.length} comments to database`,
+      );
 
-      await commentPrSummary(prInfo, {
-        issue: analyzeCombineSummary.prSummary,
+      // Execute final operations in parallel
+      const [updateResult, duplicateResult, commentResults] = await Promise.all(
+        [
+          this._pullRequestService.updatePullRequest(prInfo.prId, {
+            summary: analyzeCombineSummary.prSummary,
+          }),
+          this._commentService.registerDuplicateCode(
+            duplicateCodes.map((data) => ({
+              ...data,
+              repositoryId: prInfo.repositoryId,
+              prId: prInfo.prNumber.toString(),
+            })),
+          ),
+          Promise.allSettled(createCommentsMapping),
+        ],
+      );
+
+      // Log comment creation results
+      const successfulComments = commentResults.filter(
+        (result) => result.status === 'fulfilled',
+      ).length;
+      const failedComments = commentResults.filter(
+        (result) => result.status === 'rejected',
+      );
+
+      console.log(`Successfully created ${successfulComments} comments`);
+      if (failedComments.length > 0) {
+        console.error(
+          `Failed to create ${failedComments.length} comments:`,
+          failedComments.map((f) => f.reason),
+        );
+      }
+
+      await commentBitbucketPr({
+        token: prInfo.token,
+        commentUrl: prInfo.links.comments.href,
+        body: {
+          content: {
+            raw: this.formatEnhancedComment(analyzeCombineSummary.prSummary),
+          },
+        },
       });
 
       // Notification and status update can be done in parallel
@@ -2153,68 +2145,80 @@ ${issue.reason}`;
       );
 
       // Apply advanced filtering pipeline
-      const highQualityIssues = await advancedIssueFiltering(
-        allIssues,
-        repository?.repositorySettings || [],
-        deepSeekWrapper,
-      );
+      // const highQualityIssues = await advancedIssueFiltering(
+      //   allIssues,
+      //   repository?.repositorySettings || [],
+      //   deepSeekWrapper,
+      // );
 
-      console.log(
-        `Quality filtering: ${allIssues.length} -> ${highQualityIssues.length} issues`,
-      );
+      // console.log(
+      //   `Quality filtering: ${allIssues.length} -> ${highQualityIssues.length} issues`,
+      // );
 
-      // Parallel execution of database operations - use filtered issues
-      const createCommentsMapping = highQualityIssues
+      // Simplified comment creation logic - save ALL filtered issues
+      const createCommentsMapping = allIssues
         .map((data) => {
-          // Check if it's a PR comment by checking the 'isPrIssue' flag
-          const originalIndex = allIssues.findIndex(
-            (issue) =>
-              issue.file === data.file &&
-              issue.line === data.line &&
-              issue.issue === data.issue,
+          console.log(
+            `Creating comment for issue: ${data.issue} in file: ${data.file}`,
           );
 
-          if (
-            originalIndex >= 0 &&
-            comments[originalIndex]?.status === 'fulfilled' &&
-            comments[originalIndex]?.value?.isPrIssue
-          ) {
-            const payload = {
-              repositoryId: prInfo.id,
-              prId: prInfo.prId,
-              content: data.content,
-              line: parseInt(data.line),
-              file: data.file,
-              issue: data.issue,
-              issueCategory: data.category,
-              severity: data.priority,
-              reason: data.reason,
-              type: CommentType.PULL_REQUEST,
-              enhancementType: data.enhancementType,
-              affectedCodeBlock: data.affectedCodeBlock || {},
-              improvedCodeBlock: data.improvedCodeBlock || {},
-              tags: data.tags || [],
-            };
-            return this._commentService.createComment(payload);
-          }
-          return undefined;
+          const payload = {
+            repositoryId: prInfo.id, // Use the correct internal repository ID
+            prId: prInfo.prId,
+            content: data.content,
+            line: parseInt(data.line),
+            file: data.file,
+            issue: data.issue,
+            issueCategory: data.category,
+            severity: data.priority?.split(' ')[0] || data.priority || 'Medium', // Handle priority properly
+            reason: data.reason,
+            type: CommentType.PULL_REQUEST,
+            enhancementType: data.enhancementType,
+            affectedCodeBlock: data.affectedCodeBlock || {},
+            improvedCodeBlock: data.improvedCodeBlock || {},
+            tags: data.tags || [],
+          };
+
+          return this._commentService.createComment(payload);
         })
         .filter((comment) => comment !== undefined);
 
+      console.log(
+        `Attempting to save ${createCommentsMapping.length} comments to database`,
+      );
+
       // Execute final operations in parallel
-      await Promise.all([
-        this._pullRequestService.updatePullRequest(prInfo.prId, {
-          summary: analyzeCombineSummary.prSummary,
-        }),
-        this._commentService.registerDuplicateCode(
-          duplicateCodes.map((data) => ({
-            ...data,
-            repositoryId: prInfo.repositoryId,
-            prId: prInfo.prNumber.toString(),
-          })),
-        ),
-        Promise.allSettled(createCommentsMapping),
-      ]);
+      const [updateResult, duplicateResult, commentResults] = await Promise.all(
+        [
+          this._pullRequestService.updatePullRequest(prInfo.prId, {
+            summary: analyzeCombineSummary.prSummary,
+          }),
+          this._commentService.registerDuplicateCode(
+            duplicateCodes.map((data) => ({
+              ...data,
+              repositoryId: prInfo.repositoryId,
+              prId: prInfo.prNumber.toString(),
+            })),
+          ),
+          Promise.allSettled(createCommentsMapping),
+        ],
+      );
+
+      // Log comment creation results
+      const successfulComments = commentResults.filter(
+        (result) => result.status === 'fulfilled',
+      ).length;
+      const failedComments = commentResults.filter(
+        (result) => result.status === 'rejected',
+      );
+
+      console.log(`Successfully created ${successfulComments} comments`);
+      if (failedComments.length > 0) {
+        console.error(
+          `Failed to create ${failedComments.length} comments:`,
+          failedComments.map((f) => f.reason),
+        );
+      }
 
       await commentPrSummary(prInfo, {
         issue: analyzeCombineSummary.prSummary,
@@ -2260,7 +2264,7 @@ ${issue.reason}`;
       return {
         fileChanges,
         AiResponse: {
-          codeIssues: highQualityIssues,
+          codeIssues: allIssues,
           prSummary: analyzeCombineSummary.prSummary,
         },
         performanceMetrics: {
@@ -2355,9 +2359,10 @@ ${issue.reason}`;
    */
   async handleBitbucketPushEvent(data: any) {
     try {
+      // Fix: Access repository from data.data.repository, not data.repository
       const repository = await this._prismaService.repository.findUnique({
         where: {
-          repositoryId: data.repository.uuid,
+          repositoryId: data.data.repository.uuid,
         },
         include: {
           organization: true,
@@ -2375,76 +2380,533 @@ ${issue.reason}`;
           repository.organization.id,
         );
 
-      if (!subscriptionStatus.isActive) {
-        console.log(
-          `Organization ${repository.organization.id} does not have active subscription for push event processing`,
-        );
+      console.log('subscriptionStatus: ', subscriptionStatus);
+
+      // if (!subscriptionStatus.isActive) {
+      //   console.log(
+      //     `Organization ${repository.organization.id} does not have active subscription for push event processing`,
+      //   );
+      //   return {
+      //     success: false,
+      //     message:
+      //       subscriptionStatus.message ||
+      //       'Active subscription required to process commits',
+      //   };
+      // }
+
+      // Get repository credentials to fetch commit file information
+      const organizationAccount =
+        await this._prismaService.organizationAccounts.findFirst({
+          where: {
+            organizationId: repository.organizationId,
+            role: 'ADMIN',
+          },
+        });
+
+      if (!organizationAccount) {
+        console.log('No organization account found for repository');
         return {
           success: false,
-          message:
-            subscriptionStatus.message ||
-            'Active subscription required to process commits',
+          message: 'No organization account found for repository',
         };
       }
 
-      // Process each commit in the push
-      const commitPromises = data.push.changes.map(async (change) => {
+      const { decryptedToken } =
+        await this._accountCredentialService.getAccountToken({
+          accountId: organizationAccount.accountId,
+        });
+
+      if (!decryptedToken) {
+        console.log('No token found for organization account');
+        return {
+          success: false,
+          message: 'No token found for organization account',
+        };
+      }
+
+      // Process each commit in the push - Bitbucket specific format
+      const allCommits = [];
+      data.data.push.changes.forEach((change) => {
         const commits = change.commits || [];
-
-        return Promise.all(
-          commits.map(async (commit) => {
-            try {
-              // Check if commit already exists
-              const existingCommit =
-                await this._prismaService.commitSummary.findFirst({
-                  where: {
-                    commitId: commit.hash,
-                    repositoryId: repository.repositoryId,
-                  },
-                });
-
-              if (existingCommit) {
-                console.log(`Commit ${commit.hash} already exists, skipping`);
-                return null;
-              }
-
-              // Create standalone commit summary for Bitbucket
-              return await this._commitSummaryService.createStandaloneCommitSummary(
-                {
-                  id: commit.hash,
-                  message: commit.message,
-                  author: commit.author,
-                  url: commit.links.html.href,
-                  parents: commit.parents?.map((p) => p.hash) || [],
-                  added: [], // Bitbucket doesn't provide file details in push events
-                  modified: [],
-                  removed: [],
-                  ref: change.new?.name || 'unknown',
-                },
-                repository.repositoryId,
-              );
-            } catch (error) {
-              console.error(`Error processing commit ${commit.hash}:`, error);
-              return null;
-            }
-          }),
-        );
+        commits.forEach((commit) => {
+          allCommits.push({
+            ...commit,
+            id: commit.hash, // Map hash to id for consistency
+            sha: commit.hash, // Also map to sha for compatibility
+            branchName: change.new?.name || 'unknown',
+            baseBranch: repository.baseBranch,
+            repositoryId: data.data.repository.uuid,
+            repositoryName: data.data.repository.name,
+            diffUrl: commit.links?.diff?.href, // Get diff URL for API call
+          });
+        });
       });
 
-      const results = await Promise.all(commitPromises);
-      const successfulCommits = results.flat().filter(Boolean);
+      // Fetch file information for each commit from Bitbucket API
+      const commitsWithFiles = await Promise.all(
+        allCommits.map(async (commit) => {
+          try {
+            if (commit.diffUrl) {
+              console.log(`Fetching file changes for commit ${commit.hash}`);
+              const fileChanges = await commitInfoBitbucket(
+                {
+                  token: decryptedToken,
+                  commitDiffUrl: commit.diffUrl,
+                },
+                false,
+              );
+
+              if (fileChanges && fileChanges.length > 0) {
+                // Extract file names by status
+                const added = fileChanges
+                  .filter((f) => f.status === 'added')
+                  .map((f) => f.filename);
+                const modified = fileChanges
+                  .filter((f) => f.status === 'modified')
+                  .map((f) => f.filename);
+                const removed = fileChanges
+                  .filter((f) => f.status === 'deleted')
+                  .map((f) => f.filename);
+
+                return {
+                  ...commit,
+                  added,
+                  modified,
+                  removed,
+                  fileChanges, // Include full file changes data
+                };
+              }
+            }
+
+            console.log(
+              `No file changes found for commit ${commit.hash}, skipping`,
+            );
+            return null;
+          } catch (error) {
+            console.log(
+              `Error fetching file changes for commit ${commit.hash}:`,
+              error.message,
+            );
+            return null;
+          }
+        }),
+      );
+
+      // Filter out null commits (those with no file changes or errors)
+      const validCommits = commitsWithFiles.filter((commit) => commit !== null);
+
+      if (validCommits.length === 0) {
+        console.log('No valid commits with file changes to process');
+        return {
+          success: true,
+          message: 'No valid commits with file changes to process',
+          commits: [],
+        };
+      }
+
+      console.log(JSON.stringify(repository, null, 2));
+
+      // Use dedicated Bitbucket commit summary method
+      await Promise.all(
+        validCommits.map((commit) =>
+          this._commitSummaryService.createBitbucketCommitSummary(
+            commit,
+            repository.repositoryId.toString(),
+          ),
+        ),
+      );
 
       console.log(
-        `Processed ${successfulCommits.length} commits from Bitbucket push event`,
+        `Processed ${validCommits.length} commits from Bitbucket push event (${allCommits.length} total commits, ${allCommits.length - validCommits.length} skipped due to no file changes)`,
       );
 
       return {
         success: true,
-        message: `Processed ${successfulCommits.length} commits`,
-        commits: successfulCommits,
+        message: `Processed ${allCommits.length} commits`,
+        commits: allCommits,
       };
     } catch (error) {
       console.error('Error handling Bitbucket push event:', error);
+      return { success: false, message: error.message };
+    }
+  }
+
+  /**
+   * Handle GitHub issue opened event
+   */
+  async handleGithubIssueOpened(data: any) {
+    try {
+      const repository = await this._prismaService.repository.findUnique({
+        where: {
+          repositoryId: data.repository.id.toString(),
+        },
+        include: {
+          organization: true,
+        },
+      });
+
+      if (!repository) {
+        console.log('Repository not found for issue opened event');
+        return { success: false, message: 'Repository not found' };
+      }
+
+      // Get credentials for the repository
+      const organizationAccount =
+        await this._prismaService.organizationAccounts.findFirst({
+          where: { role: 'ADMIN', organizationId: repository.organizationId },
+          include: { account: true },
+        });
+
+      if (!organizationAccount) {
+        console.log('Organization account not found for issue analysis');
+        return { success: false, message: 'Organization account not found' };
+      }
+
+      // Analyze the issue content for potential categorization
+      const issueContent = `${data.issue.title}\n\n${data.issue.body || ''}`;
+      const isSecurityRelated = this.isSecurityRelatedIssue(issueContent);
+
+      // Create comment entry for the issue
+      const issueCategory = isSecurityRelated
+        ? 'SecurityConcerns'
+        : 'SeriousIssues';
+      const priority = data.issue.labels?.some((label) =>
+        ['critical', 'high', 'urgent'].includes(label.name.toLowerCase()),
+      )
+        ? 'High'
+        : 'Medium';
+
+      await this._commentService.createComment({
+        repositoryId: repository.repositoryId,
+        content: issueContent,
+        line: 0, // Issues don't have specific line numbers
+        file: 'ISSUE', // Placeholder for issue type
+        issue: data.issue.title,
+        issueCategory,
+        severity: priority,
+        type: CommentType.ISSUE,
+        reason: `GitHub Issue #${data.issue.number}: ${data.issue.title}`,
+        enhancementType: isSecurityRelated ? 'SECURITY_FIX' : 'SUGGESTION',
+        tags: data.issue.labels?.map((label) => label.name) || [],
+      });
+
+      // Log issue analysis for billing
+      await this._billingService.trackUsageWithQuota({
+        organizationId: repository.organizationId,
+        repositoryId: repository.id,
+        type: 'ISSUE_ANALYSIS',
+        description: `Issue Analysis: #${data.issue.number} in ${data.repository.name}`,
+      });
+
+      return {
+        success: true,
+        message: `Issue #${data.issue.number} analyzed and categorized`,
+        issueNumber: data.issue.number,
+        category: issueCategory,
+      };
+    } catch (error) {
+      console.error('Error handling GitHub issue opened event:', error);
+      return { success: false, message: error.message };
+    }
+  }
+
+  /**
+   * Handle GitHub issue closed event
+   */
+  async handleGithubIssueClosed(data: any) {
+    try {
+      const repository = await this._prismaService.repository.findUnique({
+        where: {
+          repositoryId: data.repository.id.toString(),
+        },
+      });
+
+      if (!repository) {
+        console.log('Repository not found for issue closed event');
+        return { success: false, message: 'Repository not found' };
+      }
+
+      // Update the corresponding comment status to OUTDATED (resolved)
+      await this._prismaService.comment.updateMany({
+        where: {
+          repositoryId: repository.repositoryId,
+          issue: data.issue.title,
+          type: CommentType.ISSUE,
+        },
+        data: {
+          status: CommentStatus.OUTDATED,
+        },
+      });
+
+      return {
+        success: true,
+        message: `Issue #${data.issue.number} marked as resolved`,
+        issueNumber: data.issue.number,
+      };
+    } catch (error) {
+      console.error('Error handling GitHub issue closed event:', error);
+      return { success: false, message: error.message };
+    }
+  }
+
+  /**
+   * Handle GitHub issue edited event
+   */
+  async handleGithubIssueEdited(data: any) {
+    try {
+      const repository = await this._prismaService.repository.findUnique({
+        where: {
+          repositoryId: data.repository.id.toString(),
+        },
+      });
+
+      if (!repository) {
+        console.log('Repository not found for issue edited event');
+        return { success: false, message: 'Repository not found' };
+      }
+
+      // Re-analyze the updated issue content
+      const issueContent = `${data.issue.title}\n\n${data.issue.body || ''}`;
+      const isSecurityRelated = this.isSecurityRelatedIssue(issueContent);
+      const issueCategory = isSecurityRelated
+        ? 'SecurityConcerns'
+        : 'SeriousIssues';
+
+      const priority = data.issue.labels?.some((label) =>
+        ['critical', 'high', 'urgent'].includes(label.name.toLowerCase()),
+      )
+        ? 'High'
+        : 'Medium';
+
+      // Update the existing comment
+      await this._prismaService.comment.updateMany({
+        where: {
+          repositoryId: repository.repositoryId,
+          issue: data.issue.title,
+          type: CommentType.ISSUE,
+        },
+        data: {
+          content: issueContent,
+          issueCategory,
+          severity: priority,
+          reason: `GitHub Issue #${data.issue.number}: ${data.issue.title} (Updated)`,
+          enhancementType: isSecurityRelated ? 'SECURITY_FIX' : 'SUGGESTION',
+          tags: data.issue.labels?.map((label) => label.name) || [],
+        },
+      });
+
+      return {
+        success: true,
+        message: `Issue #${data.issue.number} updated and re-categorized`,
+        issueNumber: data.issue.number,
+        category: issueCategory,
+      };
+    } catch (error) {
+      console.error('Error handling GitHub issue edited event:', error);
+      return { success: false, message: error.message };
+    }
+  }
+
+  /**
+   * Helper method to determine if an issue is security-related
+   */
+  private isSecurityRelatedIssue(content: string): boolean {
+    const securityKeywords = [
+      'security',
+      'vulnerability',
+      'exploit',
+      'xss',
+      'sql injection',
+      'csrf',
+      'authentication',
+      'authorization',
+      'password',
+      'token',
+      'secret',
+      'encryption',
+      'ssl',
+      'tls',
+      'https',
+      'certificate',
+      'malware',
+      'phishing',
+      'breach',
+      'attack',
+      'hack',
+      'insecure',
+      'privilege escalation',
+      'buffer overflow',
+      'injection',
+      'cross-site',
+      'session hijacking',
+      'clickjacking',
+      'man-in-the-middle',
+      'dos',
+      'ddos',
+      'brute force',
+    ];
+
+    const lowerContent = content.toLowerCase();
+    return securityKeywords.some((keyword) => lowerContent.includes(keyword));
+  }
+
+  /**
+   * Handle Bitbucket issue opened event
+   */
+  async handleBitbucketIssueOpened(data: any) {
+    try {
+      const repository = await this._prismaService.repository.findUnique({
+        where: {
+          repositoryId: data.data.repository.uuid.toString(),
+        },
+        include: {
+          organization: true,
+        },
+      });
+
+      if (!repository) {
+        console.log('Repository not found for Bitbucket issue opened event');
+        return { success: false, message: 'Repository not found' };
+      }
+
+      // Analyze the issue content for potential categorization
+      const issueContent = `${data.data.issue.title}\n\n${data.data.issue.content?.raw || ''}`;
+      const isSecurityRelated = this.isSecurityRelatedIssue(issueContent);
+
+      // Create comment entry for the issue
+      const issueCategory = isSecurityRelated
+        ? 'SecurityConcerns'
+        : 'SeriousIssues';
+      const priority =
+        data.data.issue.priority?.name?.toLowerCase() === 'critical'
+          ? 'High'
+          : 'Medium';
+
+      await this._commentService.createComment({
+        repositoryId: repository.repositoryId,
+        content: issueContent,
+        line: 0, // Issues don't have specific line numbers
+        file: 'ISSUE', // Placeholder for issue type
+        issue: data.data.issue.title,
+        issueCategory,
+        severity: priority,
+        type: CommentType.ISSUE,
+        reason: `Bitbucket Issue #${data.data.issue.id}: ${data.data.issue.title}`,
+        enhancementType: isSecurityRelated ? 'SECURITY_FIX' : 'SUGGESTION',
+        tags: [], // Bitbucket issues don't have labels in the same way
+      });
+
+      // Log issue analysis for billing
+      await this._billingService.trackUsageWithQuota({
+        organizationId: repository.organizationId,
+        repositoryId: repository.id,
+        type: 'ISSUE_ANALYSIS',
+        description: `Bitbucket Issue Analysis: #${data.data.issue.id} in ${data.data.repository.name}`,
+      });
+
+      return {
+        success: true,
+        message: `Bitbucket Issue #${data.data.issue.id} analyzed and categorized`,
+        issueNumber: data.data.issue.id,
+        category: issueCategory,
+      };
+    } catch (error) {
+      console.error('Error handling Bitbucket issue opened event:', error);
+      return { success: false, message: error.message };
+    }
+  }
+
+  /**
+   * Handle Bitbucket issue closed event
+   */
+  async handleBitbucketIssueClosed(data: any) {
+    try {
+      const repository = await this._prismaService.repository.findUnique({
+        where: {
+          repositoryId: data.data.repository.uuid.toString(),
+        },
+      });
+
+      if (!repository) {
+        console.log('Repository not found for Bitbucket issue closed event');
+        return { success: false, message: 'Repository not found' };
+      }
+
+      // Update the corresponding comment status to OUTDATED (resolved)
+      await this._prismaService.comment.updateMany({
+        where: {
+          repositoryId: repository.repositoryId,
+          issue: data.data.issue.title,
+          type: CommentType.ISSUE,
+        },
+        data: {
+          status: CommentStatus.OUTDATED,
+        },
+      });
+
+      return {
+        success: true,
+        message: `Bitbucket Issue #${data.data.issue.id} marked as resolved`,
+        issueNumber: data.data.issue.id,
+      };
+    } catch (error) {
+      console.error('Error handling Bitbucket issue closed event:', error);
+      return { success: false, message: error.message };
+    }
+  }
+
+  /**
+   * Handle Bitbucket issue edited event
+   */
+  async handleBitbucketIssueEdited(data: any) {
+    try {
+      const repository = await this._prismaService.repository.findUnique({
+        where: {
+          repositoryId: data.data.repository.uuid.toString(),
+        },
+      });
+
+      if (!repository) {
+        console.log('Repository not found for Bitbucket issue edited event');
+        return { success: false, message: 'Repository not found' };
+      }
+
+      // Re-analyze the updated issue content
+      const issueContent = `${data.data.issue.title}\n\n${data.data.issue.content?.raw || ''}`;
+      const isSecurityRelated = this.isSecurityRelatedIssue(issueContent);
+      const issueCategory = isSecurityRelated
+        ? 'SecurityConcerns'
+        : 'SeriousIssues';
+      const priority =
+        data.data.issue.priority?.name?.toLowerCase() === 'critical'
+          ? 'High'
+          : 'Medium';
+
+      // Update the existing comment
+      await this._prismaService.comment.updateMany({
+        where: {
+          repositoryId: repository.repositoryId,
+          issue: data.data.issue.title,
+          type: CommentType.ISSUE,
+        },
+        data: {
+          content: issueContent,
+          issueCategory,
+          severity: priority,
+          reason: `Bitbucket Issue #${data.data.issue.id}: ${data.data.issue.title} (Updated)`,
+          enhancementType: isSecurityRelated ? 'SECURITY_FIX' : 'SUGGESTION',
+          tags: [],
+        },
+      });
+
+      return {
+        success: true,
+        message: `Bitbucket Issue #${data.data.issue.id} updated and re-categorized`,
+        issueNumber: data.data.issue.id,
+        category: issueCategory,
+      };
+    } catch (error) {
+      console.error('Error handling Bitbucket issue edited event:', error);
       return { success: false, message: error.message };
     }
   }

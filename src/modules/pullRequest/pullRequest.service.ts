@@ -93,7 +93,7 @@ export class PullRequestService {
           summary: { not: '' },
         },
         orderBy: { createdAt: 'desc' },
-        take: parseInt(payload?.pageSize) || 5,
+        take: parseInt(payload?.pageSize) || 10,
         ...(payload?.pageNumber && {
           skip:
             (parseInt(payload?.pageNumber) - 1) * parseInt(payload.pageSize),

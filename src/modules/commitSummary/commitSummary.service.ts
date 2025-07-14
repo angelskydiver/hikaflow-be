@@ -32,7 +32,7 @@ export class CommitSummaryService {
       const isWebhookData =
         !data.files && (data.added || data.modified || data.removed);
 
-      let isCommitExist = await this._prismaService.commitSummary.findFirst({
+      const isCommitExist = await this._prismaService.commitSummary.findFirst({
         where: {
           repositoryId: repositoryId,
           commitId: data.sha || data.id,
@@ -100,9 +100,9 @@ export class CommitSummaryService {
                     );
                   }
                 } else if (platform === 'bitbucket') {
-                  // For Bitbucket, we can also get stats from diff API
+                  // For Bitbucket, get stats from diff API
                   try {
-                    const diffUrl = `https://api.bitbucket.org/2.0/repositories/${repository.owner}/${repository.name}/diff/${data.id}`;
+                    const diffUrl = `https://api.bitbucket.org/2.0/repositories/${repository.owner}/${repository.name}/diff/${data.id || data.sha}`;
                     const commitDiffData = await commitInfoBitbucket({
                       token: decryptedToken,
                       commitDiffUrl: diffUrl,
@@ -361,213 +361,257 @@ export class CommitSummaryService {
     }
   }
 
-  // New method to create standalone commit summary from push event
-  async createStandaloneCommitSummary(commitData, repositoryId: string) {
+  // Dedicated method for Bitbucket commit summary creation
+  async createBitbucketCommitSummary(
+    data,
+    repositoryId: string,
+    reportId?: string,
+  ) {
     try {
-      // Get repository details to check base branch
-      const repository = await this._prismaService.repository.findUnique({
-        where: { repositoryId },
+      console.log(
+        `Starting Bitbucket commit analysis for commit ${data.hash || data.id}`,
+      );
+      const startTime = Date.now();
+
+      const deepSeek = new DeepSeek();
+
+      // Check if commit already exists
+      const isCommitExist = await this._prismaService.commitSummary.findFirst({
+        where: {
+          repositoryId: repositoryId,
+          commitId: data.hash || data.id,
+        },
       });
 
-      // Check if this commit is on the base branch
-      const branchName = commitData.ref?.replace('refs/heads/', '') || null;
-      const isBaseBranch = repository && branchName === repository.baseBranch;
+      console.log('isCommitExist: ', isCommitExist);
+      if (isCommitExist) {
+        console.log('Commit already exists, skipping');
+        return null;
+      }
 
-      // Extract module changes from file lists
-      const moduleChanges = this.extractModuleChanges(
-        commitData.added.concat(commitData.modified, commitData.removed),
+      console.log(
+        `Processing commit ${data.hash} with ${data.fileChanges?.length || 0} file changes`,
       );
 
-      const totalFiles =
-        (commitData.added?.length || 0) +
-        (commitData.modified?.length || 0) +
-        (commitData.removed?.length || 0);
+      if (data.fileChanges && data.fileChanges.length > 0) {
+        console.log(
+          'Files changed:',
+          data.fileChanges.map((f) => `${f.filename} (${f.status})`).join(', '),
+        );
+      }
 
-      let aiSummary = null;
+      // Normalize Bitbucket data structure
+      let normalizedData;
 
-      // Generate AI summary using commit message and file changes
-      try {
-        const deepSeek = new DeepSeek();
-
-        // Create analysis data from webhook information
-        const filesToAnalyze = [];
-
-        // Add file information from webhook with scale context
-        const changeScale =
-          totalFiles <= 3 ? 'small' : totalFiles <= 10 ? 'medium' : 'large';
-
-        if (commitData.added && commitData.added.length > 0) {
-          commitData.added.forEach((fileName) => {
-            filesToAnalyze.push({
-              fileName: fileName,
-              patch: `+++ Added: ${fileName}\nCommit: ${commitData.message}\nScale: ${changeScale} change (${totalFiles} files total)`,
-            });
-          });
-        }
-
-        if (commitData.modified && commitData.modified.length > 0) {
-          commitData.modified.forEach((fileName) => {
-            filesToAnalyze.push({
-              fileName: fileName,
-              patch: `~~~ Modified: ${fileName}\nCommit: ${commitData.message}\nScale: ${changeScale} change (${totalFiles} files total)`,
-            });
-          });
-        }
-
-        if (commitData.removed && commitData.removed.length > 0) {
-          commitData.removed.forEach((fileName) => {
-            filesToAnalyze.push({
-              fileName: fileName,
-              patch: `--- Removed: ${fileName}\nCommit: ${commitData.message}\nScale: ${changeScale} change (${totalFiles} files total)`,
-            });
-          });
-        }
-
-        // Use AI to analyze the commit with available data
-        if (filesToAnalyze.length > 0) {
-          aiSummary = await deepSeek.analyzeCommitSummary(filesToAnalyze);
-        } else {
-          // Fallback summary
-          aiSummary = {
-            Summary: `# Commit Summary\n\n### Changes Overview\n- ${commitData.message}\n\n### Impact\n- Commit affected ${moduleChanges.length} modules`,
-          };
-        }
-      } catch (aiError) {
-        console.log('AI analysis failed, using fallback:', aiError.message);
-        aiSummary = {
-          Summary: `# Commit Summary\n\n### Changes Overview\n- ${commitData.message}\n\n### Files Changed\n- Added: ${commitData.added?.length || 0} files\n- Modified: ${commitData.modified?.length || 0} files\n- Removed: ${commitData.removed?.length || 0} files`,
+      if (data.fileChanges && data.fileChanges.length > 0) {
+        // Enhanced data with actual file changes from API
+        normalizedData = {
+          sha: data.hash,
+          files: data.fileChanges.map((file) => ({
+            filename: file.filename,
+            status: file.status,
+            patch: file.patch,
+          })),
+          stats: {
+            additions: data.fileChanges.reduce(
+              (sum, file) =>
+                sum +
+                (file.changes?.filter((c) => c.type === 'addition').length ||
+                  0),
+              0,
+            ),
+            deletions: data.fileChanges.reduce(
+              (sum, file) =>
+                sum +
+                (file.changes?.filter((c) => c.type === 'deletion').length ||
+                  0),
+              0,
+            ),
+          },
+          commit: {
+            message: data.message,
+          },
+          author: {
+            login:
+              data.author?.user?.display_name || data.author?.raw || 'Unknown',
+          },
+          branchName: data.branchName,
+        };
+      } else {
+        // Fallback to basic structure with file name arrays
+        normalizedData = {
+          sha: data.hash,
+          files: (data.added || [])
+            .concat(data.modified || [], data.removed || [])
+            .map((file) => ({
+              filename: file,
+              status: (data.added || []).includes(file)
+                ? 'added'
+                : (data.removed || []).includes(file)
+                  ? 'removed'
+                  : 'modified',
+              patch: null,
+            })),
+          stats: {
+            additions: (data.added?.length || 0) + (data.modified?.length || 0),
+            deletions: data.removed?.length || 0,
+          },
+          commit: {
+            message: data.message,
+          },
+          author: {
+            login:
+              data.author?.user?.display_name || data.author?.raw || 'Unknown',
+          },
+          branchName: data.branchName,
         };
       }
 
-      const payload: any = {
-        commitId: commitData.id,
-        committer:
-          commitData.author.name || commitData.committer?.name || 'Unknown',
-        additions: commitData.added?.length || 0,
-        deletions: commitData.removed?.length || 0,
-        totalFiles: totalFiles,
-        repositoryId: repositoryId,
-        reportId: null, // No report ID for standalone commits
-        commitMessage: commitData.message,
-        summary: aiSummary,
-      };
-
-      // Add new fields only if they exist in the schema
+      // Create a simple summary for webhook commits
+      let detailedSummary;
       try {
-        payload.branchName = branchName;
-        payload.isMerged = isBaseBranch; // Auto-merge if on base branch
-        payload.moduleChanges = moduleChanges;
-        payload.commitUrl = commitData.url;
-        payload.parentCommitId =
-          commitData.parents?.[0]?.sha || commitData.parents?.[0] || null;
+        const filesToAnalyze = normalizedData.files.map((file) => ({
+          fileName: file.filename,
+          patch: `File ${file.status}: ${normalizedData.commit.message}`,
+          status: file.status,
+        }));
 
-        // Set mergedAt if auto-merged
-        if (isBaseBranch) {
-          payload.mergedAt = new Date();
+        if (filesToAnalyze.length > 0) {
+          detailedSummary = await deepSeek.analyzeCommitSummary(filesToAnalyze);
+        } else {
+          detailedSummary = {
+            Summary: `# Commit Summary\n\n### Changes Overview\n- ${normalizedData.commit.message}\n\n### Files Changed\n- Total files: ${normalizedData.files.length}`,
+          };
         }
       } catch (error) {
-        // Ignore errors for optional fields that might not exist in schema yet
-        console.log('Optional fields not available in schema:', error.message);
+        console.log('AI analysis failed, using fallback:', error.message);
+        detailedSummary = {
+          Summary: `# Commit Summary\n\n### Changes Overview\n- ${normalizedData.commit.message}\n\n### Files Changed\n- Added: ${data.added?.length || 0} files\n- Modified: ${data.modified?.length || 0} files\n- Removed: ${data.removed?.length || 0} files`,
+        };
       }
+
+      const payload = {
+        commitId: normalizedData.sha,
+        committer: normalizedData.author.login,
+        additions: normalizedData.stats.additions,
+        deletions: normalizedData.stats.deletions,
+        totalFiles: normalizedData.files.length,
+        repositoryId: repositoryId,
+        reportId: reportId || null,
+        commitMessage: normalizedData.commit.message,
+        branchName: normalizedData.branchName || null,
+        isMerged:
+          data.branchName === 'main' ||
+          data.branchName === 'master' ||
+          data.branchName === data.baseBranch,
+        mergedAt:
+          data.branchName === 'main' ||
+          data.branchName === 'master' ||
+          data.branchName === data.baseBranch
+            ? new Date()
+            : null,
+        summary: detailedSummary,
+      };
+
+      console.log('payload: ', payload);
 
       const commitSummary = await this._prismaService.commitSummary.create({
         data: { ...payload },
       });
 
       console.log(
-        `Standalone commitSummary created: ${commitSummary.id} ${isBaseBranch ? '(auto-merged)' : ''}`,
+        `Bitbucket commit analysis completed in ${Date.now() - startTime}ms for commit ${normalizedData.sha}`,
       );
 
       // Generate and store embedding for semantic search
-      try {
-        await this.generateCommitEmbedding(commitSummary.id);
-      } catch (embeddingError) {
-        console.log('Embedding generation failed:', embeddingError.message);
-      }
+      await this.generateCommitEmbedding(commitSummary.id);
 
       return commitSummary;
     } catch (error) {
-      console.log(error.message);
+      console.log('Error in createBitbucketCommitSummary:', error.message);
       throw new BadRequestException(error.message);
     }
-  }
-
-  // Helper method to extract module changes from file paths
-  private extractModuleChanges(files: any[]): string[] {
-    const modules = new Set<string>();
-
-    files.forEach((file) => {
-      const fileName = file.filename || file;
-      const pathParts = fileName.split('/');
-      if (pathParts.length > 1) {
-        modules.add(pathParts[0]); // Top-level directory
-      }
-    });
-
-    return Array.from(modules);
-  }
-
-  // Helper method to generate basic summary when AI fails
-  private generateBasicSummary(
-    commitData: any,
-    moduleChanges: string[],
-  ): string {
-    const totalFiles =
-      (commitData.added?.length || 0) +
-      (commitData.modified?.length || 0) +
-      (commitData.removed?.length || 0);
-
-    let summary = `Commit affects ${totalFiles} file(s)`;
-
-    if (commitData.added?.length > 0) {
-      summary += `, added ${commitData.added.length} file(s)`;
-    }
-    if (commitData.modified?.length > 0) {
-      summary += `, modified ${commitData.modified.length} file(s)`;
-    }
-    if (commitData.removed?.length > 0) {
-      summary += `, removed ${commitData.removed.length} file(s)`;
-    }
-
-    if (moduleChanges.length > 0) {
-      summary += `. Modules affected: ${moduleChanges.join(', ')}`;
-    }
-
-    return summary;
   }
 
   // Method to associate commits with a report when PR is created
   async associateCommitsWithReport(commitIds: string[], reportId: string) {
     try {
-      const updateData: any = {
-        reportId: reportId,
-      };
+      console.log(
+        `Associating commits with report: commitIds=${JSON.stringify(commitIds)}, reportId=${reportId}`,
+      );
 
-      // Add new fields only if they exist in the schema
-      try {
-        updateData.isMerged = true;
-        updateData.mergedAt = new Date();
-      } catch (error) {
-        // Ignore errors for optional fields that might not exist in schema yet
-        console.log('Optional fields not available in schema:', error.message);
-      }
-
-      await this._prismaService.commitSummary.updateMany({
+      // First, check which commits exist and their current status
+      const existingCommits = await this._prismaService.commitSummary.findMany({
         where: {
           commitId: {
             in: commitIds,
           },
-          reportId: null, // Only update commits that don't have a report yet
+        },
+        select: {
+          id: true,
+          commitId: true,
+          reportId: true,
+          isMerged: true,
+          mergedAt: true,
+        },
+      });
+
+      console.log(
+        `Found ${existingCommits.length} existing commits:`,
+        existingCommits,
+      );
+
+      if (existingCommits.length === 0) {
+        console.log('No existing commits found to associate');
+        return {
+          success: false,
+          message: `No existing commits found for commit IDs: ${commitIds.join(', ')}`,
+        };
+      }
+
+      const updateData: any = {
+        reportId: reportId,
+        isMerged: true,
+        mergedAt: new Date(),
+      };
+
+      // Update ALL matching commits, regardless of their current reportId
+      const updateResult = await this._prismaService.commitSummary.updateMany({
+        where: {
+          commitId: {
+            in: commitIds,
+          },
         },
         data: updateData,
       });
 
+      console.log(`Update result: ${updateResult.count} commits updated`);
+
+      // Verify the update worked
+      const updatedCommits = await this._prismaService.commitSummary.findMany({
+        where: {
+          commitId: {
+            in: commitIds,
+          },
+        },
+        select: {
+          id: true,
+          commitId: true,
+          reportId: true,
+          isMerged: true,
+          mergedAt: true,
+        },
+      });
+
+      console.log(`After update, commits status:`, updatedCommits);
+
       return {
         success: true,
-        message: `Associated ${commitIds.length} commits with report ${reportId}`,
+        message: `Associated ${updateResult.count} commits with report ${reportId}`,
+        updatedCommits: updateResult.count,
       };
     } catch (error) {
-      console.log(error.message);
+      console.log('Error in associateCommitsWithReport:', error.message);
       throw new BadRequestException(error.message);
     }
   }
@@ -578,9 +622,10 @@ export class CommitSummaryService {
     endDate: Date,
   ) {
     try {
+      console.log('repositoryId: ', repositoryId);
       // First get repository and check subscription
       const repository = await this._prismaService.repository.findUnique({
-        where: { repositoryId },
+        where: { id: repositoryId },
         include: {
           organization: true,
         },
@@ -802,12 +847,16 @@ export class CommitSummaryService {
       };
     }
 
+    console.log('where: ', where);
+
     // Get paginated results
     const paginatedData = await this.getCommitsPaginated(
       where,
       skip,
       limit.toString(),
     );
+
+    console.log('paginatedData: ', paginatedData);
 
     // Get total statistics for all matching records (not just current page)
     const totalStats = await this.getCommitStatistics(where);

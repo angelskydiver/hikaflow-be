@@ -19,6 +19,38 @@ export class WebhooksController {
       return await this._webhooksService.handleGithubPushEvent(body);
     }
 
+    // Handle GitHub Issues
+    if (body.issue && body.repository) {
+      // Get repository to find organization ID
+      const repository = await this._webhooksService.getRepositoryById(
+        body.repository.id.toString(),
+      );
+
+      if (!repository || !repository.organizationId) {
+        return {
+          success: false,
+          message:
+            'Repository not found or not associated with an organization',
+        };
+      }
+
+      // Check if issue evaluation is allowed
+      const canEvaluate = await this._billingService.canEvaluatePullRequest(
+        repository.organizationId,
+      );
+      if (!canEvaluate.allowed) {
+        return { success: false, message: canEvaluate.message };
+      }
+
+      if (body.action === 'opened') {
+        return await this._webhooksService.handleGithubIssueOpened(body);
+      } else if (body.action === 'closed') {
+        return await this._webhooksService.handleGithubIssueClosed(body);
+      } else if (body.action === 'edited') {
+        return await this._webhooksService.handleGithubIssueEdited(body);
+      }
+    }
+
     if (body.pull_request) {
       // Get repository to find organization ID
       const repository = await this._webhooksService.getRepositoryById(
@@ -62,6 +94,38 @@ export class WebhooksController {
     // Handle push events for individual commits
     if (body.event === 'repo:push') {
       return await this._webhooksService.handleBitbucketPushEvent(body);
+    }
+
+    // Handle Bitbucket Issues
+    if (body.event && body.event.includes('issue') && body.data) {
+      // Get repository to find organization ID
+      const repository = await this._webhooksService.getRepositoryById(
+        body.data.repository.uuid.toString(),
+      );
+
+      if (!repository || !repository.organizationId) {
+        return {
+          success: false,
+          message:
+            'Repository not found or not associated with an organization',
+        };
+      }
+
+      // Check if issue evaluation is allowed
+      const canEvaluate = await this._billingService.canEvaluatePullRequest(
+        repository.organizationId,
+      );
+      if (!canEvaluate.allowed) {
+        return { success: false, message: canEvaluate.message };
+      }
+
+      if (body.event === 'issue:created') {
+        return await this._webhooksService.handleBitbucketIssueOpened(body);
+      } else if (body.event === 'issue:resolved') {
+        return await this._webhooksService.handleBitbucketIssueClosed(body);
+      } else if (body.event === 'issue:updated') {
+        return await this._webhooksService.handleBitbucketIssueEdited(body);
+      }
     }
 
     if (body.event.includes('pullrequest')) {

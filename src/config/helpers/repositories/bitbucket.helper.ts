@@ -277,13 +277,15 @@ export const fetchBitbucketPrPatch = async (data: {
 export const commentBitbucketPr = async (data: {
   token: string;
   commentUrl: string;
-  body: {
-    content: { raw: string };
-    inline: {
-      to: number;
-      path: string;
-    };
-  };
+  body:
+    | {
+        content: { raw: string };
+        inline: {
+          to: number;
+          path: string;
+        };
+      }
+    | any;
 }) => {
   try {
     // let method = 'GET';
@@ -306,177 +308,6 @@ export const commentBitbucketPr = async (data: {
     // throw error; // It's better to throw the actual error for debugging
   }
 };
-
-// Enhanced comment function for code issues with improved formatting
-export const commentBitbucketPrEnhanced = async (
-  issue: any,
-  prInfo: any,
-): Promise<any> => {
-  try {
-    // Format enhanced comment based on enhancement type
-    let commentBody = '';
-
-    if (
-      issue.enhancementType === 'CODE_REPLACEMENT' &&
-      issue.improvedCodeBlock
-    ) {
-      // Code replacement with copy-paste solution
-      commentBody = `## 🔧 ${issue.issue}
-**Priority:** ${issue.priority} | **Category:** ${issue.category}
-
-### 📍 Affected Code
-\`\`\`${getFileExtensionBitbucket(issue.file)}
-${issue.affectedCodeBlock?.codeLines?.join('\n') || issue.content}
-\`\`\`
-
-### ✨ Improved Code
-\`\`\`${getFileExtensionBitbucket(issue.file)}
-${issue.improvedCodeBlock.codeLines.join('\n')}
-\`\`\`
-
-${issue.improvedCodeBlock.explanation || ''}
-
-### 📋 Analysis
-${issue.reason}
-
----
-*💡 You can copy and paste the improved code directly to fix this issue.*`;
-    } else if (issue.enhancementType === 'SUGGESTION') {
-      // Suggestion without code replacement
-      commentBody = `## 💡 ${issue.issue}
-**Priority:** ${issue.priority} | **Category:** ${issue.category}
-
-### 📍 Code Location
-\`\`\`${getFileExtensionBitbucket(issue.file)}
-${issue.affectedCodeBlock?.codeLines?.join('\n') || issue.content}
-\`\`\`
-
-### 📋 Analysis & Recommendations
-${issue.reason}
-
----
-*📝 This requires manual review and implementation based on your specific requirements.*`;
-    } else if (
-      issue.enhancementType === 'SECURITY_FIX' &&
-      issue.improvedCodeBlock
-    ) {
-      // Security fix with secure code
-      commentBody = `## 🛡️ Security Issue: ${issue.issue}
-**Priority:** ${issue.priority} | **Impact:** Security Vulnerability
-
-### ⚠️ Vulnerable Code
-\`\`\`${getFileExtensionBitbucket(issue.file)}
-${issue.affectedCodeBlock?.codeLines?.join('\n') || issue.content}
-\`\`\`
-
-### 🔒 Secure Implementation
-\`\`\`${getFileExtensionBitbucket(issue.file)}
-${issue.improvedCodeBlock.codeLines.join('\n')}
-\`\`\`
-
-${issue.improvedCodeBlock.explanation || ''}
-
-### 🔍 Security Analysis
-${issue.reason}
-
----
-*🚨 Please implement this security fix immediately to protect against potential vulnerabilities.*`;
-    } else if (
-      issue.enhancementType === 'REFACTOR' &&
-      issue.improvedCodeBlock
-    ) {
-      // Refactoring suggestion
-      commentBody = `## ♻️ ${issue.issue}
-**Priority:** ${issue.priority} | **Focus:** Code Quality
-
-### 📍 Current Implementation
-\`\`\`${getFileExtensionBitbucket(issue.file)}
-${issue.affectedCodeBlock?.codeLines?.join('\n') || issue.content}
-\`\`\`
-
-### 🎯 Refactored Code
-\`\`\`${getFileExtensionBitbucket(issue.file)}
-${issue.improvedCodeBlock.codeLines.join('\n')}
-\`\`\`
-
-${issue.improvedCodeBlock.explanation || ''}
-
-### 📋 Refactoring Benefits
-${issue.reason}
-
----
-*✨ This refactoring will improve code maintainability and readability.*`;
-    } else {
-      // Fallback to original format for backward compatibility
-      commentBody = `## ${issue.issue}
-**Priority:** ${issue.priority}
-
-### 📍 Code Location
-\`\`\`${getFileExtensionBitbucket(issue.file)}
-${issue.content}
-\`\`\`
-
-### 📋 Analysis
-${issue.reason}`;
-    }
-
-    const response = await axios.post(
-      `${prInfo.links.comments.href}`,
-      {
-        content: { raw: commentBody },
-        inline: { to: parseInt(issue.line), path: issue.file },
-      },
-      {
-        headers: {
-          Authorization: `${prInfo.token}`,
-        },
-      },
-    );
-
-    return response;
-  } catch (error) {
-    console.log('Error posting enhanced Bitbucket comment:', error);
-    return null;
-  }
-};
-
-// Helper function to get file extension for syntax highlighting in Bitbucket
-function getFileExtensionBitbucket(filename: string): string {
-  if (!filename) return '';
-
-  const extension = filename.split('.').pop()?.toLowerCase();
-
-  // Map file extensions to syntax highlighting languages for Bitbucket
-  const languageMap = {
-    ts: 'typescript',
-    js: 'javascript',
-    tsx: 'tsx',
-    jsx: 'jsx',
-    py: 'python',
-    java: 'java',
-    cs: 'csharp',
-    cpp: 'cpp',
-    c: 'c',
-    php: 'php',
-    rb: 'ruby',
-    go: 'go',
-    rs: 'rust',
-    kt: 'kotlin',
-    swift: 'swift',
-    html: 'html',
-    css: 'css',
-    scss: 'scss',
-    json: 'json',
-    yaml: 'yaml',
-    yml: 'yaml',
-    xml: 'xml',
-    sql: 'sql',
-    sh: 'bash',
-    md: 'markdown',
-  };
-
-  return languageMap[extension] || extension || '';
-}
 
 export async function commitInfoBitbucket(
   data: { token; commitDiffUrl },

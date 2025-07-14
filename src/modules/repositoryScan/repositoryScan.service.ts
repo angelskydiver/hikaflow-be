@@ -560,6 +560,17 @@ export class RepositoryScanService {
 
   async fetchFileStructure(repositoryId: string, accountId: string) {
     try {
+      let repository = await this.prisma.repository.findUnique({
+        where: { id: repositoryId },
+      });
+      const organizationAccount =
+        await this.prisma.organizationAccounts.findFirst({
+          where: { role: 'ADMIN', organizationId: repository.organizationId },
+          include: { account: true },
+        });
+      accountId = organizationAccount.accountId;
+      // add repository
+
       const { decryptedToken, payload, accountType } =
         await this.accountCredentialService.getAccountToken({ accountId });
       const scan = await this.prisma.repositoryScan.findFirst({
