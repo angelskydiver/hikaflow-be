@@ -153,7 +153,30 @@ export class RepositoryScanController {
         }
       };
 
-      // Start analysis in background
+      // Stream text chunks for real-time response
+      const streamTextChunk = (chunk: string) => {
+        try {
+          const eventData = {
+            step: 'text_chunk',
+            chunk,
+            timestamp: new Date().toISOString(),
+            streaming: true,
+          };
+
+          const jsonString = JSON.stringify(eventData);
+          res.write(`data: ${jsonString}\n\n`);
+
+          // Force flush for production environments
+          (res as any).flushHeaders?.();
+          if (typeof (res as any).flush === 'function') {
+            (res as any).flush();
+          }
+        } catch (stringifyError) {
+          console.error('Error stringifying text chunk:', stringifyError);
+        }
+      };
+
+      // Start analysis in background with streaming support
       const analysisPromise =
         this._repositoryScanService.analyzeRepositoryRefactored(
           repositoryId,
@@ -162,6 +185,7 @@ export class RepositoryScanController {
           body.threadId,
           body.analysisMode,
           streamProgress,
+          streamTextChunk, // Pass the text chunk streaming function
         );
 
       // Send initial thinking events immediately
