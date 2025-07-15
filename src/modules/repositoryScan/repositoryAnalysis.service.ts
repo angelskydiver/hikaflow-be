@@ -458,6 +458,13 @@ Return the most appropriate category that allows for the deepest technical analy
       throw new Error(`Repository "${request.repositoryId}" not found.`);
     }
 
+    const organizationAccount =
+      await this.prisma.organizationAccounts.findFirst({
+        where: { role: 'ADMIN', organizationId: repository.organizationId },
+        include: { account: true },
+      });
+    request['accountId'] = organizationAccount.accountId;
+
     // Get account credentials
     const accountCredentials =
       await this.accountCredentialService.getAccountToken({
