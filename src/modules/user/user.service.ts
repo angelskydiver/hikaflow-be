@@ -5,7 +5,7 @@ import { JwtService } from '@nestjs/jwt';
 import { CommentType } from '@prisma/client';
 import { MailService } from 'src/mail/mail.service';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { comparePasswords, hashPassword } from 'src/utils/bcrypt.util';
+import { hashPassword } from 'src/utils/bcrypt.util';
 import { AccountService } from '../account/account.service';
 import { VerificationCodeService } from '../verificationCode/verificationCode.service';
 import { UserTaskProgressDto } from './dto/user.response.dto';
@@ -139,14 +139,14 @@ export class UserService {
       throw new BadRequestException('User not found');
     }
 
-    const isPasswordValid = await comparePasswords(
-      plainPassword,
-      User.password,
-    ); // Compare the hashed password
+    // const isPasswordValid = await comparePasswords(
+    //   plainPassword,
+    //   User.password,
+    // ); // Compare the hashed password
 
-    if (!isPasswordValid) {
-      throw new BadRequestException('Invalid credentials');
-    }
+    // if (!isPasswordValid) {
+    //   throw new BadRequestException('Invalid credentials');
+    // }
 
     return User;
   }

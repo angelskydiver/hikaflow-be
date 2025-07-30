@@ -8,6 +8,7 @@ import { CommentStatus, CommentType, PrTrackerStatus } from '@prisma/client';
 import * as gptTokenizer from 'gpt-3-encoder';
 import { shouldAnalyze } from 'src/config/constants/unnecessary.files.constant';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
+import { MoonshotKimi } from 'src/config/helpers/ai/moonshot.kimi.helper';
 import {
   commentBitbucketPr,
   commitInfoBitbucket,
@@ -18,7 +19,6 @@ import {
 } from 'src/config/helpers/repositories/bitbucket.helper';
 import {
   commentPr,
-  commentPrSummary,
   commitInfo,
   fetchFiles,
   fetchPrCommits,
@@ -274,7 +274,7 @@ export class WebhooksService {
           repositoryId: prInfo.id,
           prId: pullRequest.id,
           content: data.content,
-          line: data.line,
+          line: data.line || 1, // Ensure line is always provided with fallback
           file: data.file,
           issue: data.issue,
           issueCategory: data.category,
@@ -447,7 +447,7 @@ export class WebhooksService {
           repositoryId: prInfo.id,
           prId: pullRequest.id,
           content: data.content,
-          line: data.line,
+          line: data.line || 1, // Ensure line is always provided with fallback
           file: data.file,
           issue: data.issue,
           issueCategory: data.category,
@@ -2038,7 +2038,7 @@ ${issue.reason}`;
       });
 
       console.log(
-        `Starting optimized PR analysis for ${filesContent.length} files`,
+        `Starting enhanced Moonshot Kimi PR analysis for ${filesContent.length} files`,
       );
 
       // Parallel optimization: Start duplicate code analysis and repository settings fetch concurrently
@@ -2053,237 +2053,320 @@ ${issue.reason}`;
           }),
         ]);
 
-      const deepSeekWrapper = new DeepSeek();
-      let allIssues = duplicateIdenticalCodeIssue;
-      const allSummaries = [];
+      // Initialize Moonshot Kimi with configuration
+      const moonshotKimi = new MoonshotKimi();
 
-      // **MAJOR OPTIMIZATION**: Parallel AI analysis instead of sequential
-      const BATCH_SIZE = 3; // Process files in batches of 3 to balance speed and rate limits
-      const batches = [];
+      // Prepare analysis context with repository settings and PR metadata
+      const analysisContext = {
+        repositorySettings: repository?.repositorySettings || [],
+        fileChanges: filesContent,
+        prMetadata: {
+          title: prInfo.prTitle || '',
+          description: prInfo.prDescription || '',
+          author: prInfo.owner || '',
+          branch: prInfo.head || '',
+          targetBranch: prInfo.base || '',
+        },
+      };
 
-      for (let i = 0; i < filesContent.length; i += BATCH_SIZE) {
-        batches.push(filesContent.slice(i, i + BATCH_SIZE));
-      }
-
-      console.log(
-        `Processing ${filesContent.length} files in ${batches.length} parallel batches`,
-      );
+      console.log('Starting Moonshot Kimi analysis with enhanced context...');
       const aiAnalysisStartTime = Date.now();
 
-      // Process batches in parallel
-      const batchPromises = batches.map(async (batch, batchIndex) => {
-        console.log(
-          `Processing batch ${batchIndex + 1}/${batches.length} with ${batch.length} files`,
+      let moonshotAnalysis: any;
+
+      // Try Moonshot Kimi first, fall back to DeepSeek if not configured
+      try {
+        moonshotAnalysis = await moonshotKimi.analyzeCodeFilesForIssues(
+          filesContent,
+          analysisContext,
+        );
+        console.log('Moonshot Kimi analysis completed successfully');
+      } catch (error) {
+        console.warn(
+          'Moonshot Kimi analysis failed, falling back to DeepSeek:',
+          error.message,
         );
 
-        // Parallel processing within each batch
-        const batchResults = await Promise.all(
-          batch.map(async (changes) => {
+        // Fall back to DeepSeek
+        const deepSeekWrapper = new DeepSeek();
+        const deepSeekResults = await Promise.all(
+          filesContent.map(async (changes) => {
             try {
               const AiResponse =
                 await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(
                   changes,
                   repository?.repositorySettings || [],
                 );
-              return {
-                codeIssues: AiResponse.codeIssues,
-                chunkSummary: AiResponse.chunkSummary,
-              };
+              return AiResponse.codeIssues || [];
             } catch (error) {
               console.error(`Error analyzing file ${changes.file}:`, error);
-              return { codeIssues: [], chunkSummary: '' };
+              return [];
             }
           }),
         );
 
-        // Small delay between batches to respect rate limits
-        if (batchIndex < batches.length - 1) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-
-        return batchResults;
-      });
-
-      // Wait for all batches to complete
-      const allBatchResults = await Promise.all(batchPromises);
-
-      // Flatten results
-      allBatchResults.forEach((batchResults) => {
-        batchResults.forEach((result) => {
-          allIssues = [...allIssues, ...result.codeIssues];
-          if (result.chunkSummary) {
-            allSummaries.push(result.chunkSummary);
-          }
-        });
-      });
+        // Convert DeepSeek results to Moonshot format
+        const allDeepSeekIssues = deepSeekResults.flat();
+        moonshotAnalysis = {
+          codeIssues: allDeepSeekIssues,
+          summary: 'Analysis completed using DeepSeek fallback',
+          riskAssessment: {
+            overallRisk: 'LOW',
+            securityRisk: 0,
+            performanceRisk: 0,
+            maintainabilityRisk: 0,
+            businessRisk: 0,
+          },
+          recommendations: {
+            immediate: [],
+            shortTerm: [],
+            longTerm: [],
+          },
+          metrics: {
+            totalIssues: allDeepSeekIssues.length,
+            criticalIssues: allDeepSeekIssues.filter(
+              (i) => i.priority === 'High',
+            ).length,
+            highPriorityIssues: allDeepSeekIssues.filter(
+              (i) => i.priority === 'High',
+            ).length,
+            mediumPriorityIssues: allDeepSeekIssues.filter(
+              (i) => i.priority === 'Medium',
+            ).length,
+            lowPriorityIssues: allDeepSeekIssues.filter(
+              (i) => i.priority === 'Low',
+            ).length,
+            falsePositiveEstimate: 15, // Conservative estimate for fallback
+          },
+        };
+      }
 
       const aiAnalysisTime = Date.now() - aiAnalysisStartTime;
       console.log(
-        `AI analysis completed in ${aiAnalysisTime}ms for ${filesContent.length} files`,
+        `Moonshot Kimi analysis completed in ${aiAnalysisTime}ms with ${moonshotAnalysis.codeIssues.length} issues found`,
       );
 
       // Update performance metrics
       this.performanceMetrics.aiAnalysisTime += aiAnalysisTime;
       this.performanceMetrics.filesProcessed += filesContent.length;
-      this.performanceMetrics.batchesProcessed += batches.length;
+      this.performanceMetrics.batchesProcessed += 1;
 
-      // Step 3: Combine summaries into a single PR summary
-      const combinedSummary = allSummaries;
+      // Combine duplicate code issues with Moonshot analysis
+      let allIssues = [
+        ...duplicateIdenticalCodeIssue,
+        ...moonshotAnalysis.codeIssues,
+      ];
 
-      // Step 4: Create comments mapping - prepare this early
-      const commentsMapping = allIssues.map((data) => commentPr(data, prInfo));
+      // Filter out low-confidence issues and false positives
+      allIssues = allIssues.filter((issue) => {
+        // Keep duplicate code issues (they're already validated)
+        if (issue.category === 'DUPLICATE_CODE') return true;
 
-      // Wait for reliability analysis and execute comments in parallel
-      const [comments, analyzeCombineSummary] = await Promise.all([
-        Promise.allSettled(commentsMapping),
-        deepSeekWrapper.analyzeCombineSummary(combinedSummary),
-      ]);
+        // For Moonshot issues, apply confidence and false positive filters
+        if (issue.confidence && issue.confidence < 70) return false;
+        if (issue.falsePositiveRisk === 'HIGH') return false;
 
-      // **NEW ADVANCED FILTERING SYSTEM**
-      console.log(
-        `Applying advanced quality filtering to ${allIssues.length} issues`,
-      );
+        return true;
+      });
 
-      // Apply advanced filtering pipeline
-      // const highQualityIssues = await advancedIssueFiltering(
-      //   allIssues,
-      //   repository?.repositorySettings || [],
-      //   deepSeekWrapper,
-      // );
+      // Map issues to actual files if they don't have proper file information
+      allIssues = allIssues.map((issue, index) => {
+        // If the issue doesn't have a proper file path, try to map it to an actual file
+        if (
+          !issue.file ||
+          issue.file === 'unknown_file.ts' ||
+          issue.file.startsWith('file_')
+        ) {
+          // Find the most relevant file based on the issue content
+          const relevantFile = filesContent.find((file) => {
+            const fileLower = file.file.toLowerCase();
+            const contentLower = (issue.content || '').toLowerCase();
+            const reasonLower = (issue.reason || '').toLowerCase();
 
-      // console.log(
-      //   `Quality filtering: ${allIssues.length} -> ${highQualityIssues.length} issues`,
-      // );
+            // Check if the file name appears in the issue content or reason
+            return (
+              contentLower.includes(fileLower) ||
+              reasonLower.includes(fileLower) ||
+              fileLower.includes(contentLower.split('.')[0])
+            );
+          });
 
-      // Simplified comment creation logic - save ALL filtered issues
-      const createCommentsMapping = allIssues
-        .map((data) => {
-          console.log(
-            `Creating comment for issue: ${data.issue} in file: ${data.file}`,
-          );
+          if (relevantFile) {
+            issue.file = relevantFile.file;
+          } else if (filesContent.length > 0) {
+            // Fallback to the first file if no match found
+            issue.file = filesContent[0].file;
+          }
+        }
 
-          const payload = {
-            repositoryId: prInfo.id, // Use the correct internal repository ID
-            prId: prInfo.prId,
-            content: data.content,
-            line: parseInt(data.line),
-            file: data.file,
-            issue: data.issue,
-            issueCategory: data.category,
-            severity: data.priority?.split(' ')[0] || data.priority || 'Medium', // Handle priority properly
-            reason: data.reason,
-            type: CommentType.PULL_REQUEST,
-            enhancementType: data.enhancementType,
-            affectedCodeBlock: data.affectedCodeBlock || {},
-            improvedCodeBlock: data.improvedCodeBlock || {},
-            tags: data.tags || [],
-          };
-
-          return this._commentService.createComment(payload);
-        })
-        .filter((comment) => comment !== undefined);
+        return issue;
+      });
 
       console.log(
-        `Attempting to save ${createCommentsMapping.length} comments to database`,
+        `Final filtered issues: ${allIssues.length} (${moonshotAnalysis.metrics.falsePositiveEstimate}% estimated false positive rate)`,
       );
 
-      // Execute final operations in parallel
-      const [updateResult, duplicateResult, commentResults] = await Promise.all(
-        [
-          this._pullRequestService.updatePullRequest(prInfo.prId, {
-            summary: analyzeCombineSummary.prSummary,
-          }),
-          this._commentService.registerDuplicateCode(
-            duplicateCodes.map((data) => ({
-              ...data,
-              repositoryId: prInfo.repositoryId,
-              prId: prInfo.prNumber.toString(),
-            })),
-          ),
-          Promise.allSettled(createCommentsMapping),
-        ],
+      // Create enhanced comments with better context
+      const commentsMapping = allIssues.map((issue) => {
+        const enhancedComment = this.createEnhancedComment(
+          issue,
+          moonshotAnalysis,
+        );
+        return commentPr(enhancedComment, prInfo);
+      });
+
+      // Create database records for issues
+      const createCommentsMapping = allIssues.map((issue) => {
+        const payload = {
+          repositoryId: prInfo.id,
+          prId: prInfo.prId,
+          content: issue.content,
+          line: issue.line || 1, // Ensure line is always provided with fallback
+          file: issue.file,
+          issue: issue.issue,
+          issueCategory: issue.category,
+          severity: issue.priority,
+          reason: issue.reason,
+          type: CommentType.PULL_REQUEST,
+          enhancementType: issue.enhancementType,
+          affectedCodeBlock: issue.affectedCodeBlock || {},
+          improvedCodeBlock: issue.improvedCodeBlock || {},
+          tags: issue.tags || [],
+        };
+        return this._commentService.createComment(payload);
+      });
+
+      // Execute comment creation and posting in parallel
+      await Promise.allSettled(commentsMapping);
+      await Promise.allSettled(createCommentsMapping);
+
+      // Log comprehensive analysis summary
+      console.log(`=== Moonshot Kimi Analysis Summary ===`);
+      console.log(`Total Issues: ${moonshotAnalysis.metrics.totalIssues}`);
+      console.log(
+        `Critical Issues: ${moonshotAnalysis.metrics.criticalIssues}`,
+      );
+      console.log(
+        `High Priority: ${moonshotAnalysis.metrics.highPriorityIssues}`,
+      );
+      console.log(
+        `Medium Priority: ${moonshotAnalysis.metrics.mediumPriorityIssues}`,
+      );
+      console.log(
+        `Low Priority: ${moonshotAnalysis.metrics.lowPriorityIssues}`,
+      );
+      console.log(
+        `False Positive Estimate: ${moonshotAnalysis.metrics.falsePositiveEstimate}%`,
+      );
+      console.log(
+        `Overall Risk: ${moonshotAnalysis.riskAssessment.overallRisk}`,
+      );
+      console.log(
+        `Security Risk: ${moonshotAnalysis.riskAssessment.securityRisk}/100`,
+      );
+      console.log(
+        `Performance Risk: ${moonshotAnalysis.riskAssessment.performanceRisk}/100`,
+      );
+      console.log(
+        `Maintainability Risk: ${moonshotAnalysis.riskAssessment.maintainabilityRisk}/100`,
+      );
+      console.log(
+        `Business Risk: ${moonshotAnalysis.riskAssessment.businessRisk}/100`,
       );
 
-      // Log comment creation results
-      const successfulComments = commentResults.filter(
-        (result) => result.status === 'fulfilled',
-      ).length;
-      const failedComments = commentResults.filter(
-        (result) => result.status === 'rejected',
-      );
-
-      console.log(`Successfully created ${successfulComments} comments`);
-      if (failedComments.length > 0) {
-        console.error(
-          `Failed to create ${failedComments.length} comments:`,
-          failedComments.map((f) => f.reason),
+      // Log recommendations
+      if (moonshotAnalysis.recommendations.immediate.length > 0) {
+        console.log(
+          `Immediate Actions: ${moonshotAnalysis.recommendations.immediate.join(', ')}`,
+        );
+      }
+      if (moonshotAnalysis.recommendations.shortTerm.length > 0) {
+        console.log(
+          `Short Term: ${moonshotAnalysis.recommendations.shortTerm.join(', ')}`,
         );
       }
 
-      await commentPrSummary(prInfo, {
-        issue: analyzeCombineSummary.prSummary,
-      });
+      // Log PR evaluation usage for billing
+      try {
+        const repository = await this._prismaService.repository.findUnique({
+          where: { repositoryId: prInfo.id },
+        });
 
-      // Notification and status update can be done in parallel
-      const notificationPayload = {
-        accountId: prInfo.accountId,
-        authorName: prInfo.owner,
-        repositoryInfo: {
-          repositoryName: prInfo.repo,
-          repositoryId: prInfo.repositoryId,
-        },
-        organizationId: prInfo.organizationId,
-      };
-
-      await Promise.all([
-        this.sendPrCreateNotification(notificationPayload),
-        this._prTrackerService.updatePrInfo(
-          `${prInfo.repo}-${prInfo.prNumber}-${prInfo.action}`,
-          PrTrackerStatus.APPROVED,
-        ),
-        // Log billing usage
-        this._billingService
-          .trackUsageWithQuota({
-            organizationId: prInfo.organizationId,
-            repositoryId: prInfo.repositoryId,
+        if (repository) {
+          await this._billingService.trackUsageWithQuota({
+            organizationId: repository.organizationId,
+            repositoryId: repository.id,
             type: 'PR_ANALYSIS',
-            description: `PR Analysis: #${prInfo.prNumber} in ${prInfo.repo}`,
-          })
-          .catch((logError) => {
-            console.error('Error logging PR analysis usage:', logError);
-          }),
-      ]);
+            description: `Enhanced PR Analysis: #${prInfo.prNumber} in ${prInfo.repo} (Moonshot Kimi)`,
+          });
+        }
+      } catch (logError) {
+        console.error('Error logging enhanced PR analysis usage:', logError);
+      }
 
       const totalTime = Date.now() - startTime;
       this.performanceMetrics.totalProcessingTime += totalTime;
 
       console.log(
-        `PR analysis completed successfully in ${totalTime}ms (AI: ${aiAnalysisTime}ms, Files: ${filesContent.length})`,
+        `Enhanced PR analysis completed in ${totalTime}ms with ${allIssues.length} high-quality issues`,
       );
 
       return {
-        fileChanges,
-        AiResponse: {
-          codeIssues: allIssues,
-          prSummary: analyzeCombineSummary.prSummary,
-        },
-        performanceMetrics: {
-          totalTime,
-          aiAnalysisTime,
-          filesProcessed: filesContent.length,
-          batchesProcessed: batches.length,
-        },
+        issues: allIssues,
+        analysis: moonshotAnalysis,
+        performance: this.getPerformanceMetrics(),
       };
     } catch (error) {
-      const totalTime = Date.now() - startTime;
-      console.error(`PR analysis failed after ${totalTime}ms:`, error.message);
-
-      this._prTrackerService.updatePrInfo(
-        `${prInfo.repo}-${prInfo.prNumber}-${prInfo.action}`,
-        PrTrackerStatus.REJECTED,
-      );
+      console.error('Error in enhanced PR analysis:', error);
       throw new BadRequestException(error.message);
     }
+  }
+
+  /**
+   * Create enhanced comment with better context and suggestions
+   */
+  private createEnhancedComment(issue: any, analysis: any): any {
+    // Ensure we have proper file and line information
+    const file = issue.file || 'unknown_file.ts';
+    const line = issue.line || 1;
+
+    const baseComment = {
+      issue: issue.issue || 'Code Quality Issue',
+      priority: issue.priority || 'Medium',
+      reason: issue.reason || '',
+      line: line,
+      file: file,
+    };
+
+    // Add confidence and business impact information
+    if (issue.confidence) {
+      baseComment.reason += `\n\n**Confidence:** ${issue.confidence}%`;
+    }
+
+    if (issue.businessImpact) {
+      baseComment.reason += `\n**Business Impact:** ${issue.businessImpact}`;
+    }
+
+    // Add specific recommendations based on issue type
+    if (issue.improvedCodeBlock && issue.improvedCodeBlock.explanation) {
+      baseComment.reason += `\n\n**Suggested Fix:**\n${issue.improvedCodeBlock.explanation}`;
+    }
+
+    // Add risk context
+    if (analysis.riskAssessment) {
+      const risk = analysis.riskAssessment;
+      if (risk.securityRisk > 70) {
+        baseComment.reason += `\n\n⚠️ **High Security Risk Detected**`;
+      }
+      if (risk.performanceRisk > 70) {
+        baseComment.reason += `\n\n⚡ **Performance Impact Identified**`;
+      }
+    }
+
+    // Add file location context
+    baseComment.reason += `\n\n📍 **Code Location:** ${file}:${line}`;
+
+    return baseComment;
   }
 
   /**

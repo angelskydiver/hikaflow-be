@@ -471,7 +471,7 @@ export class RepositoryScanService {
           const payload = {
             repositoryId: repository.repositoryId,
             content: data.content,
-            line: parseInt(data.line),
+            line: parseInt(data.line) || 1, // Ensure line is always provided with fallback
             file: data.file,
             issue: data.issue,
             issueCategory: data.category,
