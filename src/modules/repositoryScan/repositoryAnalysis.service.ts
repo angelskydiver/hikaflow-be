@@ -376,26 +376,25 @@ export class RepositoryAnalysisService {
     trace.executionPath.push('categorizeQueryWithSeniorAnalysis');
 
     const seniorPrompt = `
-As a senior fullstack engineer, analyze this query and categorize it with deep technical understanding:
+You are a SENIOR FULL-STACK ENGINEER acting as an intelligent router.
 
-Query: "${enhancedQuery}"
-Analysis Mode: ${analysisMode}
-Has Thread Context: ${hasThread}
+TASK
+----
+Inspect the user's question and output **exactly one** of the category labels below (case-sensitive, no additional text).
 
-Consider these enhanced categories:
-- ARCHITECTURAL_REVIEW: Questions about system architecture, design patterns, scalability
-- CODE_REVIEW: Code quality, refactoring, best practices
-- PERFORMANCE_ANALYSIS: Performance bottlenecks, optimization opportunities
-- SECURITY_AUDIT: Security vulnerabilities, best practices
-- MODULE_DESIGN: New feature/module design guidance
-- TECHNICAL_DEBT: Legacy code analysis, modernization suggestions
-- RELEASE_ANALYSIS: Questions about commits, releases, changes, contributors, recent updates
-- FOLLOW_UP: Contextual follow-up questions
-- USER_FLOW: User journey and business logic analysis
-- FUNCTION_TRACE: Deep code tracing and debugging
-- PROJECT_LEVEL: High-level project understanding
+ARCHITECTURAL_REVIEW  – system architecture, design patterns, scalability
+CODE_REVIEW           – code quality, refactoring, best practices
+PERFORMANCE_ANALYSIS  – performance bottlenecks, optimisation
+SECURITY_AUDIT        – vulnerabilities, hardening
+MODULE_DESIGN         – new feature/module structure guidance
+TECHNICAL_DEBT        – legacy modernisation, cleanup
+RELEASE_ANALYSIS      – commits, contributors, recent changes
+FOLLOW_UP             – contextual follow-up within an existing thread
+USER_FLOW             – user journey & business logic walkthrough
+FUNCTION_TRACE        – deep code tracing / debugging
+PROJECT_LEVEL         – high-level project understanding
 
-Return the most appropriate category that allows for the deepest technical analysis.
+If multiple seem plausible, pick the *single* category that will yield the most technically valuable answer.
 `;
 
     const category = await gemini.categorizeQueryType(seniorPrompt, hasThread);
@@ -1518,24 +1517,32 @@ Keep the response focused and practical.`;
     query: string,
     previousMessages: PreviousMessage[],
   ): string {
-    return `Based on the previous conversation context and the new question, analyze the code to explain: ${query}
+    return `You are a CONTEXT-AWARE SENIOR ENGINEER continuing an earlier conversation.
 
-Previous conversation context:
+New Question:
+"${query}"
+
+Recent Context:
 ${previousMessages
   .map((msg) => {
-    if (msg.isDetailed) {
-      return `Q: ${msg.question}\nA: ${msg.answer}\n`;
-    } else {
-      return `Q: ${msg.question}\nSummary: ${msg.summary}\n`;
-    }
+    return msg.isDetailed
+      ? `Q: ${msg.question}\nA: ${msg.answer}`
+      : `Q: ${msg.question}\nSummary: ${msg.summary}`;
   })
-  .join('\n')}
+  .join('\n\n')}
 
-Focus on connecting the new question to the previous context while analyzing the actual code implementation.`;
+Produce an answer that:
+1. Links back to relevant parts of the prior discussion.
+2. References actual code (use file:line where helpful).
+3. Gives practical, next-step guidance.
+
+Keep bullet points concise and avoid repeating generic advice.`;
   }
 
   private buildUserFlowPrompt(query: string): string {
-    return `Analyze the actual code implementation to explain exactly how ${query.replace(/\?/g, '')} - not what should happen theoretically, but what DOES happen based on the code. Follow the execution path through the files, identify the exact functions called, database operations performed, and any conditional logic followed. Include file names, line numbers, function names, and show the precise sequence of operations. DO NOT speculate about what "would" happen - analyze what DOES happen based on the actual code in these files.`;
+    return `Trace the *real* execution path for: ${query.replace(/\?/g, '')}
+
+Output format: numbered list – each step must include file:function (line range) and a short description of what happens. Finish with a one-sentence summary. No speculation – rely only on code.`;
   }
 
   private buildFunctionTracePrompt(query: string, filePath?: string): string {

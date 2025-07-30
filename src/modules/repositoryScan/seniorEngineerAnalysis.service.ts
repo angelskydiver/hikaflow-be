@@ -95,19 +95,24 @@ export class SeniorEngineerAnalysisService {
     const gemini = new Gemini();
 
     const performancePrompt = `
-As a senior performance engineer, analyze these code files for performance optimization opportunities:
+You are a SENIOR PERFORMANCE ENGINEER tasked with finding the highest-impact performance wins.
 
-Focus on:
-- Database query optimization
-- Memory usage patterns
-- Async/await usage
-- Caching opportunities
-- Algorithmic efficiency
-- Resource cleanup
-- Connection pooling
-- Batch processing opportunities
+Deliver a *prioritized* list of optimisation opportunities. For each item include:
+• filePath:lineRange
+• description (≤25 words)
+• root cause
+• concrete fix
+• estimated gain (low / medium / high)
 
-Provide specific, actionable recommendations with file names and line numbers where possible.
+Focus areas (but do not limit yourself to them):
+- Expensive database queries
+- Memory leaks / excessive allocations
+- Async blocking / unnecessary awaits
+- Missing or ineffective caching
+- Algorithmic complexity
+- Inefficient I/O or serialization
+
+Return the answer as a Markdown table with columns: Rank | File | Issue | Recommendation | Impact.
 `;
 
     const analysisResult = await gemini.generateAnswer(
@@ -130,20 +135,22 @@ Provide specific, actionable recommendations with file names and line numbers wh
     const gemini = new Gemini();
 
     const securityPrompt = `
-As a senior security engineer, analyze these code files for security vulnerabilities:
+You are a VETERAN APPLICATION SECURITY ENGINEER performing a targeted vulnerability assessment.
 
-Focus on:
-- Input validation issues
-- SQL injection risks
-- Authentication/authorization flaws
-- Data exposure risks
-- CORS misconfigurations
-- Rate limiting
-- Sensitive data handling
-- Session management
-- Error information leakage
+Produce a ranked list of findings. For each finding state:
+• filePath:line(s)
+• vulnerability type
+• concise description (≤30 words)
+• severity (critical/high/medium/low)
+• concrete remediation steps
 
-Provide specific vulnerability descriptions with severity levels and mitigation strategies.
+Prioritization criteria:
+1. Direct exploitability
+2. Data exposure impact
+3. Ease of fix
+
+Check, among others: input validation, injection, authZ/authN, sensitive data, CORS, rate limiting, error leakage.
+Output as a Markdown table: Rank | File | Vulnerability | Severity | Fix.
 `;
 
     const analysisResult = await gemini.generateAnswer(
@@ -165,19 +172,18 @@ Provide specific vulnerability descriptions with severity levels and mitigation 
     const gemini = new Gemini();
 
     const technicalDebtPrompt = `
-As a senior software architect, analyze these code files for technical debt:
+You are a PRINCIPAL ARCHITECT conducting a technical-debt scan.
 
-Focus on:
-- Code complexity and maintainability
-- Outdated patterns and practices
-- Duplicate code
-- Unused dependencies
-- Legacy code that needs modernization
-- Architecture inconsistencies
-- Missing documentation
-- Test coverage gaps
+List the most impactful debt items (max 10). For each item include:
+• file/module
+• debt description
+• reason it matters
+• suggested remediation
+• estimated effort (S/M/L)
+• impact if fixed (S/M/L)
 
-Provide prioritized recommendations with effort estimates and impact assessments.
+Look for complexity, outdated patterns, duplication, unused dependencies, missing tests/docs, architecture drift.
+Return as a Markdown table: Rank | Location | Debt | Effort | Impact.
 `;
 
     const analysisResult = await gemini.generateAnswer(
@@ -273,49 +279,42 @@ Provide specific guidance for the requested module including:
     resourceAnalysis: ResourceAnalysis,
   ): string {
     return `
-As a senior software architect, provide a comprehensive architectural review based on your analysis:
+You are a PRINCIPAL SOFTWARE ARCHITECT writing an executive-level architectural review.
 
-Original Query: "${query}"
+Original Question: "${query}"
 
-Current Architecture Analysis:
-- Key Resources: ${resourceAnalysis.keyResources.length} identified
-- Architectural Patterns: ${resourceAnalysis.patterns.map((p) => p.pattern).join(', ')}
-- Code Quality Score: ${resourceAnalysis.codeQuality.maintainability}/10
-- Complexity Level: ${resourceAnalysis.codeQuality.complexity}
+Snapshot of analysed system (auto-generated):
+• Key Resources detected: ${resourceAnalysis.keyResources.length}
+• Patterns observed: ${resourceAnalysis.patterns.map((p) => p.pattern).join(', ')}
+• Maintainability score: ${resourceAnalysis.codeQuality.maintainability}/10
+• Estimated complexity: ${resourceAnalysis.codeQuality.complexity}
 
-Focus your review on:
-1. Architectural strengths and weaknesses
-2. Scalability considerations
-3. Maintainability improvements
-4. Performance implications
-5. Security considerations
-6. Specific recommendations for the query
+Deliver your review in four sections:
+1. Strengths — bullet list
+2. Weaknesses / Risks — bullet list
+3. Recommendations — numbered list with concrete actions, effort (S/M/L) and expected benefit
+4. Next-Steps Roadmap — chronological order for the next 3 months
 
-Provide actionable insights with practical implementation steps.
-`;
+Keep each bullet ≤25 words and avoid generic advice.`;
   }
 
   buildCodeReviewPrompt(query: string, codeInsights: CodeInsights): string {
     return `
-As a senior code reviewer, provide a detailed code review focusing on the user's specific question:
+You are a SENIOR CODE REVIEWER answering the highlighted question.
 
-Query: "${query}"
+Developer Question: "${query}"
 
-Code Analysis Summary:
-- Refactoring Opportunities: ${codeInsights.refactoringOpportunities.length}
-- Performance Issues: ${codeInsights.performanceOptimizations.length}
-- Best Practice Violations: ${codeInsights.bestPracticeViolations.length}
-- Security Concerns: ${codeInsights.securityVulnerabilities.length}
+Static analysis quick-stats:
+• Refactoring Opportunities: ${codeInsights.refactoringOpportunities.length}
+• Perf Issues: ${codeInsights.performanceOptimizations.length}
+• Best-Practice Violations: ${codeInsights.bestPracticeViolations.length}
+• Security Findings: ${codeInsights.securityVulnerabilities.length}
 
-Provide specific feedback on:
-1. Code quality and maintainability
-2. Performance optimization opportunities
-3. Best practice adherence
-4. Security considerations
-5. Refactoring suggestions
-6. Direct answers to the specific query
-
-Include file names, function names, and specific line references where applicable.
+Write your review in this structure:
+1. Direct Answer — concise response (≤50 words)
+2. Observations — bullet list grouped by category (Quality, Performance, Security, Style)
+3. Actionable Suggestions — numbered list with file:line pointers and clear next steps
+4. Summary — 2-3 sentence wrap-up stating expected gains.
 `;
   }
 
@@ -324,46 +323,30 @@ Include file names, function names, and specific line references where applicabl
     codeInsights: CodeInsights,
   ): string {
     return `
-As a senior performance engineer, analyze the codebase for performance optimization opportunities:
+You are a PERFORMANCE SPECIALIST. Provide a targeted optimisation plan.
 
-Query: "${query}"
+Developer Question: "${query}"
+Detected opportunities: ${codeInsights.performanceOptimizations.length}; critical: ${codeInsights.performanceOptimizations.filter((p) => p.category === 'critical').length}
 
-Performance Analysis Summary:
-- Optimization Opportunities: ${codeInsights.performanceOptimizations.length}
-- Critical Issues: ${codeInsights.performanceOptimizations.filter((p) => p.category === 'critical').length}
-
-Focus on:
-1. Database query optimization
-2. Memory usage patterns
-3. Algorithmic efficiency
-4. Caching strategies
-5. Asynchronous processing
-6. Resource utilization
-
-Provide specific, measurable recommendations with expected performance improvements.
+Present output as: Rank | Area | File/Line | Issue | Recommendation | Expected Gain.
+Include hard numbers where possible (e.g., "O(n^2) → O(n log n)").
+Limit table to top 10 items, then add a short conclusion summarising ROI.
 `;
   }
 
   buildSecurityAuditPrompt(query: string, codeInsights: CodeInsights): string {
     return `
-As a senior security engineer, conduct a security audit of the codebase:
+You are a VETERAN SECURITY AUDITOR conducting an in-depth assessment.
 
-Query: "${query}"
+Developer Question: "${query}"
 
-Security Analysis Summary:
-- Vulnerabilities Found: ${codeInsights.securityVulnerabilities.length}
-- Critical Issues: ${codeInsights.securityVulnerabilities.filter((v) => v.severity === 'critical').length}
-- High Priority: ${codeInsights.securityVulnerabilities.filter((v) => v.severity === 'high').length}
+Summary of static findings:
+• Total findings: ${codeInsights.securityVulnerabilities.length}
+• Critical: ${codeInsights.securityVulnerabilities.filter((v) => v.severity === 'critical').length}
+• High: ${codeInsights.securityVulnerabilities.filter((v) => v.severity === 'high').length}
 
-Focus your audit on:
-1. Input validation and sanitization
-2. Authentication and authorization
-3. Data protection and encryption
-4. API security
-5. Error handling and information disclosure
-6. Dependency vulnerabilities
-
-Provide specific remediation steps with security best practices.
+Provide your audit as a Markdown table: Rank | File | Vulnerability | Severity | Fix.
+Limit table to 15 rows then add a "Key Take-aways" section with max 5 bullets.
 `;
   }
 
@@ -372,23 +355,23 @@ Provide specific remediation steps with security best practices.
     architecturalGuidance: ArchitecturalGuidance,
   ): string {
     return `
-As a senior full-stack engineer, provide module design guidance based on existing project patterns:
+You are a LEAD FULL-STACK ENGINEER drafting design guidance for a new module.
 
-Request: "${query}"
+Question: "${query}"
 
-Current Architecture: ${architecturalGuidance.currentArchitecture}
-Identified Strengths: ${architecturalGuidance.strengths.join(', ')}
+Context:
+• Existing architecture: ${architecturalGuidance.currentArchitecture}
+• Strengths: ${architecturalGuidance.strengths.join(', ')}
 
-Provide specific guidance for:
-1. Module structure and organization
-2. File naming conventions
-3. Dependency management
-4. Integration patterns
-5. Testing strategy
-6. Documentation requirements
+Write guidance in the following sections:
+1. Proposed Structure — folder/file diagram
+2. Naming Conventions — bullet list
+3. Key Interfaces / Contracts — short code snippets
+4. Integration Points — where & how to wire into current system
+5. Testing Strategy — unit & integration
+6. Documentation Notes
 
-Include specific examples based on existing project patterns and recommend the most suitable approach for this module.
-`;
+Keep language directive and concise.`;
   }
 
   buildTechnicalDebtPrompt(
@@ -396,25 +379,16 @@ Include specific examples based on existing project patterns and recommend the m
     resourceAnalysis: ResourceAnalysis,
   ): string {
     return `
-As a senior software architect, analyze technical debt and provide a modernization roadmap:
+You are a PRINCIPAL ARCHITECT building a modernization roadmap.
 
-Query: "${query}"
+Question: "${query}"
+Snapshot Metrics:
+• Maintainability: ${resourceAnalysis.codeQuality.maintainability}/10
+• Code Smells detected: ${resourceAnalysis.codeQuality.codeSmells.length}
+• Complexity score: ${resourceAnalysis.codeQuality.complexity}
 
-Technical Debt Analysis:
-- Code Quality: ${resourceAnalysis.codeQuality.maintainability}/10
-- Code Smells: ${resourceAnalysis.codeQuality.codeSmells.length}
-- Complexity: ${resourceAnalysis.codeQuality.complexity}
-
-Focus on:
-1. Legacy code modernization
-2. Architecture improvements
-3. Code quality enhancements
-4. Dependency updates
-5. Performance optimizations
-6. Maintainability improvements
-
-Provide a prioritized action plan with effort estimates and business impact.
-`;
+Produce a table — Rank | Area | Problem | Effort (S/M/L) | Business Impact.
+Limit to top 12 items then add a Phased Roadmap (Phase 1-3) indicating dependencies.`;
   }
 
   buildEnhancedFollowUpPrompt(
@@ -453,23 +427,18 @@ Focus on continuity and progressive depth in your response.
 
   buildEnhancedUserFlowPrompt(query: string, analysisMode: string): string {
     return `
-As a senior full-stack engineer, trace the complete user flow with deep technical analysis:
+You are a FULL-STACK ENGINEER tracing the *actual* user execution path.
 
-Query: "${query}"
-Analysis Mode: ${analysisMode}
+Question: "${query}"
+Mode: ${analysisMode}
 
-Provide comprehensive flow analysis:
-1. **Entry Points**: Identify all possible entry points (APIs, UI components, etc.)
-2. **Authentication Flow**: Detail authentication/authorization checks
-3. **Data Flow**: Trace data transformation and validation
-4. **Business Logic**: Explain core business logic execution
-5. **Database Operations**: Detail all database interactions
-6. **Response Generation**: Explain response formation and delivery
-7. **Error Handling**: Identify error scenarios and handling
-8. **Performance Considerations**: Highlight performance bottlenecks
-9. **Security Checkpoints**: Identify security validations
+For every step provide:
+• file:function (line range)
+• data passed/returned
+• side effects (DB, cache, external)
 
-Include specific file names, function names, and line numbers. Show the complete execution path with actual code references.
+Finish with a sequence diagram style list showing the call order.
+Use bullet points, keep it factual (no speculation).
 `;
   }
 
@@ -533,50 +502,32 @@ Provide practical insights for understanding and maintaining this code.
     resourceAnalysis: ResourceAnalysis,
   ): string {
     return `
-As a senior architect, provide comprehensive project-level analysis:
+You are an ENTERPRISE ARCHITECT analysing the project at macro level.
 
-Query: "${query}"
-Analysis Mode: ${analysisMode}
+Question: "${query}"
+Mode: ${analysisMode}
 
-Project Analysis Context:
-- Architecture Patterns: ${resourceAnalysis.patterns.map((p) => p.pattern).join(', ')}
-- Key Resources: ${resourceAnalysis.keyResources.length} components
-- Code Quality: ${resourceAnalysis.codeQuality.maintainability}/10
-- Technical Debt: ${resourceAnalysis.codeQuality.codeSmells.length} issues identified
+Key Stats:
+• Patterns: ${resourceAnalysis.patterns.map((p) => p.pattern).join(', ')}
+• Components: ${resourceAnalysis.keyResources.length}
+• Maintainability: ${resourceAnalysis.codeQuality.maintainability}/10
+• Tech-debt items: ${resourceAnalysis.codeQuality.codeSmells.length}
 
-Provide strategic insights on:
-1. **System Architecture**: Overall design patterns and principles
-2. **Component Relationships**: How major components interact
-3. **Data Architecture**: Database design and data flow patterns
-4. **API Design**: REST/GraphQL patterns and conventions
-5. **Security Architecture**: Authentication, authorization, and data protection
-6. **Performance Strategy**: Caching, optimization, and scalability patterns
-7. **Testing Strategy**: Unit, integration, and e2e testing approaches
-8. **Deployment Architecture**: CI/CD and infrastructure patterns
-9. **Monitoring & Observability**: Logging, metrics, and alerting
-10. **Future Roadmap**: Scalability and evolution considerations
-
-Focus on high-level strategic guidance while providing specific technical recommendations.
-`;
+Deliver your answer in three parts: Overview, Opportunities, Risks. Keep each bullet ≤20 words.`;
   }
 
   buildEnhancedSemanticPrompt(query: string, analysisMode: string): string {
     const modeInstructions = this.getModeInstructions(analysisMode);
 
     return `
-You are an expert software engineer analyzing this codebase with ${analysisMode} analysis mode.
+You are an EXPERT ENGINEER using **${analysisMode}** mode.
 
-${modeInstructions}
+Instructions: answer the question *with code references and actionable advice*.
+- quote filenames and lines
+- avoid hypothetical statements; base everything on code provided
+- keep sentences short and direct
 
-Query: "${query}"
-
-Based on the provided code files, give a comprehensive technical answer that:
-1. Directly addresses the specific question
-2. References actual code implementations
-3. Provides technical depth appropriate for the analysis mode
-4. Includes practical recommendations where relevant
-
-Your answer should be technically accurate and immediately actionable.
+Question: "${query}"
 `;
   }
 
@@ -589,47 +540,19 @@ Your answer should be technically accurate and immediately actionable.
     releaseSummary: any,
   ): string {
     return `
-As a senior software engineer and release manager, analyze the recent release changes and commit history.
+You are acting as a RELEASE MANAGER summarising recent changes.
 
-Query: "${query}"
+Developer Question: "${query}"
 
-Release Summary:
-- Total commits analyzed: ${releaseSummary?.totalCommits || 0}
-- Contributors involved: ${releaseSummary?.contributors || 0}
-- Time span: ${releaseSummary?.timespan?.from ? `${releaseSummary.timespan.from} to ${releaseSummary.timespan.to}` : 'Recent activity'}
+Summary Stats:
+• Commits: ${releaseSummary?.totalCommits || 0}
+• Contributors: ${releaseSummary?.contributors || 0}
+• Period: ${releaseSummary?.timespan?.from ? `${releaseSummary.timespan.from} to ${releaseSummary.timespan.to}` : 'recent'}
 
-Recent Release Highlights:
-${releaseHighlights
-  .map(
-    (highlight) => `
-- Commit: ${highlight.commitMessage} by ${highlight.committer}
-  Impact: +${highlight.additions}/-${highlight.deletions} lines, ${highlight.totalFiles} files
-  Summary: ${typeof highlight.summary === 'object' ? JSON.stringify(highlight.summary) : highlight.summary}
-`,
-  )
-  .join('\n')}
-
-Contributor Activity:
-${
-  releaseSummary?.contributorStats
-    ? Object.entries(releaseSummary.contributorStats)
-        .map(
-          ([contributor, stats]: [string, any]) => `
-- ${contributor}: ${stats.commitCount} commits, +${stats.linesAdded}/-${stats.linesRemoved} lines
-`,
-        )
-        .join('\n')
-    : 'No contributor data available'
-}
-
-Based on this release and commit analysis, provide insights about:
-1. Key changes and their potential impact
-2. Contributors and their contributions
-3. Areas of the codebase that changed most frequently
-4. Risk assessment for the changes
-5. Recommendations for deployment or further development
-
-Focus on answering the specific question while providing context from the commit history and release data.
+Write output with sections:
+1. Highlights — bullet list, max 8
+2. Risk Assessment — table: Area | Risk | Mitigation
+3. Recommendation — next actions before release/rollback.
 `;
   }
 

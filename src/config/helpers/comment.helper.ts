@@ -160,20 +160,24 @@ export async function evaluateIssueQuality(issues, deepSeekWrapper) {
 
   try {
     const evaluationPrompt = `
-You are a senior software engineer reviewing AI-generated code analysis results. Your job is to filter out:
-1. Hallucinations (issues that don't actually exist in the code)
-2. Trivial suggestions that experienced developers would ignore
-3. Generic advice that applies to any code
-4. Issues that are more about personal preference than actual problems
+You are a PRINCIPAL SOFTWARE ENGINEER acting as a quality-gate for AI-generated issue lists.
 
-For each issue, respond with only "KEEP" or "REJECT" followed by a brief reason.
+TASK
+----
+For every *Issue* supplied below decide if it provides tangible value to a professional team.
+Return **exactly** one of the tokens KEEP or REJECT followed by a micro-reason (≤12 words).
 
-Guidelines:
-- KEEP: Security vulnerabilities, performance issues, logic errors, architectural problems
-- REJECT: Formatting, basic error handling suggestions, generic comments, style preferences
-- REJECT: Issues that seem to be made up or don't match the actual code
+KEEP   → security flaw, correctness bug, significant performance/architectural problem, severe maintainability risk
+REJECT → stylistic preference, formatting nit, generic best-practice, low impact, hallucination
 
-Issues to evaluate:
+OUTPUT FORMAT (no extra text)
+<index>. KEEP|REJECT - <micro reason>
+Example:
+1. KEEP - potential SQL injection
+2. REJECT - naming preference only
+
+ISSUES
+------
 ${issues
   .map(
     (issue, index) => `
@@ -185,7 +189,7 @@ ${index + 1}. Issue: ${issue.issue}
   )
   .join('\n')}
 
-Respond in format: "1. KEEP/REJECT - reason"
+Remember: No commentary before or after the numbered list.
 `;
 
     const evaluation =
