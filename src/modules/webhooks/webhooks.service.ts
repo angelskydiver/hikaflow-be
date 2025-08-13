@@ -525,6 +525,10 @@ export class WebhooksService {
         decryptedToken,
       );
 
+      if (prCommits.length === 0) {
+        throw new Error('No commits found for the PR');
+      }
+
       const lastPrCommit = prCommits[prCommits.length - 1].sha;
 
       const prInfo = {
