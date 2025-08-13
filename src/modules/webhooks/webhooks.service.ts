@@ -187,7 +187,10 @@ export class WebhooksService {
       const prCommits = await fetchPrCommits(
         data.pull_request.commits_url,
         decryptedToken,
-      ); // we need to use Codedeno github token here.
+      );
+      if (prCommits.length === 0) {
+        throw new Error('No commits found for the PR');
+      }
       const lastPrCommit = prCommits[prCommits.length - 1].sha;
       // // commitInfo()
 
@@ -434,7 +437,7 @@ export class WebhooksService {
             content: {
               raw: `${issue.issue} - Priority: ${issue.priority}\n${issue.reason}`,
             },
-            inline: { to: parseInt(issue.line), path: issue.file },
+            inline: { to: Number(issue.line) || 0, path: issue.file },
           },
         }),
       );
@@ -608,7 +611,9 @@ export class WebhooksService {
         repoSlug: data.repository.name,
         prNumber: data.pullrequest.id,
       });
-
+      if (prCommits.length === 0) {
+        throw new Error('No commits found for the PR');
+      }
       const lastPrCommit = prCommits[prCommits.length - 1].hash;
 
       const prInfo = {
@@ -679,9 +684,9 @@ export class WebhooksService {
         data.pull_request.commits_url,
         decryptedToken,
       );
-      // let prCommits = await fetchPrCommits(
-      //   'https://api.github.com/repos/mudassir693/mini-microservices-blog-app/pulls/22/commits',
-      // );
+      if (prCommits.length === 0) {
+        throw new Error('No commits found for the PR');
+      }
       const lastPrCommit = prCommits[prCommits.length - 1].sha;
       const prInfo = {
         owner: data.repository.owner.login,
@@ -935,6 +940,10 @@ export class WebhooksService {
         repoSlug: data.repository.name,
         prNumber: data.pullrequest.id,
       });
+
+      if (prCommits.length === 0) {
+        throw new Error('No commits found for the PR');
+      }
 
       const lastPrCommit = prCommits[prCommits.length - 1].hash;
 
