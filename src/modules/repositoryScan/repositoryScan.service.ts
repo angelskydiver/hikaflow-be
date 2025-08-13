@@ -185,6 +185,7 @@ export class RepositoryScanService {
         where: { name: repositoryName },
         include: {
           repositorySettings: true,
+          organization: true, // Include organization to get organizationId
         },
         orderBy: { createdAt: 'desc' },
       });
@@ -455,6 +456,9 @@ export class RepositoryScanService {
       let { codeIssues } = await deepseekAI.deepAnalyzeCodeFilesForIssues(
         { file: fileChanges.name, content: withLineNumbers },
         repository.repositorySettings,
+        this.prisma,
+        repository.organizationId,
+        true,
       );
 
       codeIssues = (

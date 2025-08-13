@@ -1348,6 +1348,7 @@ export class WebhooksService {
         where: { id: prInfo.repositoryId },
         include: {
           repositorySettings: true,
+          organization: true, // Include organization to get organizationId
         },
       });
 
@@ -1378,6 +1379,9 @@ export class WebhooksService {
                 await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(
                   changes,
                   repository?.repositorySettings || [],
+                  this._prismaService,
+                  repository?.organizationId,
+                  false,
                 );
               return {
                 codeIssues: AiResponse.codeIssues,
@@ -2049,6 +2053,7 @@ ${issue.reason}`;
             where: { id: prInfo.repositoryId },
             include: {
               repositorySettings: true,
+              organization: true, // Include organization to get organizationId
             },
           }),
         ]);
@@ -2084,6 +2089,9 @@ ${issue.reason}`;
                 await deepSeekWrapper.deepAnalyzeCodeFilesForIssues(
                   changes,
                   repository?.repositorySettings || [],
+                  this._prismaService,
+                  repository?.organizationId,
+                  false,
                 );
               return {
                 codeIssues: AiResponse.codeIssues,
