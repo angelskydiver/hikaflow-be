@@ -140,6 +140,10 @@ export class WebhooksService {
       },
     });
 
+    if (!repository) {
+      throw new Error(`Repository not found: ${data.repository.id.toString()}`);
+    }
+
     const organization = await this._prismaService.organization.findFirst({
       where: {
         id: repository.organizationId,
@@ -184,7 +188,6 @@ export class WebhooksService {
       const { decryptedToken } =
         await this._accountCredentialByRepository(data);
 
-      // , accountGithubCredentials.decryptedToken
       const prCommits = await fetchPrCommits(
         data.pull_request.commits_url,
         decryptedToken,
@@ -410,7 +413,6 @@ export class WebhooksService {
         ];
       });
 
-      // Use Gemini to detect fixed comments based on latest changes (Bitbucket)
       const gemini = new Gemini();
       const fixedIds = await gemini.detectFixedComments({
         issues: currentComments.map((c) => ({

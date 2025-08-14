@@ -16,6 +16,7 @@ export class Gemini {
    * @returns Embedding array
    */
   async getEmbeddings(text: string): Promise<number[]> {
+    let EMBEDDING_DIMENSION = 768;
     try {
       // Create embedding model
       const model = this.genAI.getGenerativeModel({ model: 'embedding-001' });
@@ -29,7 +30,7 @@ export class Gemini {
       console.error('Error generating embeddings:', error);
       // Return empty array on error, this is just a placeholder
       // In production, you should handle this better
-      return new Array(768).fill(0);
+      return new Array(EMBEDDING_DIMENSION).fill(0);
     }
   }
 
@@ -123,7 +124,6 @@ export class Gemini {
 
       // Third attempt: Use Gemini to repair the JSON
       const model = this.genAI.getGenerativeModel({
-        // model: 'gemini-1.5-pro',
         model: 'gemini-1.5-pro',
       });
 
@@ -161,19 +161,6 @@ Return ONLY the fixed JSON with no other text, explanations, or code formatting.
           'Failed to parse Gemini-fixed JSON:  ' + finalParseError,
         );
       }
-
-      // If all fails, return minimal structure
-      return {
-        summary: `File ${fileName || 'unknown'}`,
-        tags: ['UTILITY'],
-        functions: [],
-        classes: [],
-        components: [],
-        relations: {
-          imports: [],
-          exports: [],
-        },
-      };
     } catch (error) {
       console.error('JSON repair failed:', error);
       // Return minimal structure on failure
