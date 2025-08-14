@@ -16,6 +16,7 @@ export class Gemini {
    * @returns Embedding array
    */
   async getEmbeddings(text: string): Promise<number[]> {
+    let EMBEDDING_DIMENSION = 768;
     try {
       // Create embedding model
       const model = this.genAI.getGenerativeModel({ model: 'embedding-001' });
@@ -29,7 +30,7 @@ export class Gemini {
       console.error('Error generating embeddings:', error);
       // Return empty array on error, this is just a placeholder
       // In production, you should handle this better
-      return new Array(768).fill(0);
+      return new Array(EMBEDDING_DIMENSION).fill(0);
     }
   }
 
@@ -123,7 +124,6 @@ export class Gemini {
 
       // Third attempt: Use Gemini to repair the JSON
       const model = this.genAI.getGenerativeModel({
-        // model: 'gemini-1.5-pro',
         model: 'gemini-1.5-pro',
       });
 
@@ -161,19 +161,6 @@ Return ONLY the fixed JSON with no other text, explanations, or code formatting.
           'Failed to parse Gemini-fixed JSON:  ' + finalParseError,
         );
       }
-
-      // If all fails, return minimal structure
-      return {
-        summary: `File ${fileName || 'unknown'}`,
-        tags: ['UTILITY'],
-        functions: [],
-        classes: [],
-        components: [],
-        relations: {
-          imports: [],
-          exports: [],
-        },
-      };
     } catch (error) {
       console.error('JSON repair failed:', error);
       // Return minimal structure on failure
@@ -449,10 +436,10 @@ END OF PREVIOUS QUESTIONS
    * @returns AI response with references
    */
   async generateAnswerStream(
-    input: string, 
-    filesWithCode, 
+    input: string,
+    filesWithCode,
     previousQuestions?: string,
-    onChunk?: (chunk: string) => void
+    onChunk?: (chunk: string) => void,
   ) {
     let modelToUse = 'gemini-1.5-pro';
     let retryCount = 0;
@@ -532,7 +519,7 @@ END OF PREVIOUS QUESTIONS
           if (chunkText) {
             fullResponse += chunkText;
             buffer += chunkText;
-            
+
             // Send smaller chunks for smoother streaming
             if (buffer.length >= 20 || buffer.includes('\n')) {
               // Send the buffered content as a smaller chunk
@@ -552,14 +539,18 @@ END OF PREVIOUS QUESTIONS
         // Create the final response object
         const finalResponse = {
           response: {
-            candidates: [{
-              content: {
-                parts: [{
-                  text: fullResponse
-                }]
-              }
-            }]
-          }
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: fullResponse,
+                    },
+                  ],
+                },
+              },
+            ],
+          },
         };
 
         return {
@@ -615,7 +606,9 @@ END OF PREVIOUS QUESTIONS
 
         // If we've exhausted retries, throw the last error
         if (retryCount > MAX_RETRIES) {
-          console.error('All retry attempts exhausted for generateAnswerStream');
+          console.error(
+            'All retry attempts exhausted for generateAnswerStream',
+          );
           throw new Error(
             `Failed to generate streaming answer after ${MAX_RETRIES} retries: ${lastError?.message || 'Unknown error'}`,
           );
@@ -1687,6 +1680,141 @@ ${content}
       console.error('Error generating summary:', error);
       // Return a shortened version of the original as fallback
       return content.substring(0, 200) + (content.length > 200 ? '...' : '');
+    }
+  }
+
+  /**
+   * Analyze PR issues against latest commit changes and determine which comments are fixed.
+   * Returns an array of comment IDs that should be marked as OUTDATED/RESOLVED.
+   */
+  async detectFixedComments(input: {
+    issues: Array<{
+      id: string;
+      file: string;
+      line: number;
+      content: string;
+      issue?: string;
+      reason?: string;
+    }>;
+    changes: Array<{
+      fileName: string;
+      lineNumber: number;
+      content: string;
+      type?: string;
+    }>;
+  }): Promise<string[]> {
+    console.log('issues: ', input.issues);
+    console.log('changes: ', input.changes);
+
+    try {
+      if (
+        !input ||
+        !Array.isArray(input.issues) ||
+        !Array.isArray(input.changes)
+      ) {
+        return [];
+      }
+
+      // Group changes by file and compress content to keep prompt compact
+      const groupedChanges: Record<
+        string,
+        Array<{ lineNumber: number; content: string; type?: string }>
+      > = {};
+      for (const change of input.changes) {
+        if (!groupedChanges[change.fileName])
+          groupedChanges[change.fileName] = [];
+        groupedChanges[change.fileName].push({
+          lineNumber: change.lineNumber,
+          content: change.content?.slice(0, 1000) || '',
+          type: change.type,
+        });
+      }
+
+      // Sort and trim changes per file to a reasonable size
+      for (const file of Object.keys(groupedChanges)) {
+        groupedChanges[file] = groupedChanges[file]
+          .sort((a, b) => a.lineNumber - b.lineNumber)
+          .slice(0, 500); // cap per file
+      }
+
+      // Batch issues to avoid token limits
+      const BATCH_SIZE = 25;
+      const fixedIds: string[] = [];
+
+      for (let i = 0; i < input.issues.length; i += BATCH_SIZE) {
+        const batch = input.issues.slice(i, i + BATCH_SIZE);
+
+        const model = this.genAI.getGenerativeModel({
+          model: 'gemini-1.5-pro',
+        });
+
+        const prompt = `You are an expert code reviewer. Your task is to determine which PR review comments are now FIXED based on the latest commit changes.
+
+Definition of FIXED:
+- The underlying issue described in the review comment has been addressed.
+- This can be by removing the problematic code, modifying it so the issue no longer applies, or replacing it with a correct implementation.
+- For example, null pointer risks must be mitigated with proper checks, hardcoded values must be replaced with configurable constants, and duplicate logic must be refactored into a single place.
+
+NOT FIXED if:
+- The problematic code still exists in essentially the same form.
+- The issue was simply moved or re-added elsewhere.
+- The root cause described in the comment remains unresolved (even if unrelated changes were made nearby).
+- In cases of duplication (DRY violations), having the same logic still repeated in multiple places means NOT FIXED.
+
+You must:
+- Check each issue independently.
+- Only return IDs you are certain are fixed.
+- If uncertain, treat it as NOT FIXED.
+
+Return ONLY a strict JSON array of IDs of the fixed comments, no markdown, no extra text. Example: ["id1","id2"].
+
+ISSUES:
+${JSON.stringify(
+  batch.map((c) => ({
+    id: c.id,
+    file: c.file,
+    line: c.line,
+    content: (c.content || '').slice(0, 800),
+    issue: (c.issue || '').slice(0, 400),
+    reason: (c.reason || '').slice(0, 400),
+  })),
+)}
+
+LATEST_CHANGES_BY_FILE:
+${JSON.stringify(groupedChanges)}
+`;
+
+        console.log('final prompt: ', prompt);
+
+        const result = await model.generateContent([prompt]);
+        const text = result.response.text().trim();
+
+        let ids: string[] = [];
+        try {
+          ids = this.extractCleanJSON(text);
+        } catch (_) {
+          // Fallback: try naive JSON parse
+          try {
+            ids = JSON.parse(text);
+          } catch (e) {
+            ids = [];
+          }
+        }
+
+        // Validate IDs are strings
+        if (Array.isArray(ids)) {
+          for (const id of ids) {
+            if (typeof id === 'string') fixedIds.push(id);
+          }
+        }
+      }
+
+      // Deduplicate
+      console.log('fixedIds: ', Array.from(new Set(fixedIds)));
+      return Array.from(new Set(fixedIds));
+    } catch (error) {
+      console.error('detectFixedComments error:', error);
+      return [];
     }
   }
 }
