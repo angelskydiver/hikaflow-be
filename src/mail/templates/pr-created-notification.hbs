@@ -4,121 +4,36 @@
     <meta name='viewport' content='width=device-width, initial-scale=1.0' />
     <title>New Pull Request Created</title>
     <style>
-      body { 
-        font-family: 'Nunito Sans', 'Segoe UI', Arial, sans-serif; 
-        margin: 0; 
-        padding: 0;
-        background-color: #121212; 
-        color: #b3b3b3; 
-      } 
-      .container { 
-        max-width: 600px; 
-        margin: 20px auto; 
-        background: #282828; 
-        border-radius: 16px;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); 
-        overflow: hidden; 
-      } 
-      .banner { 
-        background: linear-gradient(135deg, #4FC372, #6CD591); 
-        padding: 32px; 
-        text-align: left; 
-      } 
-      .logo { 
-        font-size: 32px; 
-        font-weight: bold; 
-        color: #ffffff; 
-        margin: 0; 
-        letter-spacing: 1px; 
-      }
-      .wrapper { 
-        padding: 40px; 
-      } 
-      h1 { 
-        color: #4FC372; 
-        margin-bottom: 24px;
-        font-size: 28px; 
-        font-weight: 600; 
-      } 
-      p { 
-        color: #b3b3b3; 
-        line-height: 1.6;
-        margin-bottom: 16px; 
-        font-size: 16px; 
-      } 
-      .pr-info { 
-        background: #181818; 
-        padding: 32px; 
-        border-radius: 12px; 
-        margin: 32px 0; 
-        border: 1px solid #535353; 
-      } 
-      .pr-meta { 
-        display: grid; 
-        grid-template-columns: repeat(2, 1fr); 
-        gap: 20px; 
-        margin-bottom: 16px; 
-      } 
-      .meta-item { 
-        background: #282828; 
-        padding: 20px; 
-        border-radius: 10px; 
-        border: 1px solid #535353; 
-        transition: all 0.3s ease; 
-      } 
-      .meta-item:hover { 
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(79, 195, 114, 0.1); 
-      } 
-      .meta-label { 
-        font-size: 14px; 
-        color: #7C8B95; 
-        margin-bottom: 8px; 
-        font-weight: 500; 
-      } 
-      .meta-value { 
-        font-size: 16px; 
-        font-weight: 600; 
-        color: #b3b3b3; 
-      }
-      .button { 
-        display: inline-block; 
-        padding: 14px 32px; 
-        font-size: 16px; 
-        color: #ffffff; 
-        background: linear-gradient(135deg, #4FC372, #6CD591);
-        text-decoration: none; 
-        border-radius: 30px;
-        margin-top: 24px; 
-        transition: all 0.3s ease; 
-        font-weight: 500; 
-        text-align: center; 
-      } 
-      .button:hover { 
-        transform: translateY(-2px); 
-        box-shadow: 0 6px 20px rgba(79, 195, 114, 0.3); 
-        background: linear-gradient(135deg, #6CD591, #4FC372);
-      } 
-      .footer { 
-        margin-top: 40px; 
-        padding-top: 20px; 
-        border-top: 1px solid #535353; 
-        text-align: left;
-        font-size: 13px; 
-        color: #7C8B95; 
-      }
-      .status-badge {
-        display: inline-block;
-        padding: 6px 12px;
-        background: rgba(79, 195, 114, 0.2);
-        color: #4FC372;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        margin-bottom: 16px;
-      }
+      body { font-family: 'Nunito Sans', 'Segoe UI', Arial, sans-serif; margin:
+      0; padding: 0; background-color: #121212; color: #b3b3b3; } .container {
+      max-width: 600px; margin: 20px auto; background: #282828; border-radius:
+      16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); overflow: hidden; }
+      .banner { background: linear-gradient(135deg, #4FC372, #6CD591); padding:
+      32px; text-align: left; } .logo { font-size: 32px; font-weight: bold;
+      color: #ffffff; margin: 0; letter-spacing: 1px; } .wrapper { padding:
+      40px; } h1 { color: #4FC372; margin-bottom: 24px; font-size: 28px;
+      font-weight: 600; } p { color: #b3b3b3; line-height: 1.6; margin-bottom:
+      16px; font-size: 16px; } .pr-info { background: #181818; padding: 32px;
+      border-radius: 12px; margin: 32px 0; border: 1px solid #535353; } .pr-meta
+      { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;
+      margin-bottom: 16px; } .meta-item { background: #282828; padding: 20px;
+      border-radius: 10px; border: 1px solid #535353; transition: all 0.3s ease;
+      } .meta-item:hover { transform: translateY(-2px); box-shadow: 0 4px 12px
+      rgba(79, 195, 114, 0.1); } .meta-label { font-size: 14px; color: #7C8B95;
+      margin-bottom: 8px; font-weight: 500; } .meta-value { font-size: 16px;
+      font-weight: 600; color: #b3b3b3; } .button { display: inline-block;
+      padding: 14px 32px; font-size: 16px; color: #ffffff; background:
+      linear-gradient(135deg, #4FC372, #6CD591); text-decoration: none;
+      border-radius: 30px; margin-top: 24px; transition: all 0.3s ease;
+      font-weight: 500; text-align: center; } .button:hover { transform:
+      translateY(-2px); box-shadow: 0 6px 20px rgba(79, 195, 114, 0.3);
+      background: linear-gradient(135deg, #6CD591, #4FC372); } .footer {
+      margin-top: 40px; padding-top: 20px; border-top: 1px solid #535353;
+      text-align: left; font-size: 13px; color: #7C8B95; } .status-badge {
+      display: inline-block; padding: 6px 12px; background: rgba(79, 195, 114,
+      0.2); color: #4FC372; border-radius: 20px; font-size: 12px; font-weight:
+      600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom:
+      16px; }
     </style>
   </head>
   <body>
@@ -130,7 +45,10 @@
         <div class='status-badge'>🆕 New PR</div>
         <h1>New Pull Request Created</h1>
         <p>Hi <strong>{{adminName}}</strong>,</p>
-        <p>A new pull request has been created in <strong>{{repositoryName}}</strong> by <strong>{{authorName}}</strong>.</p>
+        <p>A new pull request has been created in
+          <strong>{{repositoryName}}</strong>
+          by
+          <strong>{{authorName}}</strong>.</p>
 
         <div class='pr-info'>
           <div class='pr-meta'>
@@ -156,8 +74,10 @@
         <a href='{{prUrl}}' class='button'>Review Pull Request</a>
 
         <div class='footer'>
-          <p>This is an automated message from Codedeno. Please do not reply to this email.</p>
-          <p>You can manage your notification preferences in your account settings.</p>
+          <p>This is an automated message from Hikaflow. Please do not reply to
+            this email.</p>
+          <p>You can manage your notification preferences in your account
+            settings.</p>
         </div>
       </div>
     </div>
