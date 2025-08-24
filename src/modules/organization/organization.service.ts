@@ -317,7 +317,8 @@ export class OrganizationService {
     accountId: string,
   ) {
     try {
-      const { repositoryId, daysLimit = 30 } = query;
+      const { repositoryId, daysLimit = 90 } = query;
+
       const startDate = new Date(Date.now() - daysLimit * 24 * 60 * 60 * 1000);
 
       // Verify user has access to organization
@@ -577,6 +578,41 @@ export class OrganizationService {
     } catch (error) {
       console.log(error.message);
       throw new BadRequestException(error.message);
+    }
+  }
+
+  async getOrganizationOwnerEmail(
+    organizationId: string,
+  ): Promise<string | null> {
+    try {
+      const organizationAccount =
+        await this._prismaService.organizationAccounts.findFirst({
+          where: {
+            organizationId,
+            role: 'ADMIN', // Assuming the 'ADMIN' role represents the owner
+          },
+          include: {
+            account: {
+              include: {
+                user: true,
+              },
+            },
+          },
+        });
+
+      if (
+        !organizationAccount ||
+        !organizationAccount.account ||
+        !organizationAccount.account.user
+      ) {
+        return null; // Or throw a NotFoundException if you prefer
+      }
+
+      return organizationAccount.account.user.email;
+    } catch (error) {
+      console.error('Error retrieving organization owner email:', error);
+      // Handle the error appropriately, e.g., throw an exception or return a default value
+      throw error;
     }
   }
 }

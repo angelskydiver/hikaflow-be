@@ -1,15 +1,100 @@
 import { MailerService } from '@nestjs-modules/mailer';
+import { HandlebarsAdapter } from '@nestjs-modules/mailer/dist/adapters/handlebars.adapter';
 import { Injectable, Logger } from '@nestjs/common';
+import { Worker } from 'bullmq';
+import { join } from 'path';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
+  private paymentWorker: Worker;
 
   constructor(
     private mailerService: MailerService,
     private prismaService: PrismaService,
-  ) {}
+  ) {
+    // Create a separate MailerService instance for the payment worker
+    // to ensure it uses the correct template directory
+    const paymentMailerService = new MailerService(
+      {
+        transport: {
+          host: process.env.MAILER_HOST,
+          secure: false,
+          auth: {
+            user: process.env.MAILER_USER_EMAIL,
+            pass: process.env.MAILER_USER_PASSWORD,
+          },
+        },
+        defaults: {
+          from: `"No Reply" <${process.env.MAILER_USER_EMAIL}>`,
+        },
+        template: {
+          dir: join(process.cwd(), 'dist', 'src', 'mail', 'templates'),
+          adapter: new HandlebarsAdapter(),
+          options: {
+            strict: true,
+          },
+        },
+      },
+      null,
+    );
+    this.paymentWorker = new Worker(
+      'payment-events',
+      async (job) => {
+        this.logger.log(job.name, job.data);
+        if (job.name === 'payment-success') {
+          // Send payment success email using the dedicated mailer service
+          await this.sendEmailWithRetry({
+            to: job.data.email,
+            subject: '[Codedeno] Payment Successful',
+            template: 'payment-success',
+            context: job.data,
+          }, 3, paymentMailerService);
+        } else if (job.name === 'payment-failure') {
+          // Send payment failure email using the dedicated mailer service
+          await this.sendEmailWithRetry({
+            to: job.data.email,
+            subject: '[Codedeno] Payment Failed',
+            template: 'payment-failure',
+            context: job.data,
+          }, 3, paymentMailerService);
+        } else if (job.name === 'verification-complete') {
+          // Send verification email using the dedicated mailer service
+          await this.sendEmailWithRetry({
+            to: job.data.email,
+            subject: '[Codedeno] Verification Complete',
+            template: 'verification-complete',
+            context: job.data,
+          }, 3, paymentMailerService);
+        } else if (job.name === 'reversal-complete') {
+          // Send reversal email using the dedicated mailer service
+          await this.sendEmailWithRetry({
+            to: job.data.email,
+            subject:
+              '[Codedeno] Account Balance Verification Reversal Complete',
+            template: 'reversal-complete',
+            context: job.data,
+          }, 3, paymentMailerService);
+        }
+      },
+      {
+        concurrency: 10,
+        connection: {
+          host: 'localhost',
+          port: parseInt(process.env.REDIS_PORT),
+        },
+      }, // Configure the message queue connection (adjust as needed)
+    );
+
+    this.paymentWorker.on('completed', (job) => {
+      this.logger.log(`${job.name} has completed!`);
+    });
+
+    this.paymentWorker.on('failed', (job, err) => {
+      this.logger.error(`${job.name} has failed with ${err.message}`);
+    });
+  }
 
   private async sendEmailWithRetry(
     options: {
@@ -20,29 +105,43 @@ export class MailService {
       from?: string;
     },
     retries = 3,
+    mailerService?: MailerService,
   ): Promise<boolean> {
     try {
-      await this.mailerService.sendMail({
+      this.logger.log(
+        `Attempting to send email with template: ${options.template}`,
+      );
+      this.logger.log(
+        `Email context: ${JSON.stringify(options.context, null, 2)}`,
+      );
+
+      const serviceToUse = mailerService || this.mailerService;
+      await serviceToUse.sendMail({
         to: options.to,
         subject: options.subject,
         template: options.template,
         context: options.context,
         from: options.from || '"Hikaflow" <noreply@hikaflow.com>',
       });
+
+      this.logger.log(`Email sent successfully to: ${options.to}`);
       return true;
     } catch (error) {
       this.logger.error(`Failed to send email: ${error.message}`, error.stack);
+      this.logger.error(`Template: ${options.template}, To: ${options.to}`);
+
       if (retries > 0) {
         this.logger.log(
           `Retrying email send... (${retries} attempts remaining)`,
         );
         await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second before retry
-        return this.sendEmailWithRetry(options, retries - 1);
+        return this.sendEmailWithRetry(options, retries - 1, mailerService);
       }
       throw error;
     }
   }
 
+  // need to remove. not
   async rejectCreatorEmail(data) {
     try {
       await this.mailerService.sendMail({
@@ -73,6 +172,7 @@ export class MailService {
     }
   }
 
+  // need to remove.
   async updateMeetingStatusEmail(data) {
     await this.mailerService.sendMail({
       to: data.to,
@@ -83,6 +183,7 @@ export class MailService {
     });
   }
 
+  // need to remove.
   async addCommentToMeetingEmail(data) {
     await this.mailerService.sendMail({
       to: data.to,
@@ -93,6 +194,7 @@ export class MailService {
     });
   }
 
+  // need to remove.
   async sendMeetingEmail(data) {
     await this.mailerService.sendMail({
       to: data.Email,
@@ -103,6 +205,7 @@ export class MailService {
     });
   }
 
+  // need to remove.
   async sendDiscussionReminder(user: any, token: string = '') {
     const url = `example.com/auth/confirm?token=${token}`;
 
@@ -120,6 +223,7 @@ export class MailService {
     });
   }
 
+  // need to remove.
   async sendDiscussionConfirmation(user: any) {
     await this.mailerService.sendMail({
       to: user.email,
@@ -242,6 +346,41 @@ export class MailService {
     }
   }
 
+  async prUpdatedNotification(data: {
+    email: string;
+    adminName: string;
+    repositoryName: string;
+    authorName: string;
+    prUrl: string;
+    prNumber: string;
+    changesSummary?: {
+      filesChanged: number;
+      additions: number;
+      deletions: number;
+    };
+  }) {
+    try {
+      await this.sendEmailWithRetry({
+        to: data.email,
+        subject: `[Hikaflow] 🔄 Pull Request Updated`,
+        template: './pr-updated-notification',
+        context: {
+          adminName: data.adminName,
+          repositoryName: data.repositoryName,
+          authorName: data.authorName,
+          prUrl: data.prUrl,
+          prNumber: data.prNumber,
+          changesSummary: data.changesSummary,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to send PR updated notification: ${error.message}`,
+      );
+      // Don't throw to prevent disrupting the PR workflow
+    }
+  }
+
   async sendRegressionTestingNotification(data: {
     accountId: string;
     authorName: string;
@@ -331,6 +470,143 @@ export class MailService {
         `Failed to send repository scan notification: ${error.message}`,
       );
       // Don't throw to prevent disrupting the scan workflow
+    }
+  }
+
+  // Payment-related email methods
+  async sendPaymentSuccessEmail(data: {
+    email: string;
+    userName: string;
+    transactionId: string;
+    amount: string;
+    paymentMethod: string;
+    paymentDate: string;
+    planDetails?: {
+      name: string;
+      description: string;
+    };
+    dashboardUrl: string;
+  }) {
+    try {
+      await this.sendEmailWithRetry({
+        to: data.email,
+        subject: '[Codedeno] Payment Successful',
+        template: 'payment-success',
+        context: data,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to send payment success email: ${error.message}`,
+      );
+      // Don't throw to prevent disrupting the payment workflow
+    }
+  }
+
+  async sendPaymentFailureEmail(data: {
+    email: string;
+    userName: string;
+    transactionId: string;
+    amount: string;
+    paymentMethod: string;
+    paymentDate: string;
+    errorMessage: string;
+    planDetails?: {
+      name: string;
+      description: string;
+    };
+    retryPaymentUrl: string;
+    supportUrl: string;
+  }) {
+    try {
+      await this.sendEmailWithRetry({
+        to: data.email,
+        subject: '[Codedeno] Payment Failed',
+        template: 'payment-failure',
+        context: data,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to send payment failure email: ${error.message}`,
+      );
+      // Don't throw to prevent disrupting the payment workflow
+    }
+  }
+
+  async sendVerificationCompleteEmail(data: {
+    email: string;
+    userName: string;
+    verificationType: string;
+    verificationDate: string;
+    verificationDetails?: string;
+    dashboardUrl: string;
+  }) {
+    try {
+      await this.sendEmailWithRetry({
+        to: data.email,
+        subject: '[Codedeno] Verification Complete',
+        template: 'verification-complete',
+        context: data,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to send verification complete email: ${error.message}`,
+      );
+      // Don't throw to prevent disrupting the verification workflow
+    }
+  }
+
+  async sendReversalCompleteEmail(data: {
+    email: string;
+    userName: string;
+    reversalId: string;
+    originalAmount: string;
+    reversalDate: string;
+    reversalDetails?: string;
+    nextSteps?: string;
+    dashboardUrl: string;
+  }) {
+    try {
+      await this.sendEmailWithRetry({
+        to: data.email,
+        subject: '[Codedeno] Account Balance Verification Reversal Complete',
+        template: 'reversal-complete',
+        context: data,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to send reversal complete email: ${error.message}`,
+      );
+      // Don't throw to prevent disrupting the reversal workflow
+    }
+  }
+
+  // Test method to verify template compilation
+  async testPaymentEmail() {
+    try {
+      const testData = {
+        email: 'test@example.com',
+        userName: 'Test User',
+        transactionId: 'TEST-123',
+        amount: '10.00',
+        paymentMethod: 'Credit Card',
+        paymentDate: new Date().toISOString(),
+        planDetails: {
+          name: 'Test Plan',
+          description: 'Test Plan Description',
+        },
+        dashboardUrl: 'http://localhost:3001/dashboard',
+      };
+
+      this.logger.log('Testing payment success email template...');
+      await this.sendEmailWithRetry({
+        to: testData.email,
+        subject: '[Codedeno] Test Payment Email',
+        template: 'payment-success',
+        context: testData,
+      });
+      this.logger.log('Test email sent successfully!');
+    } catch (error) {
+      this.logger.error(`Test email failed: ${error.message}`, error.stack);
     }
   }
 }

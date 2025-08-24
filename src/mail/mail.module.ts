@@ -38,7 +38,7 @@ handlebars.registerHelper('eq', function (arg1, arg2) {
           from: `"No Reply" <${config.get('MAILER_USER_EMAIL')}>`, // Use MAILER_USER_EMAIL here
         },
         template: {
-          dir: join(__dirname, 'templates'),
+          dir: join(process.cwd(), 'dist', 'src', 'mail', 'templates'),
           adapter: new HandlebarsAdapter(),
           options: {
             strict: true,
