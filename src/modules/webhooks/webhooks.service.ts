@@ -220,6 +220,9 @@ export class WebhooksService {
         where: { prUrl: data.pull_request.url },
       });
 
+      if (!pullRequest) {
+        throw new Error('Pull request not found');
+      }
       const currentComments = await this._prismaService.comment.findMany({
         where: {
           prId: pullRequest.id,

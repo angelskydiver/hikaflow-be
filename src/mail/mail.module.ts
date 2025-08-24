@@ -17,15 +17,6 @@ handlebars.registerHelper('eq', function (arg1, arg2) {
   imports: [
     MailerModule.forRootAsync({
       useFactory: async (config: ConfigService) => ({
-        // transport: {
-        //   host: config.get('MAILER_HOST'),
-        //   port: config.get('MAILER_PORT'), // Add this line
-        //   secure: config.get('MAILER_ENCRYPTION') === 'ssl', // true for 465, false for other ports
-        //   auth: {
-        //     user: config.get('MAILER_USER_EMAIL'),
-        //     pass: config.get('MAILER_USER_PASSWORD'),
-        //   },
-        // },
         transport: {
           host: config.get('MAILER_HOST'),
           secure: false,
