@@ -8,6 +8,7 @@ import { CommentStatus, CommentType, PrTrackerStatus } from '@prisma/client';
 import * as gptTokenizer from 'gpt-3-encoder';
 import { shouldAnalyze } from 'src/config/constants/unnecessary.files.constant';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
+import { Gemini } from 'src/config/helpers/ai/gemini.ai.helper';
 import {
   commentBitbucketPr,
   commitInfoBitbucket,
@@ -139,6 +140,10 @@ export class WebhooksService {
       },
     });
 
+    if (!repository) {
+      throw new Error(`Repository not found: ${data.repository.id.toString()}`);
+    }
+
     const organization = await this._prismaService.organization.findFirst({
       where: {
         id: repository.organizationId,
@@ -183,7 +188,6 @@ export class WebhooksService {
       const { decryptedToken, accountId } =
         await this._accountCredentialByRepository(data);
 
-      // , accountGithubCredentials.decryptedToken
       const prCommits = await fetchPrCommits(
         data.pull_request.commits_url,
         decryptedToken,
@@ -284,9 +288,23 @@ export class WebhooksService {
         ];
       });
 
-      // const outdatedComments = [];
+      // Use Gemini to detect fixed comments based on latest changes
+      const gemini = new Gemini();
+      const fixedIds = await gemini.detectFixedComments({
+        issues: currentComments.map((c) => ({
+          id: c.id,
+          file: c.file,
+          line: Number(c.line) || 0,
+          content: c.content || '',
+          issue: c.issue || '',
+          reason: c.reason || '',
+        })),
+        changes,
+      });
 
-      // this._commentService.updateComments(outdatedComments);
+      if (fixedIds.length > 0) {
+        await this._commentService.updateComments(fixedIds);
+      }
 
       const deepSeekWrapper = new DeepSeek();
       const AiResponse = await deepSeekWrapper.analyzeCodeFilesForIssues(
@@ -421,12 +439,6 @@ export class WebhooksService {
         },
       });
 
-      const currentChangesMap = {};
-
-      currentComments.forEach((data) => {
-        currentChangesMap[`${data.file}-${data.line}`] = data;
-      });
-
       let changes = [];
       diffChanges.files.forEach((file, index) => {
         changes = [
@@ -437,21 +449,28 @@ export class WebhooksService {
               lineNumber: change.line + i,
               content: change.content,
               fileName: file,
+              type: 'addition',
             }))
             .flat(),
         ];
       });
 
-      const outdatedComments = [];
-      changes.forEach((data) => {
-        if (currentChangesMap[`${data.fileName}-${data.lineNumber}`]?.id) {
-          outdatedComments.push(
-            currentChangesMap[`${data.fileName}-${data.lineNumber}`].id,
-          );
-        }
+      const gemini = new Gemini();
+      const fixedIds = await gemini.detectFixedComments({
+        issues: currentComments.map((c) => ({
+          id: c.id,
+          file: c.file,
+          line: Number(c.line) || 0,
+          content: c.content || '',
+          issue: c.issue || '',
+          reason: c.reason || '',
+        })),
+        changes,
       });
 
-      this._commentService.updateComments(outdatedComments);
+      if (fixedIds.length > 0) {
+        await this._commentService.updateComments(fixedIds);
+      }
 
       const deepSeekWrapper = new DeepSeek();
       // TODO need to use flags from DB
