@@ -17,7 +17,6 @@ import { PrismaService } from 'src/prisma/prisma.service';
 const prisma = new PrismaService();
 const accountCredentialService = new AccountCredentialService(prisma);
 const commentService = new CommentService(prisma);
-const billingService = new BillingService(prisma, new ConfigService());
 const configService = new ConfigService();
 const mailerService = new MailerService(
   {
@@ -43,6 +42,7 @@ const mailerService = new MailerService(
   null,
 );
 const mailService = new MailService(mailerService, prisma);
+const billingService = new BillingService(prisma, configService, mailService);
 
 // Initialize repository scan service with required dependencies
 const repositoryScanService = new RepositoryScanService(

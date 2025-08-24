@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InvoiceStatus, SubscriptionPlanType } from '@prisma/client';
+import { Queue } from 'bullmq';
+import { MailService } from 'src/mail/mail.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import Stripe from 'stripe';
 import { DiscountService } from '../discount/discount.service';
@@ -31,10 +33,12 @@ import {
 export class BillingService {
   private stripe: Stripe;
   private discountService: DiscountService;
+  private paymentQueue: Queue;
 
   constructor(
     private readonly _prismaService: PrismaService,
     private readonly _configService: ConfigService,
+    private readonly _mailService: MailService,
   ) {
     // Initialize Stripe with your secret key
     this.stripe = new Stripe(
@@ -43,9 +47,22 @@ export class BillingService {
         apiVersion: '2023-10-16', // Use the latest API version
       },
     );
-
+    console.log(
+      'this._configService.get<number>(REDIS_PORT): ',
+      this._configService.get<number>('REDIS_PORT'),
+    );
     // Initialize DiscountService
     this.discountService = new DiscountService(this._prismaService);
+    this.paymentQueue = new Queue('payment-events', {
+      connection: {
+        host: '127.0.0.1',
+        port: Number(this._configService.get<number>('REDIS_PORT')),
+      },
+      defaultJobOptions: {
+        removeOnComplete: true,
+        removeOnFail: 100,
+      },
+    });
   }
 
   // ================== PRICING PLAN METHODS ==================
@@ -987,6 +1004,7 @@ export class BillingService {
           subscription: {
             include: {
               organization: true,
+              pricingPlan: true,
             },
           },
         },
@@ -996,6 +1014,7 @@ export class BillingService {
         throw new NotFoundException('Invoice not found');
       }
 
+      console.log('check post 08.1: ', invoice);
       if (invoice.status === InvoiceStatus.PAID) {
         throw new BadRequestException('Invoice already paid');
       }
@@ -1017,7 +1036,7 @@ export class BillingService {
             stripePaymentIntentId: 'DISCOUNT_COVERED', // Indicate this was covered by discount
           },
         });
-
+        console.log('Reactivate subscription if needed');
         // Reactivate subscription if needed
         await this._prismaService.subscription.updateMany({
           where: {
@@ -1037,7 +1056,6 @@ export class BillingService {
             isActive: true,
           },
         });
-
         return paidInvoice;
       }
 
@@ -1100,6 +1118,115 @@ export class BillingService {
           isActive: true,
         },
       });
+
+      let organizationAccount =
+        await this._prismaService.organizationAccounts.findFirst({
+          where: {
+            organizationId: invoice.subscription.organizationId,
+            role: 'ADMIN',
+          },
+          include: {
+            account: {
+              include: {
+                user: true,
+              },
+            },
+            organization: true,
+          },
+        });
+
+      if (
+        !organizationAccount ||
+        !organizationAccount.account ||
+        !organizationAccount.account.user
+      ) {
+        return null; // Or throw a NotFoundException if you prefer
+      }
+
+      let email = organizationAccount.account.user.email;
+      console.log('admin email: ', email);
+      console.log('check post 09: ', invoice);
+
+      if (paidInvoice.status === InvoiceStatus.PAID) {
+        // Get user details for email
+        const user = organizationAccount.account.user;
+
+        await this.paymentQueue.add('payment-success', {
+          email: email,
+          userName: user.firstName || user.email.split('@')[0],
+          transactionId: invoice.invoiceNumber,
+          amount: invoice.total.toFixed(2),
+          paymentMethod: 'Credit Card', // Default, can be enhanced
+          paymentDate: new Date().toLocaleString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZoneName: 'short',
+          }),
+          planDetails: {
+            name: invoice.subscription.pricingPlan.name,
+            description: `${invoice.subscription.pricingPlan.name} Plan`,
+          },
+          dashboardUrl: `${process.env.HIKAFLOW_PORTAL_URL}`,
+        });
+
+        // Also send email directly as fallback
+        try {
+          await this._mailService.sendPaymentSuccessEmail({
+            email: email,
+            userName: user.firstName || user.email.split('@')[0],
+            transactionId: invoice.invoiceNumber,
+            amount: invoice.total.toFixed(2),
+            paymentMethod: 'Credit Card',
+            paymentDate: new Date().toLocaleString('en-US', {
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              timeZoneName: 'short',
+            }),
+            planDetails: {
+              name: invoice.subscription.pricingPlan.name,
+              description: `${invoice.subscription.pricingPlan.name} Plan`,
+            },
+            dashboardUrl: `${process.env.HIKAFLOW_PORTAL_URL}`,
+          });
+        } catch (emailError) {
+          console.error(
+            'Failed to send payment success email directly:',
+            emailError,
+          );
+        }
+      } else {
+        // Handle payment failure
+        const user = organizationAccount.account.user;
+
+        await this.paymentQueue.add('payment-failure', {
+          email: email,
+          userName: user.firstName || user.email.split('@')[0],
+          transactionId: invoice.invoiceNumber,
+          amount: invoice.total.toFixed(2),
+          paymentMethod: 'Credit Card',
+          paymentDate: new Date().toLocaleString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZoneName: 'short',
+          }),
+          errorMessage: 'Payment was declined or failed to process',
+          planDetails: {
+            name: invoice.subscription.pricingPlan.name,
+            description: `${invoice.subscription.pricingPlan.name} Plan`,
+          },
+          retryPaymentUrl: `${process.env.HIKAFLOW_PORTAL_URL}/billing/retry/${invoice.id}`,
+          supportUrl: `${process.env.HIKAFLOW_PORTAL_URL}/support`,
+        });
+      }
 
       return paidInvoice;
     } catch (error) {

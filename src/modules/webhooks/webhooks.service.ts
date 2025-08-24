@@ -185,7 +185,7 @@ export class WebhooksService {
         return;
       }
 
-      const { decryptedToken } =
+      const { decryptedToken, accountId } =
         await this._accountCredentialByRepository(data);
 
       const prCommits = await fetchPrCommits(
@@ -220,12 +220,57 @@ export class WebhooksService {
         where: { prUrl: data.pull_request.url },
       });
 
+      if (!pullRequest) {
+        throw new Error('Pull request not found');
+      }
       const currentComments = await this._prismaService.comment.findMany({
         where: {
           prId: pullRequest.id,
           file: { in: fileChanges.map((data) => data.file) },
         },
       });
+
+      // Calculate changes summary for email notification
+      const changesSummary = {
+        filesChanged: fileChanges.length,
+        additions: fileChanges.reduce(
+          (total, file) =>
+            total +
+            file.changes.reduce(
+              (sum, change) =>
+                sum + (change.type === 'addition' ? change.lines.length : 0),
+              0,
+            ),
+          0,
+        ),
+        deletions: fileChanges.reduce(
+          (total, file) =>
+            total +
+            file.changes.reduce(
+              (sum, change) =>
+                sum + (change.type === 'deletion' ? change.lines.length : 0),
+              0,
+            ),
+          0,
+        ),
+      };
+
+      // Send PR updated notification
+      try {
+        await this.sendPrUpdatedNotification({
+          accountId: accountId,
+          authorName: data.pull_request.user.login,
+          prNumber: data.number.toString(),
+          repositoryInfo: {
+            repositoryName: data.repository.name,
+            repositoryId: data.repository.id.toString(),
+          },
+          changesSummary: changesSummary,
+        });
+      } catch (emailError) {
+        console.error('Failed to send PR updated notification:', emailError);
+        // Don't throw to prevent disrupting the PR workflow
+      }
 
       // let fileChanges = await synchronizePrPatches(data.pull_request.diff_url);
       let changes = [];
@@ -1829,6 +1874,69 @@ export class WebhooksService {
       await Promise.all(emailMapping);
 
       // TODO: send email
+    } catch (error) {
+      console.error(error.message);
+    }
+  }
+
+  async sendPrUpdatedNotification(data: {
+    accountId: string;
+    authorName: string;
+    prNumber: string;
+    repositoryInfo: { repositoryName: string; repositoryId: string };
+    changesSummary?: {
+      filesChanged: number;
+      additions: number;
+      deletions: number;
+    };
+  }) {
+    try {
+      const organizationalAccount =
+        await this._prismaService.organizationAccounts.findFirst({
+          where: {
+            role: 'ADMIN',
+            accountId: data.accountId,
+          },
+        });
+      if (!organizationalAccount) {
+        throw new Error('Account not found');
+      }
+      const orgAdmins = await this._prismaService.organizationAccounts.findMany(
+        {
+          where: {
+            organizationId: organizationalAccount.organizationId,
+            role: { not: 'MEMBER' },
+          },
+          include: {
+            account: true,
+          },
+        },
+      );
+      const organizationAdminsAccount = orgAdmins.map((data) => data.accountId);
+      const accounts = await this._prismaService.account.findMany({
+        where: {
+          id: { in: organizationAdminsAccount },
+        },
+        include: {
+          user: true,
+        },
+      });
+
+      const emailMapping = accounts
+        .filter((account) => account.user.sendEmail)
+        .map((account) => {
+          return this._mailService.prUpdatedNotification({
+            email: account.user.email,
+            adminName: account.user.firstName,
+            repositoryName: data.repositoryInfo.repositoryName,
+            authorName: data.authorName,
+            prUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/${data.repositoryInfo.repositoryId}/${data.accountId}`,
+            prNumber: data.prNumber,
+            changesSummary: data.changesSummary,
+          });
+        });
+
+      await Promise.all(emailMapping);
     } catch (error) {
       console.error(error.message);
     }
