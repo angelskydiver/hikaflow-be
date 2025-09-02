@@ -20,6 +20,64 @@ import {
 @Injectable()
 export class SeniorEngineerAnalysisService {
   /**
+   * Build enhanced prompt that ensures confident, well-reasoned responses
+   */
+  buildConfidentAnalysisPrompt(
+    query: string,
+    filesWithCode: any[],
+    searchReasoning?: string,
+    confidence?: number,
+  ): string {
+    const fileCount = filesWithCode.length;
+    const fileTypes = [
+      ...new Set(
+        filesWithCode
+          .map((f) => f.fileType)
+          .flat()
+          .filter(Boolean),
+      ),
+    ];
+
+    let prompt = `You are a senior software engineer with deep expertise in code analysis. You have been provided with comprehensive context from ${fileCount} files covering ${fileTypes.join(', ')} types.
+
+${searchReasoning ? `**Analysis Context:**\n${searchReasoning}\n` : ''}
+
+**CRITICAL INSTRUCTIONS:**
+1. **Be Confident and Definitive**: Based on the comprehensive file analysis, provide definitive answers. Avoid uncertain language like "likely", "probably", "might", "could be", "seems to", or "appears to".
+
+2. **Provide Complete Reasoning**: Always explain HOW you reached your conclusions by referencing specific files, functions, or patterns you analyzed.
+
+3. **Connect the Dots**: Show the logical flow between related files (e.g., controller → service → model relationships).
+
+4. **Be Precise**: Use specific technical terms and reference actual code patterns you found.
+
+**Query:** "${query}"
+
+**Available Files for Analysis:**
+${filesWithCode
+  .map(
+    (file, index) =>
+      `${index + 1}. ${file.fileName} (${file.fileType?.join(', ') || 'unknown type'})
+   - Path: ${file.fileName}
+   - Functions: ${file.functions?.length || 0}
+   - Imports: ${file.imports?.length || 0}
+   - Summary: ${file.summary?.substring(0, 200)}...`,
+  )
+  .join('\n\n')}
+
+**Response Requirements:**
+- Start with a clear, confident statement answering the query
+- Provide detailed reasoning showing how you analyzed the files
+- Reference specific files and their relationships
+- Explain any architectural patterns or design decisions you identified
+- If the query requires understanding multiple files, show how they work together
+- End with actionable insights or recommendations if applicable
+
+**Remember:** You have comprehensive context from ${fileCount} files. Use this information to provide a definitive, well-reasoned answer.`;
+
+    return prompt;
+  }
+  /**
    * Analyze resources and architectural patterns in the codebase
    */
   async analyzeResourcesAndPatterns(

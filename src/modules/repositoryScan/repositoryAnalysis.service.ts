@@ -47,6 +47,52 @@ export interface QueryAnalysisResponse {
   codeInsights?: CodeInsights;
   architecturalGuidance?: ArchitecturalGuidance;
   releaseAnalysis?: ReleaseAnalysis;
+  reasoning?: AnalysisReasoning;
+  confidence?: number;
+}
+
+export interface AnalysisReasoning {
+  searchStrategy: string;
+  filesAnalyzed: string[];
+  relationshipsDiscovered: FileRelationship[];
+  confidenceFactors: ConfidenceFactor[];
+  expansionRationale?: string;
+}
+
+export interface FileRelationship {
+  type: 'import' | 'dependency' | 'architectural' | 'data_flow' | 'functional';
+  sourceFile: string;
+  targetFile: string;
+  strength: number;
+  description: string;
+}
+
+export interface ConfidenceFactor {
+  factor: string;
+  score: number;
+  explanation: string;
+}
+
+export interface QueryComplexity {
+  level: 'simple' | 'moderate' | 'complex' | 'architectural';
+  requiredFileTypes: string[];
+  estimatedFileCount: number;
+  crossModuleRequired: boolean;
+  reasoningRequired: boolean;
+}
+
+export interface MultiFileSearchResult {
+  files: any[];
+  confidence: number;
+  reasoning: string;
+  searchStages: SearchStage[];
+}
+
+export interface SearchStage {
+  stage: string;
+  filesFound: number;
+  confidence: number;
+  rationale: string;
 }
 
 export interface AnalysisTrace {
@@ -1296,6 +1342,622 @@ Keep the response focused and practical.`;
     `) as any[];
   }
 
+  /**
+   * Enhanced multi-stage file search with relevance prioritization and confidence assessment
+   */
+  private async performMultiStageFileSearch(
+    query: string,
+    context: AnalysisContext,
+    streamProgress?: (step: string, message: string, data?: any) => void,
+  ): Promise<MultiFileSearchResult> {
+    const searchStages: SearchStage[] = [];
+    let allFiles: any[] = [];
+    let totalConfidence = 0;
+
+    // Stage 1: Analyze query complexity
+    if (streamProgress) {
+      streamProgress(
+        'analyzing',
+        'Analyzing query complexity and requirements...',
+      );
+    }
+
+    const queryComplexity = await this.analyzeQueryComplexity(query);
+    const initialLimit = Math.min(queryComplexity.estimatedFileCount, 12);
+
+    searchStages.push({
+      stage: 'query_analysis',
+      filesFound: 0,
+      confidence: 0,
+      rationale: `Query complexity: ${queryComplexity.level}, estimated files needed: ${queryComplexity.estimatedFileCount}`,
+    });
+
+    // Stage 2: Initial semantic search with high relevance
+    if (streamProgress) {
+      streamProgress(
+        'searching',
+        'Performing initial semantic search for most relevant files...',
+      );
+    }
+
+    const gemini = new Gemini();
+    const embedding = await gemini.getEmbeddings(query);
+    const vectorQuery = `[${embedding.join(',')}]`;
+
+    const initialFiles = await this.performSemanticSearch(
+      vectorQuery,
+      context.repositoryScanId,
+      initialLimit,
+    );
+
+    allFiles = await this.prisma.fileDocumentation.findMany({
+      where: { id: { in: initialFiles.map((r) => r.id) } },
+    });
+
+    let confidence = await this.assessContextCompleteness(
+      query,
+      allFiles,
+      queryComplexity,
+    );
+
+    searchStages.push({
+      stage: 'initial_semantic_search',
+      filesFound: allFiles.length,
+      confidence,
+      rationale: `Found ${allFiles.length} most relevant files with ${(confidence * 100).toFixed(1)}% confidence`,
+    });
+
+    // Stage 3: Relationship-based expansion if confidence is insufficient
+    if (confidence < 0.8 && queryComplexity.level !== 'simple') {
+      if (streamProgress) {
+        streamProgress(
+          'expanding',
+          'Expanding search through file relationships...',
+        );
+      }
+
+      const relationshipFiles = await this.discoverFileRelationships(
+        allFiles,
+        context,
+        query,
+      );
+      const newFiles = relationshipFiles.filter(
+        (f) => !allFiles.some((existing) => existing.id === f.id),
+      );
+
+      if (newFiles.length > 0) {
+        allFiles = [...allFiles, ...newFiles];
+        confidence = await this.assessContextCompleteness(
+          query,
+          allFiles,
+          queryComplexity,
+        );
+
+        searchStages.push({
+          stage: 'relationship_expansion',
+          filesFound: newFiles.length,
+          confidence,
+          rationale: `Added ${newFiles.length} related files through dependency analysis`,
+        });
+      }
+    }
+
+    // Stage 4: Targeted expansion for complex queries
+    if (confidence < 0.85 && queryComplexity.level === 'architectural') {
+      if (streamProgress) {
+        streamProgress(
+          'expanding',
+          'Performing targeted expansion for architectural analysis...',
+        );
+      }
+
+      const gaps = await this.identifyContextGaps(
+        query,
+        allFiles,
+        queryComplexity,
+      );
+      if (gaps.length > 0) {
+        const additionalFiles = await this.fillContextGaps(
+          gaps,
+          context,
+          query,
+        );
+        const newFiles = additionalFiles.filter(
+          (f) => !allFiles.some((existing) => existing.id === f.id),
+        );
+
+        if (newFiles.length > 0) {
+          allFiles = [...allFiles, ...newFiles];
+          confidence = await this.assessContextCompleteness(
+            query,
+            allFiles,
+            queryComplexity,
+          );
+
+          searchStages.push({
+            stage: 'targeted_expansion',
+            filesFound: newFiles.length,
+            confidence,
+            rationale: `Added ${newFiles.length} files to address identified gaps: ${gaps.join(', ')}`,
+          });
+        }
+      }
+    }
+
+    // Final confidence assessment
+    totalConfidence = confidence;
+
+    const reasoning = this.buildSearchReasoning(
+      query,
+      allFiles,
+      searchStages,
+      confidence,
+    );
+
+    return {
+      files: allFiles,
+      confidence: totalConfidence,
+      reasoning: reasoning,
+      searchStages,
+    };
+  }
+
+  /**
+   * Analyze query complexity to determine search strategy
+   */
+  private async analyzeQueryComplexity(
+    query: string,
+  ): Promise<QueryComplexity> {
+    const gemini = new Gemini();
+
+    const complexityPrompt = `
+      Analyze this query and determine its complexity and requirements:
+      
+      Query: "${query}"
+      
+      Consider:
+      1. Does it ask about specific functionality, architecture, or general understanding?
+      2. Does it require understanding relationships between multiple files?
+      3. Does it need cross-module analysis?
+      4. How many files would typically be needed to answer this comprehensively?
+      
+      Respond in JSON format:
+      {
+        "level": "simple|moderate|complex|architectural",
+        "requiredFileTypes": ["controller", "service", "model", "utility", "config"],
+        "estimatedFileCount": number,
+        "crossModuleRequired": boolean,
+        "reasoningRequired": boolean
+      }
+    `;
+
+    try {
+      const response = await gemini.generateAnswer(complexityPrompt, [], query);
+      const result = JSON.parse(
+        response.output.response.candidates[0].content.parts[0].text,
+      );
+
+      // Ensure reasonable limits
+      result.estimatedFileCount = Math.min(
+        Math.max(result.estimatedFileCount, 3),
+        20,
+      );
+
+      return result;
+    } catch (error) {
+      console.error('Error analyzing query complexity:', error);
+      // Fallback to moderate complexity
+      return {
+        level: 'moderate',
+        requiredFileTypes: ['controller', 'service', 'model'],
+        estimatedFileCount: 8,
+        crossModuleRequired: true,
+        reasoningRequired: true,
+      };
+    }
+  }
+
+  /**
+   * Assess if current file set provides sufficient context
+   */
+  private async assessContextCompleteness(
+    query: string,
+    files: any[],
+    complexity: QueryComplexity,
+  ): Promise<number> {
+    const gemini = new Gemini();
+
+    const confidencePrompt = `
+      Assess if the available files provide sufficient context to answer this query confidently:
+      
+      Query: "${query}"
+      Query Complexity: ${complexity.level}
+      Required File Types: ${complexity.requiredFileTypes.join(', ')}
+      
+      Available files (${files.length}):
+      ${files.map((f) => `- ${f.name} (${f.fullPath})`).join('\n')}
+      
+      Rate confidence from 0-1 where:
+      0.0-0.3 = Insufficient context, missing critical files
+      0.4-0.6 = Partial context, might miss important details
+      0.7-0.8 = Good context, can provide confident answer
+      0.9-1.0 = Complete context, can provide comprehensive answer
+      
+      Consider:
+      - Are the required file types represented?
+      - Is there enough context for the complexity level?
+      - Would you need more files to avoid saying "likely" or "probably"?
+      
+      Respond with just the number (e.g., 0.85).
+    `;
+
+    try {
+      const response = await gemini.generateAnswer(confidencePrompt, [], query);
+      const confidenceText =
+        response.output.response.candidates[0].content.parts[0].text.trim();
+      const confidence = parseFloat(confidenceText);
+
+      return isNaN(confidence) ? 0.7 : Math.max(0, Math.min(1, confidence));
+    } catch (error) {
+      console.error('Error assessing context completeness:', error);
+      // Fallback based on file count and complexity
+      const baseConfidence = Math.min(
+        files.length / complexity.estimatedFileCount,
+        1,
+      );
+      return Math.max(0.5, baseConfidence);
+    }
+  }
+
+  /**
+   * Discover file relationships for comprehensive analysis
+   */
+  private async discoverFileRelationships(
+    files: any[],
+    context: AnalysisContext,
+    query: string,
+  ): Promise<any[]> {
+    const relatedFiles = new Set<string>();
+    const relationships: FileRelationship[] = [];
+
+    // Direct import/export relationships
+    for (const file of files) {
+      if (Array.isArray(file.imports)) {
+        for (const imp of file.imports) {
+          const relatedFile = await this.findFileByImport(
+            imp,
+            context.repositoryScanId,
+          );
+          if (relatedFile && !files.some((f) => f.id === relatedFile.id)) {
+            relatedFiles.add(relatedFile.id);
+            relationships.push({
+              type: 'import',
+              sourceFile: file.name,
+              targetFile: relatedFile.name,
+              strength: 0.9,
+              description: `Direct import relationship`,
+            });
+          }
+        }
+      }
+    }
+
+    // Architectural relationships (controller -> service -> model patterns)
+    const architecturalFiles = await this.findArchitecturalRelationships(
+      files,
+      context,
+      query,
+    );
+    for (const archFile of architecturalFiles) {
+      if (!files.some((f) => f.id === archFile.id)) {
+        relatedFiles.add(archFile.id);
+        relationships.push({
+          type: 'architectural',
+          sourceFile: 'architectural_pattern',
+          targetFile: archFile.name,
+          strength: 0.8,
+          description: `Architectural relationship based on query context`,
+        });
+      }
+    }
+
+    // Data flow relationships
+    const dataFlowFiles = await this.findDataFlowRelationships(
+      files,
+      context,
+      query,
+    );
+    for (const dataFile of dataFlowFiles) {
+      if (!files.some((f) => f.id === dataFile.id)) {
+        relatedFiles.add(dataFile.id);
+        relationships.push({
+          type: 'data_flow',
+          sourceFile: 'data_flow_pattern',
+          targetFile: dataFile.name,
+          strength: 0.7,
+          description: `Data flow relationship`,
+        });
+      }
+    }
+
+    if (relatedFiles.size === 0) return [];
+
+    return await this.prisma.fileDocumentation.findMany({
+      where: { id: { in: Array.from(relatedFiles) } },
+    });
+  }
+
+  /**
+   * Identify context gaps that need to be filled
+   */
+  private async identifyContextGaps(
+    query: string,
+    files: any[],
+    complexity: QueryComplexity,
+  ): Promise<string[]> {
+    const gemini = new Gemini();
+
+    const gapAnalysisPrompt = `
+      Analyze what's missing from the current file set to answer this query comprehensively:
+      
+      Query: "${query}"
+      Required File Types: ${complexity.requiredFileTypes.join(', ')}
+      
+      Current files (${files.length}):
+      ${files.map((f) => `- ${f.name} (${f.fullPath}) - ${f.fileType?.join(', ') || 'unknown'}`).join('\n')}
+      
+      Identify missing elements:
+      1. Missing file types (e.g., "service", "model", "utility")
+      2. Missing architectural layers (e.g., "data layer", "presentation layer")
+      3. Missing functional areas (e.g., "authentication", "validation")
+      
+      Respond with a JSON array of missing elements:
+      ["service_layer", "data_models", "authentication_utilities"]
+    `;
+
+    try {
+      const response = await gemini.generateAnswer(
+        gapAnalysisPrompt,
+        [],
+        query,
+      );
+      const gaps = JSON.parse(
+        response.output.response.candidates[0].content.parts[0].text,
+      );
+      return Array.isArray(gaps) ? gaps : [];
+    } catch (error) {
+      console.error('Error identifying context gaps:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Fill identified context gaps with targeted file search
+   */
+  private async fillContextGaps(
+    gaps: string[],
+    context: AnalysisContext,
+    query: string,
+  ): Promise<any[]> {
+    const additionalFiles: any[] = [];
+
+    for (const gap of gaps) {
+      // Map gap types to search strategies
+      let searchQuery = query;
+
+      if (gap.includes('service')) {
+        searchQuery += ' service layer business logic';
+      } else if (gap.includes('model') || gap.includes('data')) {
+        searchQuery += ' data model entity schema';
+      } else if (gap.includes('utility') || gap.includes('helper')) {
+        searchQuery += ' utility helper function';
+      } else if (gap.includes('auth')) {
+        searchQuery += ' authentication authorization security';
+      }
+
+      const gemini = new Gemini();
+      const embedding = await gemini.getEmbeddings(searchQuery);
+      const vectorQuery = `[${embedding.join(',')}]`;
+
+      const gapFiles = await this.performSemanticSearch(
+        vectorQuery,
+        context.repositoryScanId,
+        3, // Limit to 3 files per gap
+      );
+
+      if (gapFiles.length > 0) {
+        const foundFiles = await this.prisma.fileDocumentation.findMany({
+          where: { id: { in: gapFiles.map((r) => r.id) } },
+        });
+        additionalFiles.push(...foundFiles);
+      }
+    }
+
+    return additionalFiles;
+  }
+
+  /**
+   * Build comprehensive search reasoning
+   */
+  private buildSearchReasoning(
+    query: string,
+    files: any[],
+    searchStages: SearchStage[],
+    confidence: number,
+  ): string {
+    const fileTypes = [
+      ...new Set(
+        files
+          .map((f) => f.fileType)
+          .flat()
+          .filter(Boolean),
+      ),
+    ];
+    const totalFiles = files.length;
+
+    let reasoning = `I analyzed your query "${query}" using a multi-stage search approach:\n\n`;
+
+    reasoning += `**Search Strategy:**\n`;
+    searchStages.forEach((stage, index) => {
+      reasoning += `${index + 1}. ${stage.stage.replace(/_/g, ' ').toUpperCase()}: ${stage.rationale}\n`;
+    });
+
+    reasoning += `\n**Files Analyzed (${totalFiles}):**\n`;
+    files.forEach((file, index) => {
+      reasoning += `${index + 1}. ${file.name} (${file.fullPath})\n`;
+    });
+
+    reasoning += `\n**File Types Covered:** ${fileTypes.join(', ')}\n`;
+    reasoning += `**Confidence Level:** ${(confidence * 100).toFixed(1)}%\n\n`;
+
+    if (confidence >= 0.8) {
+      reasoning += `This comprehensive analysis provides sufficient context to give you a confident, well-reasoned answer.`;
+    } else if (confidence >= 0.6) {
+      reasoning += `While I have good context, I may need to make some reasonable assumptions based on the available information.`;
+    } else {
+      reasoning += `The available context is limited. I'll provide the best answer possible with the information available.`;
+    }
+
+    return reasoning;
+  }
+
+  /**
+   * Find file by import path
+   */
+  private async findFileByImport(
+    importPath: string,
+    repositoryScanId: string,
+  ): Promise<any | null> {
+    try {
+      // Try exact match first
+      let file = await this.prisma.fileDocumentation.findFirst({
+        where: {
+          repositoryScanId,
+          fullPath: importPath,
+        },
+      });
+
+      if (file) return file;
+
+      // Try to find by filename
+      const fileName = importPath.split('/').pop();
+      if (fileName) {
+        file = await this.prisma.fileDocumentation.findFirst({
+          where: {
+            repositoryScanId,
+            name: fileName,
+          },
+        });
+      }
+
+      return file;
+    } catch (error) {
+      console.error('Error finding file by import:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Find architectural relationships based on query context
+   */
+  private async findArchitecturalRelationships(
+    files: any[],
+    context: AnalysisContext,
+    query: string,
+  ): Promise<any[]> {
+    const relatedFiles: any[] = [];
+
+    // Look for controller -> service -> model patterns
+    for (const file of files) {
+      if (file.fileType?.includes('CONTROLLER')) {
+        // Find related services
+        const services = await this.prisma.fileDocumentation.findMany({
+          where: {
+            repositoryScanId: context.repositoryScanId,
+            fileType: { hasSome: ['SERVICE'] },
+            OR: [
+              {
+                name: {
+                  contains: file.name.replace('Controller', ''),
+                  mode: 'insensitive',
+                },
+              },
+              {
+                name: {
+                  contains: file.name.replace('controller', ''),
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          },
+          take: 2,
+        });
+        relatedFiles.push(...services);
+      }
+
+      if (file.fileType?.includes('SERVICE')) {
+        // Find related models
+        const models = await this.prisma.fileDocumentation.findMany({
+          where: {
+            repositoryScanId: context.repositoryScanId,
+            fileType: { hasSome: ['MODEL', 'ENTITY'] },
+            OR: [
+              {
+                name: {
+                  contains: file.name.replace('Service', ''),
+                  mode: 'insensitive',
+                },
+              },
+              {
+                name: {
+                  contains: file.name.replace('service', ''),
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          },
+          take: 2,
+        });
+        relatedFiles.push(...models);
+      }
+    }
+
+    return relatedFiles;
+  }
+
+  /**
+   * Find data flow relationships
+   */
+  private async findDataFlowRelationships(
+    files: any[],
+    context: AnalysisContext,
+    query: string,
+  ): Promise<any[]> {
+    const relatedFiles: any[] = [];
+
+    // Look for data-related files based on query context
+    if (
+      query.toLowerCase().includes('data') ||
+      query.toLowerCase().includes('database')
+    ) {
+      const dataFiles = await this.prisma.fileDocumentation.findMany({
+        where: {
+          repositoryScanId: context.repositoryScanId,
+          OR: [
+            { fileType: { hasSome: ['MODEL', 'ENTITY', 'SCHEMA'] } },
+            { name: { contains: 'data', mode: 'insensitive' } },
+            { name: { contains: 'db', mode: 'insensitive' } },
+            { name: { contains: 'database', mode: 'insensitive' } },
+          ],
+        },
+        take: 3,
+      });
+      relatedFiles.push(...dataFiles);
+    }
+
+    return relatedFiles;
+  }
+
   private async findUserFlowFiles(repositoryScanId: string) {
     return await this.prisma.fileDocumentation.findMany({
       where: {
@@ -1612,6 +2274,7 @@ Your answer should be immediately useful to someone trying to understand this co
     mainService: RepositoryAnalysisService,
     threadId?: string,
     analysisData?: any,
+    searchResult?: MultiFileSearchResult,
   ): Promise<QueryAnalysisResponse> {
     const baseResponse = await this.createAssistanceResponse(
       query,
@@ -1619,6 +2282,42 @@ Your answer should be immediately useful to someone trying to understand this co
       context,
       threadId,
     );
+
+    // Build enhanced reasoning if search result is provided
+    let reasoning: AnalysisReasoning | undefined;
+    if (searchResult) {
+      const fileTypes = [
+        ...new Set(
+          searchResult.files
+            .map((f) => f.fileType)
+            .flat()
+            .filter(Boolean),
+        ),
+      ];
+
+      reasoning = {
+        searchStrategy:
+          'Multi-stage enhanced search with confidence assessment',
+        filesAnalyzed: searchResult.files.map((f) => f.name),
+        relationshipsDiscovered: [], // This would be populated by the relationship discovery
+        confidenceFactors: [
+          {
+            factor: 'File Coverage',
+            score: searchResult.confidence,
+            explanation: `Analyzed ${searchResult.files.length} files covering ${fileTypes.join(', ')} types`,
+          },
+          {
+            factor: 'Search Completeness',
+            score: searchResult.confidence,
+            explanation: searchResult.reasoning,
+          },
+        ],
+        expansionRationale: searchResult.searchStages
+          .filter((stage) => stage.stage !== 'query_analysis')
+          .map((stage) => `${stage.stage}: ${stage.rationale}`)
+          .join('; '),
+      };
+    }
 
     // Add enhanced analysis data if provided
     if (analysisData) {
@@ -1628,10 +2327,16 @@ Your answer should be immediately useful to someone trying to understand this co
         codeInsights: analysisData.codeInsights,
         architecturalGuidance: analysisData.architecturalGuidance,
         releaseAnalysis: analysisData.releaseAnalysis,
+        reasoning,
+        confidence: searchResult?.confidence || 0.8,
       };
     }
 
-    return baseResponse;
+    return {
+      ...baseResponse,
+      reasoning,
+      confidence: searchResult?.confidence || 0.8,
+    };
   }
 
   private async fetchSourceCodeForFiles(
@@ -2247,7 +2952,7 @@ Your answer should be immediately useful to someone trying to understand this co
   }
 
   /**
-   * Enhanced function trace query handler
+   * Enhanced function trace query handler with multi-stage file search
    */
   private async handleEnhancedFunctionTraceQuery(
     query: string,
@@ -2259,42 +2964,42 @@ Your answer should be immediately useful to someone trying to understand this co
   ): Promise<QueryAnalysisResponse> {
     trace?.executionPath.push('handleEnhancedFunctionTraceQuery');
 
+    // Check for specific file requests first
     const filePathMatch = query.match(
       /explain\s+(\S+\.[a-z]+)|\bfile\s+(\S+\.[a-z]+)/i,
     );
     const filePath = filePathMatch
       ? filePathMatch[1] || filePathMatch[2]
       : null;
-    let relevantFiles = [];
+
+    let searchResult: MultiFileSearchResult;
 
     if (filePath) {
-      relevantFiles = await this.findSpecificFile(
+      // For specific file requests, start with that file and expand
+      const specificFile = await this.findSpecificFile(
         filePath,
         context.repositoryScanId,
       );
-    }
 
-    if (relevantFiles.length === 0) {
-      const geminiEnhanced = new Gemini();
-      const embedding = await geminiEnhanced.getEmbeddings(query);
-      const vectorQuery = `[${embedding.join(',')}]`;
-      const semanticResults = await this.performSemanticSearch(
-        vectorQuery,
-        context.repositoryScanId,
-        8,
-      );
+      if (specificFile.length > 0) {
+        // Use enhanced search starting with the specific file
+        searchResult = await this.performMultiStageFileSearch(query, context);
 
-      if (semanticResults.length > 0) {
-        relevantFiles = await this.prisma.fileDocumentation.findMany({
-          where: { id: { in: semanticResults.map((r) => r.id) } },
-        });
+        // Ensure the specific file is included
+        const specificFileId = specificFile[0].id;
+        if (!searchResult.files.some((f) => f.id === specificFileId)) {
+          searchResult.files.unshift(specificFile[0]);
+        }
+      } else {
+        // File not found, use regular enhanced search
+        searchResult = await this.performMultiStageFileSearch(query, context);
       }
+    } else {
+      // Use enhanced multi-stage search for general queries
+      searchResult = await this.performMultiStageFileSearch(query, context);
     }
 
-    relevantFiles = await this.findRelatedFiles(
-      relevantFiles,
-      context.repositoryScanId,
-    );
+    const relevantFiles = searchResult.files;
     const filesWithCode = await this.fetchFilesWithCode(relevantFiles, context);
 
     // Enhanced analysis
@@ -2311,10 +3016,11 @@ Your answer should be immediately useful to someone trying to understand this co
 
     const geminiEnhanced = new Gemini();
     const functionTracePrompt =
-      this.seniorEngineerAnalysisService.buildEnhancedFunctionTracePrompt(
+      this.seniorEngineerAnalysisService.buildConfidentAnalysisPrompt(
         query,
-        filePath,
-        analysisMode,
+        filesWithCode,
+        searchResult.reasoning,
+        searchResult.confidence,
       );
     const queryResponse = await geminiEnhanced.generateAnswer(
       functionTracePrompt,
@@ -2332,6 +3038,7 @@ Your answer should be immediately useful to someone trying to understand this co
       this,
       threadId,
       { codeInsights, resourceAnalysis },
+      searchResult,
     );
   }
 
@@ -2432,50 +3139,39 @@ Your answer should be immediately useful to someone trying to understand this co
   ): Promise<QueryAnalysisResponse> {
     trace?.executionPath.push('handleEnhancedProjectLevelQuery');
 
+    // Use enhanced multi-stage search for comprehensive analysis
+    const searchResult = await this.performMultiStageFileSearch(query, context);
+
+    // For schema/model questions, ensure we have schema files
     const isSchemaModelQuestion =
       /schema|model|database|db|table|entity|field|column|type|relation|prisma/i.test(
         query,
       );
-    let tagBasedFiles = await this.findProjectLevelFiles(
-      context.repositoryScanId,
-    );
+
+    let relevantFiles = searchResult.files;
 
     if (isSchemaModelQuestion) {
       const schemaFiles = await this.findSchemaModelFiles(
         context.repositoryScanId,
       );
-      tagBasedFiles = [...schemaFiles, ...tagBasedFiles];
-      tagBasedFiles = Array.from(
-        new Map(tagBasedFiles.map((file) => [file.id, file])).values(),
+      const existingIds = new Set(relevantFiles.map((file) => file.id));
+      const newSchemaFiles = schemaFiles.filter(
+        (file) => !existingIds.has(file.id),
       );
+      relevantFiles = [...relevantFiles, ...newSchemaFiles];
     }
 
-    const geminiProjectEnhanced = new Gemini();
-    const fileQuickInfo = tagBasedFiles.map((data) =>
-      this.mapFileToQuickInfo(data),
-    );
-    const filteredFiles = await geminiProjectEnhanced.filterRelevantFiles(
-      enhancedQuery,
-      fileQuickInfo,
-    );
-
-    tagBasedFiles = tagBasedFiles.filter((data) => {
-      const mappedData = this.mapDocumentFields(data);
-      return filteredFiles.output.some(
-        (file) => file.fileName === mappedData.fileName,
-      );
-    });
-
+    // Add essential project files if not already included
     const essentialFiles = await this.findEssentialProjectFiles(
       context.repositoryScanId,
     );
-    const existingIds = new Set(tagBasedFiles.map((file) => file.id));
+    const existingIds = new Set(relevantFiles.map((file) => file.id));
     const newEssentialFiles = essentialFiles.filter(
       (file) => !existingIds.has(file.id),
     );
-    tagBasedFiles = [...tagBasedFiles, ...newEssentialFiles];
+    relevantFiles = [...relevantFiles, ...newEssentialFiles];
 
-    const filesWithCode = await this.fetchFilesWithCode(tagBasedFiles, context);
+    const filesWithCode = await this.fetchFilesWithCode(relevantFiles, context);
 
     // Enhanced analysis
     const resourceAnalysis =
@@ -2495,15 +3191,17 @@ Your answer should be immediately useful to someone trying to understand this co
         context,
       );
 
+    const geminiProjectEnhanced = new Gemini();
     const enhancedPrompt =
-      this.seniorEngineerAnalysisService.buildEnhancedProjectLevelPrompt(
+      this.seniorEngineerAnalysisService.buildConfidentAnalysisPrompt(
         query,
-        analysisMode,
-        resourceAnalysis,
+        filesWithCode,
+        searchResult.reasoning,
+        searchResult.confidence,
       );
-    
+
     // Use streaming generation if streamTextChunk is provided
-    const queryResponse = streamTextChunk 
+    const queryResponse = streamTextChunk
       ? await geminiProjectEnhanced.generateAnswerStream(
           enhancedPrompt,
           filesWithCode,
@@ -2515,7 +3213,7 @@ Your answer should be immediately useful to someone trying to understand this co
           filesWithCode,
           enhancedQuery,
         );
-    
+
     if (trace) {
       trace.performanceMetrics.aiCallsCount += 2;
     }
@@ -2527,6 +3225,7 @@ Your answer should be immediately useful to someone trying to understand this co
       this,
       threadId,
       { resourceAnalysis, architecturalGuidance, codeInsights },
+      searchResult,
     );
   }
 
