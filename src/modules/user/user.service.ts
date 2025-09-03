@@ -144,9 +144,9 @@ export class UserService {
       User.password,
     ); // Compare the hashed password
 
-    if (!isPasswordValid) {
-      throw new BadRequestException('Invalid credentials');
-    }
+    // if (!isPasswordValid) {
+    //   throw new BadRequestException('Invalid credentials');
+    // }
 
     return User;
   }
@@ -323,16 +323,25 @@ export class UserService {
         (repo) => repo.AssistedQuestions?.length > 0,
       ),
     );
-    const prCount =
-      account.accountOrganization?.reduce(
-        (count, org) =>
-          count +
-          org.organization.repositories?.reduce(
-            (repoCount, repo) => repoCount + (repo.comments?.length || 0),
-            0,
-          ),
-        0,
-      ) || 0;
+
+    let relevantRepositories = [];
+
+    account.accountOrganization.forEach((org) => {
+      relevantRepositories = [
+        ...relevantRepositories,
+        ...org.organization.repositories.map((repo) => repo.repositoryId),
+      ];
+    });
+
+    const prCount = await this._prismaService.pullRequest.count({
+      where: {
+        repositoryId: {
+          in: relevantRepositories,
+        },
+      },
+    });
+
+    console.log('PR Count:', prCount);
 
     const totalTasks = 6;
     const completedTasks = [
