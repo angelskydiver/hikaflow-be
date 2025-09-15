@@ -314,15 +314,21 @@ export class WebhooksService {
         changes.filter((data) => data.type === 'addition'),
       );
 
+      // Check for duplicate issues within the same PR
+      const filteredIssues =
+        await this._commentService.checkForDuplicateIssuesInPR(
+          AiResponse.codeIssues,
+        );
+
       // lastCommit should need to send.
-      const commentsMapping = AiResponse.codeIssues.map((data) =>
+      const commentsMapping = filteredIssues.map((data) =>
         commentPr(data, prInfo),
       );
 
       // await this._pullRequestService.registerPullRequest(pullRequestPayload);
       prInfo['prId'] = pullRequest.id;
 
-      const createCommentsMapping = AiResponse.codeIssues.map((data) => {
+      const createCommentsMapping = filteredIssues.map((data) => {
         const payload = {
           repositoryId: prInfo.id,
           prId: pullRequest.id,
@@ -1505,6 +1511,12 @@ export class WebhooksService {
       const analyzeCombineSummary =
         await deepSeekWrapper.analyzeCombineSummary(combinedSummary);
 
+      // Generate contextual AI prompts for each issue
+      const contextualPrompts = await deepSeekWrapper.generateContextualPrompts(
+        highQualityIssues,
+        prInfo,
+      );
+
       // Simplified comment creation logic - save ALL filtered issues
       const createCommentsMapping = highQualityIssues
         .map((data) => {
@@ -1538,6 +1550,9 @@ export class WebhooksService {
         [
           this._pullRequestService.updatePullRequest(prInfo.prId, {
             summary: analyzeCombineSummary.prSummary,
+            contextualPrompt: contextualPrompts.summaryPrompt || '',
+            expectedSolution: contextualPrompts.expectedSolution || '',
+            copyPasteCode: contextualPrompts.copyPasteCode || '',
           }),
           this._commentService.registerDuplicateCode(
             duplicateCodes.map((data) => ({
@@ -1566,12 +1581,18 @@ export class WebhooksService {
         );
       }
 
+      // Format the enhanced comment with AI prompts summary
+      const enhancedComment = this.formatEnhancedComment(
+        analyzeCombineSummary.prSummary,
+        contextualPrompts.summaryPrompt,
+      );
+
       await commentBitbucketPr({
         token: prInfo.token,
         commentUrl: prInfo.links.comments.href,
         body: {
           content: {
-            raw: this.formatEnhancedComment(analyzeCombineSummary.prSummary),
+            raw: enhancedComment,
           },
         },
       });
@@ -1948,7 +1969,7 @@ export class WebhooksService {
     });
   }
 
-  private formatEnhancedComment(issue: any): string {
+  private formatEnhancedComment(issue: any, summaryPrompt?: string): string {
     // Get file extension for syntax highlighting
     const getFileExtension = (filename: string): string => {
       if (!filename) return '';
@@ -2098,6 +2119,25 @@ ${this.generateConsequences(issue)}
 
 ### 📋 Analysis
 ${issue.reason}`;
+    }
+
+    // Add AI prompts summary if available
+    if (summaryPrompt) {
+      commentBody += `
+
+---
+
+## 🤖 AI Assistant Integration
+
+### 📋 Overall PR Improvement Prompt
+\`\`\`
+${summaryPrompt}
+\`\`\`
+
+**💡 Usage:** Copy the prompt above and paste it into your AI coding assistant (GitHub Copilot, ChatGPT, Claude, etc.) to get comprehensive suggestions for improving this entire PR.
+
+### 🎯 Individual Issue Prompts
+Each issue in this PR has been analyzed with specific contextual prompts. Click on individual issues to get copy-pasteable prompts for targeted improvements.`;
     }
 
     return commentBody;
@@ -2274,6 +2314,12 @@ ${issue.reason}`;
         deepSeekWrapper.analyzeCombineSummary(combinedSummary),
       ]);
 
+      // Generate contextual AI prompts for the GitHub PR
+      const contextualPrompts = await deepSeekWrapper.generateContextualPrompts(
+        allIssues,
+        prInfo,
+      );
+
       // **NEW ADVANCED FILTERING SYSTEM**
       console.log(
         `Applying advanced quality filtering to ${allIssues.length} issues`,
@@ -2327,6 +2373,9 @@ ${issue.reason}`;
         [
           this._pullRequestService.updatePullRequest(prInfo.prId, {
             summary: analyzeCombineSummary.prSummary,
+            contextualPrompt: contextualPrompts.summaryPrompt || '',
+            expectedSolution: contextualPrompts.expectedSolution || '',
+            copyPasteCode: contextualPrompts.copyPasteCode || '',
           }),
           this._commentService.registerDuplicateCode(
             duplicateCodes.map((data) => ({

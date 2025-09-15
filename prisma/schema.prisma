@@ -332,6 +332,10 @@ model PullRequest {
   base          String
   summary       String @default("")
 
+  contextualPrompt String? @default("")
+  expectedSolution String? @default("")
+  copyPasteCode    String? @default("")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -359,9 +363,15 @@ model Comment {
   improvedCodeBlock Json?    @default("{}") // { startLine, endLine, codeLines[], explanation }
   tags              String[] @default([]) // SECURITY, PERFORMANCE, MAINTAINABILITY, etc.
 
+  // New fields for issue management
+  isIgnored    Boolean @default(false)
+  ignoreReason String?
+
   repository Repository @relation(fields: [repositoryId], references: [repositoryId])
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
+
+  @@index([isIgnored])
 }
 
 model ExecutiveReport {
@@ -434,6 +444,7 @@ model RepositorySettings {
   prompt       String
   active       Boolean
   category     String
+  customPrompt String? // User-defined custom prompt for this setting
 
   repository Repository @relation(fields: [repositoryId], references: [repositoryId])
 

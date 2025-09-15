@@ -39,6 +39,9 @@ export class CreateCommentRequestDto {
     explanation: string;
   };
   tags?: string[]; // SECURITY, PERFORMANCE, MAINTAINABILITY, etc.
+
+  // New fields for issue management
+  // Note: customPrompt will be handled separately in RepositorySettings
 }
 
 export class GetCommentRequestDto {
@@ -47,4 +50,15 @@ export class GetCommentRequestDto {
   pageSize: string;
   currentPage: string;
   prId: string;
+
+  // New filtering parameters
+  issueType?: 'breaking_changes' | 'enhancements'; // Breaking Changes vs Enhancements
+  searchTerm?: string; // Search in issue, file, or content
+  severity?: string; // HIGH, MEDIUM, LOW
+  showIgnored?: boolean; // Show ignored issues
+}
+
+export class IgnoreCommentRequestDto {
+  commentId: string;
+  ignoreReason?: string;
 }

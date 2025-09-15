@@ -1,7 +1,18 @@
-import { Controller, Get, Query, Request } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  Request,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CommentService } from './comment.service';
-import { GetCommentRequestDto } from './dto/comment.request.dto';
+import {
+  GetCommentRequestDto,
+  IgnoreCommentRequestDto,
+} from './dto/comment.request.dto';
 
 @ApiTags('Comment')
 @Controller('comments')
@@ -30,5 +41,26 @@ export class CommentController {
       req.user.accountId,
       payload,
     );
+  }
+
+  @ApiBearerAuth()
+  @Post('ignore')
+  async ignoreComment(@Body() payload: IgnoreCommentRequestDto) {
+    return await this._commentService.ignoreComment(
+      payload.commentId,
+      payload.ignoreReason,
+    );
+  }
+
+  @ApiBearerAuth()
+  @Post('unignore')
+  async unignoreComment(@Body() payload: { commentId: string }) {
+    return await this._commentService.unignoreComment(payload.commentId);
+  }
+
+  @ApiBearerAuth()
+  @Post(':commentId/reformat')
+  async reformatCommentAnalysis(@Param('commentId') commentId: string) {
+    return await this._commentService.reformatCommentAnalysis(commentId);
   }
 }

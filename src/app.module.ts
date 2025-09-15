@@ -7,6 +7,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { BillingCronService } from './cron/billing.cron';
+import { FeedbackAnalysisCronService } from './cron/feedbackAnalysis.cron';
 import { PrTrackerCronService } from './cron/prTracker.cron';
 import { RepositoryScanCronService } from './cron/repositoryScan.cron';
 import { MailModule } from './mail/mail.module';
@@ -19,6 +20,7 @@ import { CommentModule } from './modules/comment/comment.module';
 import { CommitSummaryModule } from './modules/commitSummary/commitSummary.module';
 import { DiscountModule } from './modules/discount/discount.module';
 import { ExecutiveReportModule } from './modules/executiveReport/executiveReport.module';
+import { FeedbackModule } from './modules/feedback/feedback.module';
 import { OrganizationModule } from './modules/organization/organization.module';
 import { PrTrackerModule } from './modules/prTracker/prTracker.module';
 import { PullRequestModule } from './modules/pullRequest/pullRequest.module';
@@ -70,6 +72,7 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
     RepositoryScanModule,
     BillingModule,
     DiscountModule,
+    FeedbackModule,
   ],
   controllers: [AppController],
   providers: [
@@ -80,6 +83,7 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
     PrTrackerCronService,
     BillingCronService,
     RepositoryScanCronService,
+    FeedbackAnalysisCronService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
   ],
 })

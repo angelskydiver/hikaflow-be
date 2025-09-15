@@ -10,13 +10,15 @@ import { MailService } from 'src/mail/mail.service';
 import { AccountCredentialService } from 'src/modules/accountCredentials/accountCredentials.service';
 import { BillingService } from 'src/modules/billing/billing.service';
 import { CommentService } from 'src/modules/comment/comment.service';
+import { FeedbackService } from 'src/modules/feedback/feedback.service';
 import { RepositoryScanService } from 'src/modules/repositoryScan/repositoryScan.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 // Initialize Prisma & Services
 const prisma = new PrismaService();
 const accountCredentialService = new AccountCredentialService(prisma);
-const commentService = new CommentService(prisma);
+const feedbackService = new FeedbackService(prisma);
+const commentService = new CommentService(prisma, feedbackService);
 const configService = new ConfigService();
 const mailerService = new MailerService(
   {
