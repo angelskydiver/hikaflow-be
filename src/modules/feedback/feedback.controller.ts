@@ -32,10 +32,7 @@ export class FeedbackController {
 
   @ApiBearerAuth()
   @Put('enable-rule')
-  async enableAnalysisRule(
-    @Body() payload: EnableAnalysisRuleRequestDto,
-    @Request() req: any,
-  ) {
+  async enableAnalysisRule(@Body() payload: EnableAnalysisRuleRequestDto) {
     return await this._feedbackService.enableAnalysisRule(payload);
   }
 
@@ -44,7 +41,6 @@ export class FeedbackController {
   async getIgnoreFeedback(
     @Query('organizationId') organizationId: string,
     @Query('daysBack') daysBack: number = 7,
-    @Request() req: any,
   ) {
     return await this._feedbackService.getIgnoreFeedbackForAnalysis(
       organizationId,
@@ -52,4 +48,3 @@ export class FeedbackController {
     );
   }
 }
-

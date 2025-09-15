@@ -45,10 +45,7 @@ export class CommentController {
 
   @ApiBearerAuth()
   @Post('ignore')
-  async ignoreComment(
-    @Body() payload: IgnoreCommentRequestDto,
-    @Request() req: any,
-  ) {
+  async ignoreComment(@Body() payload: IgnoreCommentRequestDto) {
     return await this._commentService.ignoreComment(
       payload.commentId,
       payload.ignoreReason,
@@ -57,19 +54,13 @@ export class CommentController {
 
   @ApiBearerAuth()
   @Post('unignore')
-  async unignoreComment(
-    @Body() payload: { commentId: string },
-    @Request() req: any,
-  ) {
+  async unignoreComment(@Body() payload: { commentId: string }) {
     return await this._commentService.unignoreComment(payload.commentId);
   }
 
   @ApiBearerAuth()
   @Post(':commentId/reformat')
-  async reformatCommentAnalysis(
-    @Param('commentId') commentId: string,
-    @Request() req: any,
-  ) {
+  async reformatCommentAnalysis(@Param('commentId') commentId: string) {
     return await this._commentService.reformatCommentAnalysis(commentId);
   }
 }

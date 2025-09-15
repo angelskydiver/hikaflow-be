@@ -130,9 +130,22 @@ export class CommentService {
         });
       }
       // Build dynamic where clause based on filters
+      let prIdValue = null;
+      if (data.prId) {
+        pullRequests = await this._prismaService.pullRequest.findFirst({
+          where: {
+            repositoryId: repositoryGithubId,
+            prNumber: parseInt(data.prId),
+          },
+        });
+        if (pullRequests) {
+          prIdValue = pullRequests.id;
+        }
+      }
+      // Build dynamic where clause based on filters
       const whereClause: any = {
         repositoryId: repositoryGithubId,
-        ...(data.prId && { prId: pullRequests.id }),
+        ...(prIdValue && { prId: prIdValue }),
         ...(data.category && {
           issueCategory:
             data.category == CommentRequestType.CODE_ISSUES
