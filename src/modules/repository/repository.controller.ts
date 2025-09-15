@@ -135,8 +135,14 @@ export class RepositoryController {
   }
   @Public()
   @Put('/updateRepositorySettings/:id')
-  async UpdateRepositorySettings(@Param('id') id: string) {
-    return await this._repositoryService.updateRepositorySettings(id);
+  async UpdateRepositorySettings(
+    @Param('id') id: string,
+    @Body() customData: any = null,
+  ) {
+    return await this._repositoryService.updateRepositorySettings(
+      id,
+      customData,
+    );
   }
 
   //
@@ -158,6 +164,19 @@ export class RepositoryController {
     return await this._repositoryService.createRepositorySetting(
       repositoryId,
       data,
+    );
+  }
+
+  @ApiBearerAuth()
+  @Put('/settings/:settingId/customPrompt')
+  async updateRepositorySettingsCustomPrompt(
+    @Param('settingId') settingId: string,
+    @Body() data: { customPrompt: string },
+    @Request() req: any,
+  ) {
+    return await this._repositoryService.updateRepositorySettingsCustomPrompt(
+      settingId,
+      data.customPrompt,
     );
   }
 }
