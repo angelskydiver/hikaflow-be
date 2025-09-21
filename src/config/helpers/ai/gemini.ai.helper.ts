@@ -798,14 +798,25 @@ REQUIRED OUTPUT FORMAT - YOU MUST FOLLOW THIS STRUCTURE EXACTLY TO MATCH DEEPSEE
   "changedBehavior": [
     {
       "component": "Component or function name",
+      "file": "Exact file path where component is defined",
+      "line": "Line number where component is defined",
+      "previousSignature": "Exact function signature before change",
+      "newSignature": "Exact function signature after change",
+      "changeType": "PARAMETER_ADDED|PARAMETER_REMOVED|PARAMETER_MODIFIED|RETURN_TYPE_CHANGED|FUNCTION_REMOVED",
       "previousBehavior": "Description of previous behavior",
       "newBehavior": "Description of new behavior",
-      "invocations": [
+      "callsites": [
         {
           "file": "File path where component is invoked",
           "line": "Line number of invocation",
-          "compatibilityStatus": "COMPATIBLE|INCOMPATIBLE|UNCERTAIN", 
-          "explanation": "Exact reason for compatibility assessment"
+          "callCode": "Exact code that calls this function",
+          "compatibilityStatus": "WILL_BREAK|MIGHT_BREAK|WILL_WORK", 
+          "breakageReason": "Specific reason why this will break (if applicable)",
+          "requiredFix": "Exact code change needed to fix this callsite",
+          "copyPasteCode": "Ready-to-use code that can be copied and pasted directly to fix this callsite",
+          "explanation": "Exact reason for compatibility assessment",
+          "importPath": "How this function is imported in this file",
+          "confidence": "HIGH|MEDIUM|LOW - confidence in this analysis"
         }
       ]
     }
@@ -833,8 +844,112 @@ REQUIRED OUTPUT FORMAT - YOU MUST FOLLOW THIS STRUCTURE EXACTLY TO MATCH DEEPSEE
       "codeExample": "Code example with exact inputs that will trigger failure",
       "willCatchBreakage": true|false
     }
-  ]
+  ],
+
+  "developerReport": {
+    "executiveSummary": {
+      "riskLevel": "LOW|MEDIUM|HIGH|CRITICAL",
+      "totalIssues": 0,
+      "estimatedFixTime": "string (e.g., '15 minutes', '2 hours')",
+      "deploymentRecommendation": "SAFE|REVIEW_REQUIRED|BLOCK",
+      "oneLiner": "Brief summary of what needs attention"
+    },
+    "immediateActions": [
+      {
+        "priority": "CRITICAL|HIGH|MEDIUM|LOW",
+        "action": "What needs to be done",
+        "file": "File to modify",
+        "line": "Line number",
+        "currentCode": "Current code that will break",
+        "requiredChange": "Exact code change needed",
+        "reason": "Why this change is needed",
+        "estimatedTime": "Time to fix (e.g., '2 minutes')",
+        "copyPasteCode": "Ready-to-use code for copy-paste"
+      }
+    ],
+    "testActions": [
+      {
+        "action": "What test to run",
+        "command": "Exact command to execute",
+        "expectedResult": "What to expect",
+        "fixCommand": "Command to fix if test fails"
+      }
+    ],
+    "deploymentDecision": {
+      "recommendation": "DEPLOY|REVIEW|BLOCK",
+      "reason": "Why this recommendation",
+      "blockingIssues": ["List of issues that block deployment"],
+      "riskMitigation": "How to reduce risk if deploying"
+    }
+  }
 }
+
+CRITICAL CALLSITE TRACING INSTRUCTIONS:
+1. **MANDATORY: Find EVERY callsite** - You MUST search through ALL provided files systematically
+2. **Search patterns (be exhaustive)**:
+   - Direct calls: functionName(, functionName.call(, functionName.apply(
+   - Method calls: object.functionName(, this.functionName(
+   - Destructured calls: const { functionName } = module; functionName(
+   - Imported calls: import { functionName } from 'module'; functionName(
+   - Callback calls: .then(functionName), .catch(functionName), .finally(functionName)
+   - Array methods: .map(functionName), .filter(functionName), .reduce(functionName)
+   - Event handlers: onClick={functionName}, onSubmit={functionName}
+   - Conditional calls: if (condition) functionName(, condition ? functionName( : otherFunction(
+   - Async calls: await functionName(, Promise.resolve().then(() => functionName(
+
+3. **BREAKAGE ANALYSIS RULES**:
+   - WILL_BREAK: Only if the code will actually throw an error or fail at runtime
+   - MIGHT_BREAK: Only if behavior changes in a way that could cause issues
+   - WILL_WORK: If the change is backward compatible or doesn't affect this callsite
+   - DO NOT flag parameter order issues unless the function signature actually changed
+   - DO NOT flag store/state issues unless the actual store interface changed
+
+4. **For each callsite found**:
+   - Provide exact file path and line number
+   - Show the exact code that calls the function
+   - Determine breakage status with specific reasoning
+   - If it will break, provide the exact fix needed
+   - Estimate how long it will take to fix
+
+5. **Example of precise callsite analysis**:
+   If function getUserById(id, includeProfile) changes to getUserById(id, includeProfile, options):
+   - Find: getUserById(userId, true) in UserProfile.jsx:67
+   - Status: WILL_BREAK
+   - Reason: Missing required 'options' parameter
+   - Fix: getUserById(userId, true, {})
+   - Time: 2 minutes
+
+CRITICAL ACCURACY REQUIREMENTS:
+1. **DO NOT FLAG THESE AS BREAKAGES**:
+   - Parameter order in function calls (unless the function signature actually changed)
+   - Store/state availability (unless the actual interface changed)
+   - Generic "might break" scenarios without specific evidence
+   - Assumptions about function behavior without seeing the actual implementation
+
+2. **ONLY FLAG AS BREAKAGES**:
+   - Actual function signature changes (added/removed required parameters)
+   - Removed functions or methods
+   - Type mismatches that will cause runtime errors
+   - Actual interface changes in stores/APIs
+
+3. **CALLSITE DETECTION**:
+   - You MUST find ALL callsites, not just some
+   - If you find 7 callsites, list all 7, not just 2
+   - Be systematic: search file by file, line by line
+   - Include all variations: direct calls, method calls, callbacks, etc.
+
+4. **DIVERSE ANALYSIS**:
+   - Don't repeat the same type of issue multiple times
+   - Focus on different aspects: function changes, data flow, error handling, etc.
+   - Provide unique insights for each potential breakage
+
+5. **TEST CASE GENERATION**:
+   - Generate specific, actionable test cases with exact inputs
+   - Include copy-paste ready code for immediate use
+   - Specify testing framework (Jest, Mocha, Pytest, etc.)
+   - Provide estimated implementation time
+   - Include specific assertion points and mock requirements
+   - Focus on tests that will actually catch the breakages identified
 
 The analysis must be HIGHLY DETAILED and SPECIFIC. Include exact file locations, line numbers, variable names, and concrete examples of breakage conditions. Generic statements are USELESS. BE SPECIFIC.`;
 
