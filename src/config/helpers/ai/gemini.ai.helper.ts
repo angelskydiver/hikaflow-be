@@ -7,7 +7,11 @@ export class Gemini {
   private readonly genAI: GoogleGenerativeAI;
 
   constructor() {
-    this.genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+    const apiKey = ***REMOVED_SECRET***;
+    if (!apiKey) {
+      throw new Error('GEMINI_API_KEY environment variable is required');
+    }
+    this.genAI = new GoogleGenerativeAI(apiKey);
   }
 
   /**
@@ -448,6 +452,7 @@ END OF PREVIOUS QUESTIONS
 
     // Try with Pro model first, fall back to Flash if needed
     while (retryCount <= MAX_RETRIES) {
+      let streamResult = null;
       try {
         const model = this.genAI.getGenerativeModel({ model: modelToUse });
 
@@ -510,30 +515,46 @@ END OF PREVIOUS QUESTIONS
         );
 
         // Use streaming generation
-        const streamResult = await model.generateContentStream([prompt]);
+        streamResult = await model.generateContentStream([prompt]);
         let fullResponse = '';
         let buffer = ''; // Buffer to accumulate smaller chunks
+        let streamCleanup = false;
 
-        for await (const chunk of streamResult.stream) {
-          const chunkText = chunk.text();
-          if (chunkText) {
-            fullResponse += chunkText;
-            buffer += chunkText;
+        try {
+          for await (const chunk of streamResult.stream) {
+            const chunkText = chunk.text();
+            if (chunkText) {
+              fullResponse += chunkText;
+              buffer += chunkText;
 
-            // Send smaller chunks for smoother streaming
-            if (buffer.length >= 20 || buffer.includes('\n')) {
-              // Send the buffered content as a smaller chunk
-              if (onChunk) {
-                onChunk(buffer);
+              // Send smaller chunks for smoother streaming
+              if (buffer.length >= 20 || buffer.includes('\n')) {
+                // Send the buffered content as a smaller chunk
+                if (onChunk) {
+                  onChunk(buffer);
+                }
+                buffer = ''; // Reset buffer
               }
-              buffer = ''; // Reset buffer
             }
           }
-        }
 
-        // Send any remaining buffered content
-        if (buffer.length > 0 && onChunk) {
-          onChunk(buffer);
+          // Send any remaining buffered content
+          if (buffer.length > 0 && onChunk) {
+            onChunk(buffer);
+          }
+          streamCleanup = true;
+        } finally {
+          // Ensure stream cleanup to prevent memory leaks
+          if (!streamCleanup && streamResult?.stream) {
+            try {
+              // Force cleanup of any remaining stream resources
+              if (typeof streamResult.stream.return === 'function') {
+                await streamResult.stream.return();
+              }
+            } catch (cleanupError) {
+              console.warn('Error during stream cleanup:', cleanupError);
+            }
+          }
         }
 
         // Create the final response object
@@ -563,6 +584,21 @@ END OF PREVIOUS QUESTIONS
           apiError,
         );
         lastError = apiError;
+
+        // Clean up any active streams to prevent memory leaks
+        try {
+          if (
+            streamResult?.stream &&
+            typeof streamResult.stream.return === 'function'
+          ) {
+            await streamResult.stream.return();
+          }
+        } catch (cleanupError) {
+          console.warn(
+            'Error during stream cleanup in catch block:',
+            cleanupError,
+          );
+        }
 
         // Handle specific error types
         if (
