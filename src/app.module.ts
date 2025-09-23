@@ -29,6 +29,7 @@ import { RepositoryScanModule } from './modules/repositoryScan/repositoryScan.mo
 import { UsersModule } from './modules/user/user.module';
 import { VerificationCodeModule } from './modules/verificationCode/verificationCode.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
+import { EnhancedTestCaseModule } from './modules/impactAnalysis/enhancedTestGeneration/enhancedTestCase.module';
 import { JwtAuthGuard } from './passport/guards/jwt.guard';
 import { JwtStrategy } from './passport/strategies/jwt.strategy';
 import { LocalStrategy } from './passport/strategies/local.strategy';
@@ -73,6 +74,7 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
     BillingModule,
     DiscountModule,
     FeedbackModule,
+    EnhancedTestCaseModule,
   ],
   controllers: [AppController],
   providers: [

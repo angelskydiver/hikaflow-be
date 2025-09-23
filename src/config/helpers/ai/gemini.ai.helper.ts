@@ -873,12 +873,39 @@ REQUIRED OUTPUT FORMAT - YOU MUST FOLLOW THIS STRUCTURE EXACTLY TO MATCH DEEPSEE
   "testCases": [
     {
       "testName": "Descriptive test name",
-      "type": "UNIT|INTEGRATION|E2E|REGRESSION",
+      "type": "UNIT|INTEGRATION|E2E|REGRESSION|PERFORMANCE|SECURITY",
+      "category": "HAPPY_PATH|EDGE_CASE|ERROR_HANDLING|BOUNDARY_CONDITION|INTEGRATION_FLOW",
+      "priority": "CRITICAL|HIGH|MEDIUM|LOW",
+      "flowName": "Business flow this test covers",
       "scenario": "What scenario this test covers",
-      "steps": ["Step 1", "Step 2", "..."],
+      "preconditions": ["System state", "Data setup", "Environment requirements"],
+      "steps": ["Step 1: Specific action with exact inputs", "Step 2: Next action with expected behavior", "Step 3: Validation step"],
       "expectedResult": "Expected outcome of the test",
+      "edgeCases": ["Specific edge case 1 with inputs", "Specific edge case 2 with inputs"],
+      "dataVariations": ["Data variation 1", "Data variation 2"],
+      "performanceExpectations": {
+        "maxResponseTime": "500ms",
+        "maxMemoryUsage": "100MB",
+        "concurrentUsers": 100
+      },
+      "securityConsiderations": {
+        "authentication": "Required",
+        "authorization": "User role check",
+        "dataValidation": "Input sanitization"
+      },
+      "willCatchBreakage": true|false,
+      "confidence": "HIGH|MEDIUM|LOW",
+      "estimatedExecutionTime": "5 minutes",
+      "automationComplexity": "SIMPLE|MODERATE|COMPLEX",
+      "framework": "Jest|Mocha|Pytest|Cypress",
+      "copyPasteCode": "Ready-to-use test code that can be copied and pasted directly",
       "codeExample": "Code example with exact inputs that will trigger failure",
-      "willCatchBreakage": true|false
+      "assertionPoints": ["Specific assertion 1: expect(result).toBe(expected)", "Specific assertion 2: expect(error).toBeDefined()"],
+      "mockRequirements": ["Specific service to mock: mockService.method", "Specific data to return: { id: 1, name: 'test' }"],
+      "relatedFlows": ["Related flow 1", "Related flow 2"],
+      "tags": ["tag1", "tag2", "tag3"],
+      "qualityScore": 85.5,
+      "coverageImpact": 15.2
     }
   ],
 

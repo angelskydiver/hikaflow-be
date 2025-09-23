@@ -110,6 +110,42 @@ enum FileDocumentationType {
   UNKNOWN
 }
 
+enum TestCaseType {
+  UNIT
+  INTEGRATION
+  E2E
+  REGRESSION
+  PERFORMANCE
+  SECURITY
+}
+
+enum TestCaseCategory {
+  HAPPY_PATH
+  EDGE_CASE
+  ERROR_HANDLING
+  BOUNDARY_CONDITION
+  INTEGRATION_FLOW
+}
+
+enum TestCasePriority {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum TestCaseConfidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum AutomationComplexity {
+  SIMPLE
+  MODERATE
+  COMPLEX
+}
+
 enum DiscountType {
   PERCENTAGE @map("PERCENTAGE")
   FIXED      @map("FIXED")
@@ -594,6 +630,115 @@ model RegressionReport {
 
   repository   Repository   @relation(fields: [repositoryId], references: [id])
   organization Organization @relation(fields: [organizationId], references: [id])
+  enhancedTestCases EnhancedTestCase[]
+  businessFlows     BusinessFlow[]
+  testQualityMetrics TestQualityMetrics?
+}
+
+model EnhancedTestCase {
+  id                    String                @id @default(uuid())
+  regressionReportId    String
+  testName              String
+  type                  TestCaseType
+  category              TestCaseCategory
+  priority              TestCasePriority
+  flowName              String? // Business flow this test covers
+  scenario              String
+  preconditions         String[]              @default([])
+  steps                 Json                  @default("[]") // Array of test steps
+  expectedResult        String
+  edgeCases             Json                  @default("[]") // Array of edge cases
+  dataVariations        Json                  @default("[]") // Array of data variations
+  performanceExpectations Json?               // Performance test expectations
+  securityConsiderations Json?               // Security test considerations
+  willCatchBreakage     Boolean               @default(false)
+  confidence            TestCaseConfidence     @default(MEDIUM)
+  estimatedExecutionTime String              @default("5 minutes")
+  automationComplexity  AutomationComplexity  @default(SIMPLE)
+  framework             String                @default("Jest")
+  copyPasteCode         String                @default("")
+  codeExample           String?               // Code example for the test
+  assertionPoints       String[]              @default([]) // Specific assertion points
+  mockRequirements      String[]              @default([]) // Mock requirements
+  relatedFlows          String[]              @default([]) // Related business flows
+  tags                  String[]              @default([]) // Tags for categorization
+  qualityScore          Float?                // Quality score for this test case
+  coverageImpact        Float?                // Impact on overall coverage
+  
+  // Relationships
+  regressionReport      RegressionReport       @relation(fields: [regressionReportId], references: [id], onDelete: Cascade)
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  
+  @@index([regressionReportId])
+  @@index([type])
+  @@index([category])
+  @@index([priority])
+  @@index([flowName])
+}
+
+model BusinessFlow {
+  id                    String                @id @default(uuid())
+  regressionReportId    String
+  flowName              String
+  description           String
+  flowType              String                @default("USER_JOURNEY") // USER_JOURNEY, API_FLOW, DATA_FLOW, INTEGRATION_FLOW
+  steps                 Json                  @default("[]") // Array of flow steps
+  entryPoints           String[]              @default([]) // Entry points to this flow
+  exitPoints            String[]              @default([]) // Exit points from this flow
+  dependencies          String[]              @default([]) // Dependencies on other flows
+  criticality           TestCasePriority      @default(MEDIUM)
+  affectedComponents    String[]              @default([]) // Components affected by this flow
+  testCases             String[]              @default([]) // Related test case IDs
+  coverage              Float                 @default(0) // Coverage percentage for this flow
+  riskLevel             String                @default("MEDIUM") // Risk level of this flow
+  
+  // Relationships
+  regressionReport       RegressionReport      @relation(fields: [regressionReportId], references: [id], onDelete: Cascade)
+  
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  
+  @@index([regressionReportId])
+  @@index([flowType])
+  @@index([criticality])
+}
+
+model TestQualityMetrics {
+  id                    String                @id @default(uuid())
+  regressionReportId    String
+  overallCoverage       Float                 @default(0) // Overall test coverage percentage
+  happyPathCoverage     Float                 @default(0) // Happy path coverage percentage
+  edgeCaseCoverage      Float                 @default(0) // Edge case coverage percentage
+  errorHandlingCoverage Float                 @default(0) // Error handling coverage percentage
+  integrationCoverage   Float                 @default(0) // Integration coverage percentage
+  e2eCoverage          Float                 @default(0) // E2E coverage percentage
+  
+  // Test distribution
+  unitTestRatio         Float                 @default(0) // Unit test ratio
+  integrationTestRatio  Float                 @default(0) // Integration test ratio
+  e2eTestRatio          Float                 @default(0) // E2E test ratio
+  performanceTestRatio   Float                 @default(0) // Performance test ratio
+  
+  // Risk coverage
+  criticalRiskCoverage  Float                 @default(0) // Critical risk coverage
+  highRiskCoverage      Float                 @default(0) // High risk coverage
+  mediumRiskCoverage    Float                 @default(0) // Medium risk coverage
+  lowRiskCoverage       Float                 @default(0) // Low risk coverage
+  
+  // Quality scores
+  testQualityScore      Float                 @default(0) // Overall test quality score
+  automationScore       Float                 @default(0) // Automation score
+  maintainabilityScore  Float                 @default(0) // Test maintainability score
+  
+  // Relationships
+  regressionReport       RegressionReport      @relation(fields: [regressionReportId], references: [id], onDelete: Cascade)
+  
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  
+  @@index([regressionReportId])
 }
 
 model PricingPlan {
