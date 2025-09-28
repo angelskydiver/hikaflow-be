@@ -481,6 +481,10 @@ export class RepositoryScanService {
             issueCategory: data.category,
             severity: data.priority,
             reason: data.reason,
+            // enhancementType: data.enhancementType,
+            // affectedCodeBlock: data?.affectedCodeBlock || {},
+            // improvedCodeBlock: data?.improvedCodeBlock || {},
+            // tags: data.tags || [],
             type: CommentType.ISSUE,
           };
 
@@ -908,17 +912,17 @@ export class RepositoryScanService {
       }
 
       // Add this after line ~1691 where commitInfo is retrieved
-      if (
-        accountCredentials.accountType !== AccountCredentialsType.GITHUB_TOKEN
-      ) {
-        // For Bitbucket, swap the values since they're reversed
-        const temp = latestCommitSha;
-        latestCommitSha = parentCommitSha;
-        parentCommitSha = temp;
-        console.log(
-          `[Bitbucket] Swapped commit SHAs - now using latest=${latestCommitSha}, parent=${parentCommitSha}`,
-        );
-      }
+      // if (
+      //   accountCredentials.accountType !== AccountCredentialsType.GITHUB_TOKEN
+      // ) {
+      //   // For Bitbucket, swap the values since they're reversed
+      //   const temp = latestCommitSha;
+      //   latestCommitSha = parentCommitSha;
+      //   parentCommitSha = temp;
+      //   console.log(
+      //     `[Bitbucket] Swapped commit SHAs - now using latest=${latestCommitSha}, parent=${parentCommitSha}`,
+      //   );
+      // }
 
       // Create a map of file documentation for quick lookup
       const fileDocMap = {};

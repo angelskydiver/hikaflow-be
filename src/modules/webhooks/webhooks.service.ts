@@ -11,6 +11,7 @@ import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
 import { Gemini } from 'src/config/helpers/ai/gemini.ai.helper';
 import {
   commentBitbucketPr,
+  commentBitbucketPrIssue,
   commitInfoBitbucket,
   extractChangesFromPatch,
   fetchBitbucketDiff,
@@ -1521,7 +1522,7 @@ export class WebhooksService {
       const createCommentsMapping = highQualityIssues
         .map((data) => {
           const payload = {
-            repositoryId: prInfo.repositoryId, // Use the correct internal repository ID
+            repositoryId: prInfo.id, // Use the correct internal repository ID
             prId: prInfo.prId,
             content: data.content,
             line: parseInt(data.line),
@@ -1587,12 +1588,44 @@ export class WebhooksService {
         contextualPrompts.summaryPrompt,
       );
 
+      let { decryptedToken } = await this._accountCredentialByRepository({
+        repository: { id: repository.repositoryId },
+      });
+
+      // Create individual issue comments mapping - similar to GitHub approach
+      const commentsMapping = highQualityIssues.map((data) =>
+        commentBitbucketPrIssue(data, { ...prInfo, token: decryptedToken }),
+      );
+
+      // Execute individual issue comments in parallel
+      const individualCommentResults =
+        await Promise.allSettled(commentsMapping);
+
+      // Log comment creation results
+      const successfulIndividualComments = individualCommentResults.filter(
+        (result) => result.status === 'fulfilled',
+      ).length;
+      const failedIndividualComments = individualCommentResults.filter(
+        (result) => result.status === 'rejected',
+      );
+
+      console.log(
+        `Successfully created ${successfulIndividualComments} individual Bitbucket comments`,
+      );
+      if (failedIndividualComments.length > 0) {
+        console.error(
+          `Failed to create ${failedIndividualComments.length} individual Bitbucket comments:`,
+          failedIndividualComments.map((f) => f.reason),
+        );
+      }
+
+      // Also create the summary comment
       await commentBitbucketPr({
-        token: prInfo.token,
+        token: decryptedToken,
         commentUrl: prInfo.links.comments.href,
         body: {
           content: {
-            raw: enhancedComment,
+            raw: analyzeCombineSummary.prSummary,
           },
         },
       });
