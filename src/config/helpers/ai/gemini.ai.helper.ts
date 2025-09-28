@@ -128,7 +128,7 @@ export class Gemini {
 
       // Third attempt: Use Gemini to repair the JSON
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-1.5-pro',
+        model: 'gemini-2.5-pro',
       });
 
       const prompt = `
@@ -255,7 +255,7 @@ Return ONLY the fixed JSON with no other text, explanations, or code formatting.
       `;
 
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-1.5-pro',
+        model: 'gemini-2.5-pro',
       });
       let resp: any = await model.generateContent([prompt]);
       resp = this.extractCleanJSON(
@@ -291,7 +291,7 @@ Return ONLY the fixed JSON with no other text, explanations, or code formatting.
    * @returns AI response with references
    */
   async generateAnswer(input: string, result, previousQuestions?: string) {
-    let modelToUse = 'gemini-1.5-pro';
+    let modelToUse = 'gemini-2.5-pro';
     let retryCount = 0;
     const MAX_RETRIES = 3;
     let lastError = null;
@@ -389,9 +389,9 @@ END OF PREVIOUS QUESTIONS
           // Switch model if we're not making progress
           if (retryCount >= 1) {
             modelToUse =
-              modelToUse === 'gemini-1.5-pro'
-                ? 'gemini-1.5-pro'
-                : 'gemini-1.5-pro';
+              modelToUse === 'gemini-2.5-pro'
+                ? 'gemini-2.5-pro'
+                : 'gemini-2.5-pro';
             console.log(`Switching to ${modelToUse} for retry`);
           }
         } else if (apiError.status === 429) {
@@ -404,9 +404,9 @@ END OF PREVIOUS QUESTIONS
         } else {
           // For other errors, try switching model immediately
           modelToUse =
-            modelToUse === 'gemini-1.5-pro'
-              ? 'gemini-1.5-pro'
-              : 'gemini-1.5-pro';
+            modelToUse === 'gemini-2.5-pro'
+              ? 'gemini-2.5-pro'
+              : 'gemini-2.5-pro';
           console.log(`API error, switching to ${modelToUse} for retry`);
         }
 
@@ -445,7 +445,7 @@ END OF PREVIOUS QUESTIONS
     previousQuestions?: string,
     onChunk?: (chunk: string) => void,
   ) {
-    let modelToUse = 'gemini-1.5-pro';
+    let modelToUse = 'gemini-2.5-pro';
     let retryCount = 0;
     const MAX_RETRIES = 3;
     let lastError = null;
@@ -617,9 +617,9 @@ END OF PREVIOUS QUESTIONS
           // Switch model if we're not making progress
           if (retryCount >= 1) {
             modelToUse =
-              modelToUse === 'gemini-1.5-pro'
-                ? 'gemini-1.5-pro'
-                : 'gemini-1.5-pro';
+              modelToUse === 'gemini-2.5-pro'
+                ? 'gemini-2.5-pro'
+                : 'gemini-2.5-pro';
             console.log(`Switching to ${modelToUse} for retry`);
           }
         } else if (apiError.status === 429) {
@@ -632,9 +632,9 @@ END OF PREVIOUS QUESTIONS
         } else {
           // For other errors, try switching model immediately
           modelToUse =
-            modelToUse === 'gemini-1.5-pro'
-              ? 'gemini-1.5-pro'
-              : 'gemini-1.5-pro';
+            modelToUse === 'gemini-2.5-pro'
+              ? 'gemini-2.5-pro'
+              : 'gemini-2.5-pro';
           console.log(`API error, switching to ${modelToUse} for retry`);
         }
 
@@ -700,7 +700,7 @@ END OF PREVIOUS QUESTIONS
         return this.analyzeRegressionImpactInChunks(changedFiles);
       }
 
-      let modelToUse = 'gemini-1.5-pro';
+      let modelToUse = 'gemini-2.5-pro';
       let retryCount = 0;
       const MAX_RETRIES = 3;
       let lastError = null;
@@ -999,7 +999,7 @@ The analysis must be HIGHLY DETAILED and SPECIFIC. Include exact file locations,
             systemInstruction: systemPrompt,
             generationConfig: {
               temperature: 0.2, // Slight randomness for better analysis quality
-              maxOutputTokens: modelToUse === 'gemini-1.5-pro' ? 8192 : 4096,
+              maxOutputTokens: modelToUse === 'gemini-2.5-pro' ? 8192 : 4096,
               topK: 40,
               topP: 0.95,
             },
@@ -1113,11 +1113,11 @@ The analysis must be HIGHLY DETAILED and SPECIFIC. Include exact file locations,
           // If we get rate limit error (429), wait and retry or switch model
           if (apiError.status === 429) {
             // Try with less intensive model if we're still using pro
-            if (modelToUse === 'gemini-1.5-pro') {
+            if (modelToUse === 'gemini-2.5-pro') {
               console.log(
-                'Rate limit hit with pro model, switching to gemini-1.5-pro...',
+                'Rate limit hit with pro model, switching to gemini-2.5-pro...',
               );
-              modelToUse = 'gemini-1.5-pro';
+              modelToUse = 'gemini-2.5-pro';
               // Small delay to allow quota to reset
               await new Promise((resolve) => setTimeout(resolve, 2000));
             } else {
@@ -1131,9 +1131,9 @@ The analysis must be HIGHLY DETAILED and SPECIFIC. Include exact file locations,
           } else {
             // For other errors, switch model and retry
             modelToUse =
-              modelToUse === 'gemini-1.5-pro'
-                ? 'gemini-1.5-pro'
-                : 'gemini-1.5-pro';
+              modelToUse === 'gemini-2.5-pro'
+                ? 'gemini-2.5-pro'
+                : 'gemini-2.5-pro';
           }
 
           retryCount++;
@@ -1700,7 +1700,7 @@ test('API returns correct response', async () => {
   ): Promise<string> {
     try {
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-1.5-pro',
+        model: 'gemini-2.5-pro',
       });
 
       const prompt = `You are an AI assistant that helps categorize user questions about codebases into one of five types:
@@ -1796,7 +1796,7 @@ Query: ${query}`;
     try {
       // Create generative model
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-1.5-pro',
+        model: 'gemini-2.5-pro',
         generationConfig: {
           temperature: 0,
           maxOutputTokens: 1024,
@@ -1896,7 +1896,7 @@ ${content}
         const batch = input.issues.slice(i, i + BATCH_SIZE);
 
         const model = this.genAI.getGenerativeModel({
-          model: 'gemini-1.5-pro',
+          model: 'gemini-2.5-pro',
         });
 
         const prompt = `You are an expert code reviewer. Your task is to determine which PR review comments are now FIXED based on the latest commit changes.
