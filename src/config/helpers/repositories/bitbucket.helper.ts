@@ -303,6 +303,7 @@ export const commentBitbucketPr = async (data: {
     // console.log'response: ', JSON.stringify(response.data, null, 2));
     return response;
   } catch (error) {
+    console.error('Error commenting on PR:', error);
     // console.logerror);
     return null;
     // throw error; // It's better to throw the actual error for debugging
@@ -787,3 +788,181 @@ export async function bitbucketRepositoryStructure(data: {
     throw new Error(error.message);
   }
 }
+
+// Helper function to get file extension for syntax highlighting
+function getFileExtension(filename: string): string {
+  if (!filename) return '';
+
+  const extension = filename.split('.').pop()?.toLowerCase();
+
+  // Map file extensions to syntax highlighting languages
+  const languageMap = {
+    ts: 'typescript',
+    js: 'javascript',
+    tsx: 'tsx',
+    jsx: 'jsx',
+    py: 'python',
+    java: 'java',
+    cs: 'csharp',
+    cpp: 'cpp',
+    c: 'c',
+    php: 'php',
+    rb: 'ruby',
+    go: 'go',
+    rs: 'rust',
+    kt: 'kotlin',
+    swift: 'swift',
+    html: 'html',
+    css: 'css',
+    scss: 'scss',
+    json: 'json',
+    yaml: 'yaml',
+    yml: 'yaml',
+    xml: 'xml',
+    sql: 'sql',
+    sh: 'bash',
+    md: 'markdown',
+  };
+
+  return languageMap[extension] || extension || '';
+}
+
+export const commentBitbucketPrIssue = async (
+  payload: any,
+  prInfo: any,
+): Promise<any> => {
+  try {
+    // Format enhanced comment based on enhancement type
+    let commentBody = '';
+
+    if (
+      payload.enhancementType === 'CODE_REPLACEMENT' &&
+      payload.improvedCodeBlock
+    ) {
+      // Code replacement with copy-paste solution
+      commentBody = `## 🔧 ${payload.issue}
+**Priority:** ${payload.priority} | **Category:** ${payload.category}
+
+### 📍 Affected Code
+\`\`\`${getFileExtension(payload.file)}
+${payload.affectedCodeBlock?.codeLines?.join('\n') || payload.content}
+\`\`\`
+
+### ✨ Improved Code
+\`\`\`${getFileExtension(payload.file)}
+${payload.improvedCodeBlock.codeLines.join('\n')}
+\`\`\`
+
+${payload.improvedCodeBlock.explanation || ''}
+
+### 📋 Analysis
+${payload.reason}
+
+---
+*💡 You can copy and paste the improved code directly to fix this issue.*`;
+    } else if (payload.enhancementType === 'SUGGESTION') {
+      // Suggestion without code replacement
+      commentBody = `## 💡 ${payload.issue}
+**Priority:** ${payload.priority} | **Category:** ${payload.category}
+
+### 📍 Code Location
+\`\`\`${getFileExtension(payload.file)}
+${payload.affectedCodeBlock?.codeLines?.join('\n') || payload.content}
+\`\`\`
+
+### 📋 Analysis & Recommendations
+${payload.reason}
+
+---
+*📝 This requires manual review and implementation based on your specific requirements.*`;
+    } else if (
+      payload.enhancementType === 'SECURITY_FIX' &&
+      payload.improvedCodeBlock
+    ) {
+      // Security fix with secure code
+      commentBody = `## 🛡️ Security Issue: ${payload.issue}
+**Priority:** ${payload.priority} | **Impact:** Security Vulnerability
+
+### ⚠️ Vulnerable Code
+\`\`\`${getFileExtension(payload.file)}
+${payload.affectedCodeBlock?.codeLines?.join('\n') || payload.content}
+\`\`\`
+
+### 🔒 Secure Implementation
+\`\`\`${getFileExtension(payload.file)}
+${payload.improvedCodeBlock.codeLines.join('\n')}
+\`\`\`
+
+${payload.improvedCodeBlock.explanation || ''}
+
+### 🔍 Security Analysis
+${payload.reason}
+
+---
+*🚨 Please implement this security fix immediately to protect against potential vulnerabilities.*`;
+    } else if (
+      payload.enhancementType === 'REFACTOR' &&
+      payload.improvedCodeBlock
+    ) {
+      // Refactoring suggestion
+      commentBody = `## ♻️ ${payload.issue}
+**Priority:** ${payload.priority} | **Focus:** Code Quality
+
+### 📍 Current Implementation
+\`\`\`${getFileExtension(payload.file)}
+${payload.affectedCodeBlock?.codeLines?.join('\n') || payload.content}
+\`\`\`
+
+### 🎯 Refactored Code
+\`\`\`${getFileExtension(payload.file)}
+${payload.improvedCodeBlock.codeLines.join('\n')}
+\`\`\`
+
+${payload.improvedCodeBlock.explanation || ''}
+
+### 📋 Refactoring Benefits
+${payload.reason}
+
+---
+*✨ This refactoring will improve code maintainability and readability.*`;
+    } else {
+      // Fallback to original format for backward compatibility
+      commentBody = `## ${payload.issue}
+**Priority:** ${payload.priority}
+
+### 📍 Code Location
+\`\`\`${getFileExtension(payload.file)}
+${payload.content}
+\`\`\`
+
+### 📋 Analysis
+${payload.reason}`;
+    }
+
+    // For Bitbucket, we need to create inline comments on specific lines
+    const response = await axios.post(
+      `${prInfo.links.comments.href}`,
+      {
+        content: {
+          raw: commentBody,
+        },
+        inline: {
+          to: parseInt(payload.line),
+          path: payload.file,
+        },
+      },
+      {
+        headers: { Authorization: `${prInfo.token}` },
+      },
+    );
+
+    return {
+      isPrIssue: true,
+    };
+  } catch (error) {
+    console.error('Error commenting on Bitbucket PR issue:', error);
+    return {
+      isPrIssue: false,
+    };
+  }
+};
