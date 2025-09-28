@@ -292,10 +292,24 @@ export class WebhooksService {
         ];
       });
 
-      // Use Gemini to detect fixed comments based on latest changes
+      // Enhanced fixed comment detection with better analysis
       const gemini = new Gemini();
+
+      // Get all existing comments for this PR (not just changed files)
+      const allPrComments = await this._prismaService.comment.findMany({
+        where: {
+          prId: pullRequest.id,
+          status: { not: 'OUTDATED' }, // Only check active issues
+        },
+      });
+
+      console.log(
+        `Analyzing ${allPrComments.length} existing issues for fixes in PR #${data.number}`,
+      );
+
+      // Enhanced fixed comment detection
       const fixedIds = await gemini.detectFixedComments({
-        issues: currentComments.map((c) => ({
+        issues: allPrComments.map((c) => ({
           id: c.id,
           file: c.file,
           line: Number(c.line) || 0,
@@ -307,7 +321,33 @@ export class WebhooksService {
       });
 
       if (fixedIds.length > 0) {
+        console.log(
+          `Found ${fixedIds.length} fixed issues in PR #${data.number}:`,
+          fixedIds,
+        );
         await this._commentService.updateComments(fixedIds);
+
+        // Send notification about fixed issues
+        try {
+          await this.sendPrIssuesFixedNotification({
+            accountId: accountId,
+            authorName: data.pull_request.user.login,
+            prNumber: data.number.toString(),
+            repositoryInfo: {
+              repositoryName: data.repository.name,
+              repositoryId: data.repository.id.toString(),
+            },
+            fixedIssuesCount: fixedIds.length,
+            fixedIssues: fixedIds,
+          });
+        } catch (emailError) {
+          console.error(
+            'Failed to send fixed issues notification:',
+            emailError,
+          );
+        }
+      } else {
+        console.log(`No issues were fixed in PR #${data.number} update`);
       }
 
       const deepSeekWrapper = new DeepSeek();
@@ -442,10 +482,11 @@ export class WebhooksService {
         where: { prUrl: data.pullrequest.links.html.href },
       });
 
-      const currentComments = await this._prismaService.comment.findMany({
+      // Enhanced fixed comment detection for Bitbucket
+      const allPrComments = await this._prismaService.comment.findMany({
         where: {
           prId: pullRequest.id,
-          file: { in: diffChanges.files.map((data) => data) },
+          status: { not: 'OUTDATED' }, // Only check active issues
         },
       });
 
@@ -465,9 +506,13 @@ export class WebhooksService {
         ];
       });
 
+      console.log(
+        `Analyzing ${allPrComments.length} existing issues for fixes in Bitbucket PR #${data.pullrequest.id}`,
+      );
+
       const gemini = new Gemini();
       const fixedIds = await gemini.detectFixedComments({
-        issues: currentComments.map((c) => ({
+        issues: allPrComments.map((c) => ({
           id: c.id,
           file: c.file,
           line: Number(c.line) || 0,
@@ -479,7 +524,36 @@ export class WebhooksService {
       });
 
       if (fixedIds.length > 0) {
+        console.log(
+          `Found ${fixedIds.length} fixed issues in Bitbucket PR #${data.pullrequest.id}:`,
+          fixedIds,
+        );
         await this._commentService.updateComments(fixedIds);
+
+        // Send notification about fixed issues for Bitbucket
+        try {
+          const { accountId } = await this._accountCredentialByRepository(data);
+          await this.sendPrIssuesFixedNotification({
+            accountId: accountId,
+            authorName: data.actor.display_name,
+            prNumber: data.pullrequest.id.toString(),
+            repositoryInfo: {
+              repositoryName: data.repository.name,
+              repositoryId: data.repository.uuid,
+            },
+            fixedIssuesCount: fixedIds.length,
+            fixedIssues: fixedIds,
+          });
+        } catch (emailError) {
+          console.error(
+            'Failed to send fixed issues notification for Bitbucket:',
+            emailError,
+          );
+        }
+      } else {
+        console.log(
+          `No issues were fixed in Bitbucket PR #${data.pullrequest.id} update`,
+        );
       }
 
       const deepSeekWrapper = new DeepSeek();
@@ -1928,6 +2002,71 @@ export class WebhooksService {
       await Promise.all(emailMapping);
 
       // TODO: send email
+    } catch (error) {
+      console.error(error.message);
+    }
+  }
+
+  async sendPrIssuesFixedNotification(data: {
+    accountId: string;
+    authorName: string;
+    prNumber: string;
+    repositoryInfo: { repositoryName: string; repositoryId: string };
+    fixedIssuesCount: number;
+    fixedIssues: string[];
+  }) {
+    try {
+      const organizationalAccount =
+        await this._prismaService.organizationAccounts.findFirst({
+          where: {
+            role: 'ADMIN',
+            accountId: data.accountId,
+          },
+        });
+      if (!organizationalAccount) {
+        throw new Error('Account not found');
+      }
+      const orgAdmins = await this._prismaService.organizationAccounts.findMany(
+        {
+          where: {
+            organizationId: organizationalAccount.organizationId,
+            role: { not: 'MEMBER' },
+          },
+          include: {
+            account: true,
+          },
+        },
+      );
+      const organizationAdminsAccount = orgAdmins.map((data) => data.accountId);
+      const accounts = await this._prismaService.account.findMany({
+        where: {
+          id: { in: organizationAdminsAccount },
+        },
+        include: {
+          user: true,
+        },
+      });
+
+      const emailMapping = accounts
+        .filter((account) => account.user.sendEmail)
+        .map((account) => {
+          return this._mailService.prUpdatedNotification({
+            email: account.user.email,
+            adminName: account.user.firstName,
+            repositoryName: data.repositoryInfo.repositoryName,
+            authorName: data.authorName,
+            prUrl: `${process.env.HIKAFLOW_PORTAL_URL}/repository/${data.repositoryInfo.repositoryId}/${data.accountId}`,
+            prNumber: data.prNumber,
+            changesSummary: {
+              filesChanged: 0,
+              additions: 0,
+              deletions: 0,
+              fixedIssues: data.fixedIssuesCount,
+            },
+          });
+        });
+
+      await Promise.all(emailMapping);
     } catch (error) {
       console.error(error.message);
     }
