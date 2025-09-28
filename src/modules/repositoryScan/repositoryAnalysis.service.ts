@@ -707,6 +707,7 @@ Return the most appropriate category that allows for the deepest technical analy
           threadId,
           analysisMode,
           trace,
+          streamTextChunk,
         );
       case 'user_flow':
         return await this.handleEnhancedUserFlowQuery(
@@ -716,6 +717,7 @@ Return the most appropriate category that allows for the deepest technical analy
           threadId,
           analysisMode,
           trace,
+          streamTextChunk,
         );
       case 'function_trace':
         return await this.handleEnhancedFunctionTraceQuery(
@@ -725,6 +727,7 @@ Return the most appropriate category that allows for the deepest technical analy
           threadId,
           analysisMode,
           trace,
+          streamTextChunk,
         );
       case 'project_level':
       default:
@@ -2645,6 +2648,7 @@ Your answer should be immediately useful to someone trying to understand this co
     threadId?: string,
     analysisMode: string = 'standard',
     trace?: AnalysisTrace,
+    streamTextChunk?: (chunk: string) => void,
   ): Promise<QueryAnalysisResponse> {
     trace?.executionPath.push('handleEnhancedFollowUpQuery');
 
@@ -2656,6 +2660,7 @@ Your answer should be immediately useful to someone trying to understand this co
         threadId,
         analysisMode,
         trace,
+        streamTextChunk,
       );
     }
 
@@ -2668,6 +2673,7 @@ Your answer should be immediately useful to someone trying to understand this co
         threadId,
         analysisMode,
         trace,
+        streamTextChunk,
       );
     }
 
@@ -2711,11 +2717,19 @@ Your answer should be immediately useful to someone trying to understand this co
         previousMessages,
         analysisMode,
       );
-    const queryResponse = await gemini.generateAnswer(
-      followUpPrompt,
-      filesWithCode,
-      enhancedQuery,
-    );
+    // Use streaming generation if streamTextChunk is provided
+    const queryResponse = streamTextChunk
+      ? await gemini.generateAnswerStream(
+          followUpPrompt,
+          filesWithCode,
+          enhancedQuery,
+          streamTextChunk,
+        )
+      : await gemini.generateAnswer(
+          followUpPrompt,
+          filesWithCode,
+          enhancedQuery,
+        );
     if (trace) {
       trace.performanceMetrics.aiCallsCount += 2;
     }
@@ -2801,6 +2815,7 @@ Your answer should be immediately useful to someone trying to understand this co
     threadId?: string,
     analysisMode: string = 'standard',
     trace?: AnalysisTrace,
+    streamTextChunk?: (chunk: string) => void,
   ): Promise<QueryAnalysisResponse> {
     trace?.executionPath.push('handleEnhancedUserFlowQuery');
 
@@ -2848,11 +2863,19 @@ Your answer should be immediately useful to someone trying to understand this co
         query,
         analysisMode,
       );
-    const queryResponse = await geminiFlow.generateAnswer(
-      userFlowPrompt,
-      filesWithCode,
-      enhancedQuery,
-    );
+    // Use streaming generation if streamTextChunk is provided
+    const queryResponse = streamTextChunk
+      ? await geminiFlow.generateAnswerStream(
+          userFlowPrompt,
+          filesWithCode,
+          enhancedQuery,
+          streamTextChunk,
+        )
+      : await geminiFlow.generateAnswer(
+          userFlowPrompt,
+          filesWithCode,
+          enhancedQuery,
+        );
     if (trace) {
       trace.performanceMetrics.aiCallsCount += 2;
     }
@@ -2961,6 +2984,7 @@ Your answer should be immediately useful to someone trying to understand this co
     threadId?: string,
     analysisMode: string = 'standard',
     trace?: AnalysisTrace,
+    streamTextChunk?: (chunk: string) => void,
   ): Promise<QueryAnalysisResponse> {
     trace?.executionPath.push('handleEnhancedFunctionTraceQuery');
 
@@ -3022,11 +3046,19 @@ Your answer should be immediately useful to someone trying to understand this co
         searchResult.reasoning,
         searchResult.confidence,
       );
-    const queryResponse = await geminiEnhanced.generateAnswer(
-      functionTracePrompt,
-      filesWithCode,
-      enhancedQuery,
-    );
+    // Use streaming generation if streamTextChunk is provided
+    const queryResponse = streamTextChunk
+      ? await geminiEnhanced.generateAnswerStream(
+          functionTracePrompt,
+          filesWithCode,
+          enhancedQuery,
+          streamTextChunk,
+        )
+      : await geminiEnhanced.generateAnswer(
+          functionTracePrompt,
+          filesWithCode,
+          enhancedQuery,
+        );
     if (trace) {
       trace.performanceMetrics.aiCallsCount += 2;
     }
