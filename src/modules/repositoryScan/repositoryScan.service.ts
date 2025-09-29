@@ -1031,48 +1031,27 @@ export class RepositoryScanService {
         );
       } catch (error) {
         console.error('Error with DeepSeek analysis:', error);
-        console.log('🔄 [DEBUG] Falling back to Gemini analysis...');
-
-        try {
-          const geminiAI = new Gemini();
-          analysisResult = await geminiAI.analyzeRegressionImpact(
-            filteredFiles.map((file) => ({
-              filename: file.filename,
-              patch: file.patch,
-              previousContent: file.previousContent || '',
-              currentContent: file.currentContent || '',
-              functions: file.functions || [],
-              imports: file.imports || [],
-              exports: file.exports || [],
-              impactedBy: file.impactedBy || [],
-              impacts: file.impacts || [],
-              affectedFlows: affectedFlows.fileFlowMap[file.filename] || [],
-            })),
-          );
-        } catch (geminiError) {
-          console.error('Error with Gemini analysis:', geminiError);
-          // Provide default analysis result structure
-          analysisResult = {
-            summary: 'Analysis incomplete due to processing error',
-            impactedFlows: [],
-            testCases: [],
-            potentialBreakages: [],
-            changedBehavior: [],
-            collaboratorMetrics: {
-              performanceGainScore: { score: 0 },
-              codeFootprintScore: { score: 0 },
-              refactorQualityScore: { score: 0 },
-              efficiencyScore: { score: 0 },
-              businessImpact: {
-                criticalModules: [],
-                errorRateImpact: 'Not enough information',
-              },
-              testCoverageScore: { score: 0 },
-              teamCollaborationScore: { score: 0 },
-              documentationQualityScore: { score: 0 },
+        // Provide default analysis result structure
+        analysisResult = {
+          summary: 'Analysis incomplete due to processing error',
+          impactedFlows: [],
+          testCases: [],
+          potentialBreakages: [],
+          changedBehavior: [],
+          collaboratorMetrics: {
+            performanceGainScore: { score: 0 },
+            codeFootprintScore: { score: 0 },
+            refactorQualityScore: { score: 0 },
+            efficiencyScore: { score: 0 },
+            businessImpact: {
+              criticalModules: [],
+              errorRateImpact: 'Not enough information',
             },
-          };
-        }
+            testCoverageScore: { score: 0 },
+            teamCollaborationScore: { score: 0 },
+            documentationQualityScore: { score: 0 },
+          },
+        };
       }
 
       // Create a report in the database
