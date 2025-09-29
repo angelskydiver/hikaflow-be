@@ -25,6 +25,37 @@ export class RepositoryScanController {
     private _prismaService: PrismaService,
   ) {}
 
+  /**
+   * Enhanced flush mechanism for production streaming
+   * Handles multiple flush methods and production environments
+   */
+  private forceFlush(res: Response): void {
+    try {
+      // Method 1: Standard Express flush
+      if (typeof (res as any).flush === 'function') {
+        (res as any).flush();
+      }
+
+      // Method 2: Flush headers (if available)
+      if (typeof (res as any).flushHeaders === 'function') {
+        (res as any).flushHeaders();
+      }
+
+      // Method 3: Force socket flush (Node.js internal)
+      if (res.socket && typeof (res.socket as any).flush === 'function') {
+        (res.socket as any).flush();
+      }
+
+      // Method 4: Write empty data to force flush
+      if (typeof res.write === 'function') {
+        res.write(''); // Empty write to force flush
+      }
+    } catch (flushError) {
+      console.warn('Flush operation failed:', flushError);
+      // Continue execution - don't throw as this is not critical
+    }
+  }
+
   @Post('/:repositoryId')
   @ApiBearerAuth()
   async QueueRepositoryScan(
@@ -100,21 +131,36 @@ export class RepositoryScanController {
     @Request() req: any,
     @Res() res: Response,
   ) {
-    // Set headers for Server-Sent Events
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    // Set headers for Server-Sent Events with production optimizations
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader(
+      'Cache-Control',
+      'no-cache, no-store, must-revalidate, private',
+    );
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
 
     // Disable buffering for reverse proxies (critical for HTTPS production)
     res.setHeader('X-Accel-Buffering', 'no'); // Nginx
+    res.setHeader('X-Accel-Buffering', 'no'); // Additional Nginx directive
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
     res.setHeader('Transfer-Encoding', 'chunked');
 
+    // Additional production-specific headers
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Surrogate-Control', 'no-store');
+    res.setHeader('Last-Modified', new Date().toUTCString());
+
+    // Force immediate flush for production
+    if (typeof (res as any).flush === 'function') {
+      (res as any).flush();
+    }
+
     try {
-      // Stream progress updates with thinking mechanism
+      // Stream progress updates with enhanced production handling
       const streamProgress = (step: string, message: string, data?: any) => {
         try {
           const eventData = {
@@ -127,13 +173,18 @@ export class RepositoryScanController {
 
           // Safely stringify the data
           const jsonString = JSON.stringify(eventData);
-          res.write(`data: ${jsonString}\n\n`);
+          const sseData = `data: ${jsonString}\n\n`;
 
-          // Force flush for production environments (Express/Node.js way)
-          (res as any).flushHeaders?.();
-          if (typeof (res as any).flush === 'function') {
-            (res as any).flush();
-          }
+          // Write with error handling
+          res.write(sseData);
+
+          // Enhanced flush mechanism for production
+          this.forceFlush(res);
+
+          // Log for debugging in production
+          console.log(
+            `[STREAM] Progress: ${step} - ${message.substring(0, 50)}...`,
+          );
         } catch (stringifyError) {
           console.error('Error stringifying progress data:', stringifyError);
           // Send minimal data
@@ -144,35 +195,45 @@ export class RepositoryScanController {
             thinking: true,
           };
           res.write(`data: ${JSON.stringify(minimalData)}\n\n`);
-
-          // Force flush for production environments (Express/Node.js way)
-          (res as any).flushHeaders?.();
-          if (typeof (res as any).flush === 'function') {
-            (res as any).flush();
-          }
+          this.forceFlush(res);
         }
       };
 
-      // Stream text chunks for real-time response
+      // Stream text chunks for real-time response with enhanced production handling
       const streamTextChunk = (chunk: string) => {
         try {
+          // Ensure chunk is not empty and properly formatted
+          if (!chunk || chunk.trim() === '') return;
+
           const eventData = {
             step: 'text_chunk',
-            chunk,
+            chunk: chunk.trim(),
             timestamp: new Date().toISOString(),
             streaming: true,
           };
 
           const jsonString = JSON.stringify(eventData);
-          res.write(`data: ${jsonString}\n\n`);
+          const sseData = `data: ${jsonString}\n\n`;
 
-          // Force flush for production environments
-          (res as any).flushHeaders?.();
-          if (typeof (res as any).flush === 'function') {
-            (res as any).flush();
-          }
+          // Write with error handling
+          res.write(sseData);
+
+          // Enhanced flush mechanism for production
+          this.forceFlush(res);
+
+          // Log for debugging in production
+          console.log(`[STREAM] Text chunk: ${chunk.substring(0, 30)}...`);
         } catch (stringifyError) {
           console.error('Error stringifying text chunk:', stringifyError);
+          // Try to send minimal chunk data
+          try {
+            res.write(
+              `data: ${JSON.stringify({ step: 'text_chunk', chunk: chunk.substring(0, 100), timestamp: new Date().toISOString() })}\n\n`,
+            );
+            this.forceFlush(res);
+          } catch (fallbackError) {
+            console.error('Fallback chunk streaming failed:', fallbackError);
+          }
         }
       };
 
@@ -203,26 +264,56 @@ export class RepositoryScanController {
       // Wait for analysis to complete
       const result = await analysisPromise;
 
-      // Send final events
+      // Send final events with enhanced production handling
       streamProgress('finalizing', 'Finalizing analysis results...');
+
+      // Clean up large objects to prevent memory issues
       delete result.codeInsights;
       delete result.resourceAnalysis;
       delete result.architecturalGuidance;
+
+      // Send completion with final flush
       streamProgress('completed', 'Analysis completed successfully', result);
 
-      // End the stream
+      // Force final flush before ending
+      this.forceFlush(res);
+
+      // End the stream with proper SSE format
       res.write('event: end\ndata: {}\n\n');
+      this.forceFlush(res);
+
+      // Close the response
       res.end();
+
+      console.log('[STREAM] Analysis completed and stream closed');
     } catch (error) {
       console.error('Error in streaming analysis:', error);
-      const errorData = {
-        step: 'error',
-        message: error.message || 'An error occurred during analysis',
-        timestamp: new Date().toISOString(),
-      };
-      res.write(`data: ${JSON.stringify(errorData)}\n\n`);
-      res.write('event: end\ndata: {}\n\n');
-      res.end();
+
+      try {
+        const errorData = {
+          step: 'error',
+          message: error.message || 'An error occurred during analysis',
+          timestamp: new Date().toISOString(),
+        };
+
+        res.write(`data: ${JSON.stringify(errorData)}\n\n`);
+        this.forceFlush(res);
+
+        res.write('event: end\ndata: {}\n\n');
+        this.forceFlush(res);
+
+        res.end();
+
+        console.log('[STREAM] Error handled and stream closed');
+      } catch (endError) {
+        console.error('Error closing stream after error:', endError);
+        // Force close the response
+        try {
+          res.end();
+        } catch (forceCloseError) {
+          console.error('Force close failed:', forceCloseError);
+        }
+      }
     }
   }
 
