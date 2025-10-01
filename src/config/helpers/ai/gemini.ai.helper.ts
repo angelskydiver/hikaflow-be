@@ -1453,24 +1453,20 @@ test('API returns correct response', async () => {
       console.log(`Analyzing chunk ${i + 1} of ${chunks.length}...`);
 
       try {
-        // Create compact representations of files to reduce token usage
+        // Create enhanced representations of files with full content for better analysis
         const compactChunk = chunks[i].map((file) => ({
           filename: file.filename,
-          patch: file.patch?.substring(0, 300) || '',
-          previousContent: file.previousContent?.substring(0, 1000) || '',
-          currentContent: file.currentContent?.substring(0, 1000) || '',
+          patch: file.patch || '',
+          previousContent: file.previousContent || '',
+          currentContent: file.currentContent || '',
           importerOnly: file.importerOnly || false,
-          functions: Array.isArray(file.functions)
-            ? file.functions.slice(0, 3)
-            : [],
-          imports: Array.isArray(file.imports) ? file.imports.slice(0, 3) : [],
-          exports: Array.isArray(file.exports) ? file.exports.slice(0, 3) : [],
-          impactedBy: Array.isArray(file.impactedBy)
-            ? file.impactedBy.slice(0, 3)
-            : [],
-          impacts: Array.isArray(file.impacts) ? file.impacts.slice(0, 3) : [],
+          functions: Array.isArray(file.functions) ? file.functions : [],
+          imports: Array.isArray(file.imports) ? file.imports : [],
+          exports: Array.isArray(file.exports) ? file.exports : [],
+          impactedBy: Array.isArray(file.impactedBy) ? file.impactedBy : [],
+          impacts: Array.isArray(file.impacts) ? file.impacts : [],
           affectedFlows: Array.isArray(file.affectedFlows)
-            ? file.affectedFlows.slice(0, 3)
+            ? file.affectedFlows
             : [],
         }));
 
