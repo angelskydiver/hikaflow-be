@@ -2486,11 +2486,9 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
         deepSeekWrapper.analyzeCombineSummary(combinedSummary),
       ]);
 
-      // Generate contextual AI prompts for the GitHub PR
-      const contextualPrompts = await deepSeekWrapper.generateContextualPrompts(
-        allIssues,
-        prInfo,
-      );
+      console.log('cp: 003');
+
+      console.log('cp: 004');
 
       // **NEW ADVANCED FILTERING SYSTEM**
       console.log(
@@ -2545,9 +2543,6 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
         [
           this._pullRequestService.updatePullRequest(prInfo.prId, {
             summary: analyzeCombineSummary.prSummary,
-            contextualPrompt: contextualPrompts.summaryPrompt || '',
-            expectedSolution: contextualPrompts.expectedSolution || '',
-            copyPasteCode: contextualPrompts.copyPasteCode || '',
           }),
           this._commentService.registerDuplicateCode(
             duplicateCodes.map((data) => ({
@@ -2567,6 +2562,7 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
       const failedComments = commentResults.filter(
         (result) => result.status === 'rejected',
       );
+      console.log('cp: 006');
 
       console.log(`Successfully created ${successfulComments} comments`);
       if (failedComments.length > 0) {
@@ -2612,6 +2608,18 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
 
       const totalTime = Date.now() - startTime;
       this.performanceMetrics.totalProcessingTime += totalTime;
+
+      // Generate contextual AI prompts for the GitHub PR
+      const contextualPrompts = await deepSeekWrapper.generateContextualPrompts(
+        allIssues,
+        prInfo,
+      );
+
+      await this._pullRequestService.updatePullRequest(prInfo.prId, {
+        contextualPrompt: contextualPrompts?.summaryPrompt || '',
+        expectedSolution: contextualPrompts?.expectedSolution || '',
+        copyPasteCode: contextualPrompts?.copyPasteCode || '',
+      });
 
       console.log(
         `PR analysis completed successfully in ${totalTime}ms (AI: ${aiAnalysisTime}ms, Files: ${filesContent.length})`,

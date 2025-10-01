@@ -116,14 +116,7 @@ export class CommentService {
       if (!repository) throw new BadRequestException('Repository not found');
       const repositoryGithubId = repository.repository.repositoryId;
       let pullRequests = null;
-      if (data.prId) {
-        pullRequests = await this._prismaService.pullRequest.findFirst({
-          where: {
-            repositoryId: repositoryGithubId,
-            prNumber: parseInt(data.prId),
-          },
-        });
-      }
+
       // Build dynamic where clause based on filters
       let prIdValue = null;
       if (data.prId) {
@@ -131,12 +124,14 @@ export class CommentService {
           where: {
             repositoryId: repositoryGithubId,
             prNumber: parseInt(data.prId),
+            summary: { not: '' },
           },
         });
         if (pullRequests) {
           prIdValue = pullRequests.id;
         }
       }
+
       // Build dynamic where clause based on filters
       const whereClause: any = {
         repositoryId: repositoryGithubId,
