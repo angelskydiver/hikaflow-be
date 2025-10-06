@@ -366,9 +366,12 @@ export class TestConsistencyFramework {
   /**
    * Analyze change type consistently
    */
-  private static analyzeChangeTypeConsistently(patch: string): string {
-    const additions = (patch.match(/^\+/gm) || []).length;
-    const deletions = (patch.match(/^-/gm) || []).length;
+  private static analyzeChangeTypeConsistently(patch: string | any): string {
+    // Ensure patch is a string
+    const patchString = typeof patch === 'string' ? patch : String(patch || '');
+
+    const additions = (patchString.match(/^\+/gm) || []).length;
+    const deletions = (patchString.match(/^-/gm) || []).length;
 
     if (additions > 0 && deletions > 0) {
       return 'modification';
@@ -473,12 +476,15 @@ export class TestConsistencyFramework {
   private static determineBreakageConsistently(
     fileType: string,
     changeType: string,
-    patch: string,
+    patch: string | any,
   ): boolean {
+    // Ensure patch is a string
+    const patchString = typeof patch === 'string' ? patch : String(patch || '');
+
     // Check for always breaking patterns
     for (const keyword of this.CONSISTENCY_RULES.breakageIndicators
       .alwaysBreaking) {
-      if (patch.includes(keyword)) {
+      if (patchString.includes(keyword)) {
         return true;
       }
     }
@@ -486,7 +492,7 @@ export class TestConsistencyFramework {
     // Check for never breaking patterns
     for (const keyword of this.CONSISTENCY_RULES.breakageIndicators
       .neverBreaking) {
-      if (patch.includes(keyword)) {
+      if (patchString.includes(keyword)) {
         return false;
       }
     }

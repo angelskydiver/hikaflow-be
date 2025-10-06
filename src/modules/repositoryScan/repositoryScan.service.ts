@@ -954,7 +954,10 @@ export class RepositoryScanService {
           // Prepare file content and metadata
           const enhancedFile = {
             filename: file.filename,
-            patch: file.patch || '',
+            patch:
+              typeof file.patch === 'string'
+                ? file.patch
+                : String(file.patch || ''),
             documentation: fileDocMap[file.filename] || null,
             functions: fileDocMap[file.filename]?.functions || [],
             imports: fileDocMap[file.filename]?.imports || [],
@@ -1021,13 +1024,16 @@ export class RepositoryScanService {
       // Phase 2A: Enhanced test case generation (removed AST analysis)
       console.log('🧪 Phase 2A: Generating intelligent test cases...');
       const testGenerationStart = Date.now();
-
+      // break's here
       const testResults =
         TestConsistencyFramework.generateConsistentTestScenarios(
           filteredFiles.map((file) => ({
             filename: file.filename,
             content: file.currentContent || '',
-            patch: file.patch || '',
+            patch:
+              typeof file.patch === 'string'
+                ? file.patch
+                : String(file.patch || ''),
           })),
         );
       console.log(
@@ -1099,7 +1105,10 @@ export class RepositoryScanService {
           deepseekAI.analyzeRegressionImpact(
             filteredFiles.map((file) => ({
               filename: file.filename,
-              patch: file.patch,
+              patch:
+                typeof file.patch === 'string'
+                  ? file.patch
+                  : String(file.patch || ''),
               previousContent: file.previousContent || '',
               currentContent: file.currentContent || '',
               functions: file.functions || [],
@@ -1113,7 +1122,10 @@ export class RepositoryScanService {
           geminiAI.analyzeRegressionImpact(
             filteredFiles.map((file) => ({
               filename: file.filename,
-              patch: file.patch,
+              patch:
+                typeof file.patch === 'string'
+                  ? file.patch
+                  : String(file.patch || ''),
               previousContent: file.previousContent || '',
               currentContent: file.currentContent || '',
               functions: file.functions || [],
@@ -1212,7 +1224,10 @@ export class RepositoryScanService {
             filteredFiles.map((file) => ({
               filename: file.filename,
               content: file.currentContent || '',
-              patch: file.patch || '',
+              patch:
+                typeof file.patch === 'string'
+                  ? file.patch
+                  : String(file.patch || ''),
             })),
             analysisResult,
           );

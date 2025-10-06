@@ -319,10 +319,12 @@ export class AnalysisConsistencyFramework {
     files.forEach((file) => {
       const content = file.content || '';
       const patch = file.patch || '';
+      const patchString =
+        typeof patch === 'string' ? patch : String(patch || '');
 
       // Check for flow keywords
       this.CONSISTENCY_RULES.flowDetection.keywords.forEach((keyword) => {
-        if (content.includes(keyword) || patch.includes(keyword)) {
+        if (content.includes(keyword) || patchString.includes(keyword)) {
           detectedFlows.push(`${file.filename}: ${keyword} flow detected`);
         }
       });
@@ -330,7 +332,7 @@ export class AnalysisConsistencyFramework {
       // Check for flow patterns
       this.CONSISTENCY_RULES.flowDetection.patterns.forEach((pattern) => {
         const regex = new RegExp(pattern, 'gi');
-        if (regex.test(content) || regex.test(patch)) {
+        if (regex.test(content) || regex.test(patchString)) {
           detectedFlows.push(`${file.filename}: ${pattern} pattern detected`);
         }
       });
@@ -354,10 +356,12 @@ export class AnalysisConsistencyFramework {
     files.forEach((file) => {
       const content = file.content || '';
       const patch = file.patch || '';
+      const patchString =
+        typeof patch === 'string' ? patch : String(patch || '');
 
       // Check for behavior change keywords
       this.CONSISTENCY_RULES.behaviorChange.keywords.forEach((keyword) => {
-        if (content.includes(keyword) || patch.includes(keyword)) {
+        if (content.includes(keyword) || patchString.includes(keyword)) {
           detectedBehavior.push(
             `${file.filename}: ${keyword} behavior change detected`,
           );
@@ -367,7 +371,7 @@ export class AnalysisConsistencyFramework {
       // Check for behavior change patterns
       this.CONSISTENCY_RULES.behaviorChange.patterns.forEach((pattern) => {
         const regex = new RegExp(pattern, 'gi');
-        if (regex.test(content) || regex.test(patch)) {
+        if (regex.test(content) || regex.test(patchString)) {
           detectedBehavior.push(
             `${file.filename}: ${pattern} pattern detected`,
           );
@@ -394,6 +398,8 @@ export class AnalysisConsistencyFramework {
     for (const file of files) {
       const content = file.content || '';
       const patch = file.patch || '';
+      const patchString =
+        typeof patch === 'string' ? patch : String(patch || '');
 
       try {
         // Use AI-powered detection if model is available
@@ -401,7 +407,7 @@ export class AnalysisConsistencyFramework {
           const aiResult = await AIPoweredDetectionEngine.analyzeImpact(
             file.filename,
             content,
-            patch,
+            patchString,
             aiModel,
           );
 
@@ -423,7 +429,7 @@ export class AnalysisConsistencyFramework {
           const impactResult = ImpactDetectionEngine.detectImpact(
             file.filename,
             content,
-            patch,
+            patchString,
           );
 
           if (impactResult.willCatchBreakage) {
@@ -439,7 +445,7 @@ export class AnalysisConsistencyFramework {
         const impactResult = ImpactDetectionEngine.detectImpact(
           file.filename,
           content,
-          patch,
+          patchString,
         );
 
         if (impactResult.willCatchBreakage) {
@@ -451,7 +457,7 @@ export class AnalysisConsistencyFramework {
 
       // Check for breakage keywords (fallback)
       this.CONSISTENCY_RULES.breakageDetection.keywords.forEach((keyword) => {
-        if (content.includes(keyword) || patch.includes(keyword)) {
+        if (content.includes(keyword) || patchString.includes(keyword)) {
           detectedBreakages.push(
             `${file.filename}: ${keyword} breakage risk detected`,
           );
@@ -461,7 +467,7 @@ export class AnalysisConsistencyFramework {
       // Check for breakage patterns (fallback)
       this.CONSISTENCY_RULES.breakageDetection.patterns.forEach((pattern) => {
         const regex = new RegExp(pattern, 'gi');
-        if (regex.test(content) || regex.test(patch)) {
+        if (regex.test(content) || regex.test(patchString)) {
           detectedBreakages.push(
             `${file.filename}: ${pattern} pattern detected`,
           );
@@ -487,12 +493,14 @@ export class AnalysisConsistencyFramework {
     files.forEach((file) => {
       const content = file.content || '';
       const patch = file.patch || '';
+      const patchString =
+        typeof patch === 'string' ? patch : String(patch || '');
 
       // Use rule-based detection
       const impactResult = ImpactDetectionEngine.detectImpact(
         file.filename,
         content,
-        patch,
+        patchString,
       );
 
       if (impactResult.willCatchBreakage) {
@@ -503,7 +511,7 @@ export class AnalysisConsistencyFramework {
 
       // Check for breakage keywords (fallback)
       this.CONSISTENCY_RULES.breakageDetection.keywords.forEach((keyword) => {
-        if (content.includes(keyword) || patch.includes(keyword)) {
+        if (content.includes(keyword) || patchString.includes(keyword)) {
           detectedBreakages.push(
             `${file.filename}: ${keyword} breakage risk detected`,
           );
@@ -513,7 +521,7 @@ export class AnalysisConsistencyFramework {
       // Check for breakage patterns (fallback)
       this.CONSISTENCY_RULES.breakageDetection.patterns.forEach((pattern) => {
         const regex = new RegExp(pattern, 'gi');
-        if (regex.test(content) || regex.test(patch)) {
+        if (regex.test(content) || regex.test(patchString)) {
           detectedBreakages.push(
             `${file.filename}: ${pattern} pattern detected`,
           );
@@ -536,10 +544,12 @@ export class AnalysisConsistencyFramework {
     files.forEach((file) => {
       const content = file.content || '';
       const patch = file.patch || '';
+      const patchString =
+        typeof patch === 'string' ? patch : String(patch || '');
 
       // Check for test case keywords
       this.CONSISTENCY_RULES.testCaseGeneration.keywords.forEach((keyword) => {
-        if (content.includes(keyword) || patch.includes(keyword)) {
+        if (content.includes(keyword) || patchString.includes(keyword)) {
           generatedTestCases.push({
             name: `${file.filename}: ${keyword} test case`,
             type: 'UNIT',
@@ -554,7 +564,7 @@ export class AnalysisConsistencyFramework {
       // Check for test case patterns
       this.CONSISTENCY_RULES.testCaseGeneration.patterns.forEach((pattern) => {
         const regex = new RegExp(pattern, 'gi');
-        if (regex.test(content) || regex.test(patch)) {
+        if (regex.test(content) || regex.test(patchString)) {
           generatedTestCases.push({
             name: `${file.filename}: ${pattern} test case`,
             type: 'INTEGRATION',
