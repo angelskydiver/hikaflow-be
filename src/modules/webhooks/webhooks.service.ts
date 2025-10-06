@@ -1105,7 +1105,7 @@ export class WebhooksService {
 
       filteredFiles = filteredFiles.map((data) => ({
         filename: data.filename,
-        patch: data.changes.map((data) => data.lines.join()),
+        patch: data.changes.map((change) => change.lines.join('\n')).join('\n'),
       }));
       const deepSeekAgent = new DeepSeek();
 

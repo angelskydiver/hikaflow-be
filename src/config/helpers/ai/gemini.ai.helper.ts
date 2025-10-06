@@ -714,9 +714,13 @@ END OF PREVIOUS QUESTIONS
           // Prepare a more structured context with important information only to manage token count
           const fileContexts = changedFiles.map((file) => {
             // Get essential data about each file
+            const patchString =
+              typeof file.patch === 'string'
+                ? file.patch
+                : String(file.patch || '');
             const summary = {
               filename: file.filename,
-              patch: file.patch?.substring(0, 300) || '', // Further limit patch size to reduce tokens
+              patch: patchString.substring(0, 300), // Further limit patch size to reduce tokens
               importerOnly: file.importerOnly || false,
               functions: Array.isArray(file.functions)
                 ? file.functions.slice(0, 5)
@@ -810,7 +814,7 @@ ${file.previousSnippet || 'No previous content available'}
 ${file.currentSnippet || 'No current content available'}
 
 --- Patch (partial) ---
-${file.patch ? file.patch.substring(0, 300) + (file.patch.length > 300 ? '...' : '') : 'No patch available'}
+${file.patch ? (typeof file.patch === 'string' ? file.patch : String(file.patch)).substring(0, 300) + ((typeof file.patch === 'string' ? file.patch : String(file.patch)).length > 300 ? '...' : '') : 'No patch available'}
 `,
   )
   .join('\n\n')}
