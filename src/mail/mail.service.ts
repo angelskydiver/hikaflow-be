@@ -45,53 +45,37 @@ export class MailService {
         this.logger.log(job.name, job.data);
         if (job.name === 'payment-success') {
           // Send payment success email using the dedicated mailer service
-          await this.sendEmailWithRetry(
-            {
-              to: job.data.email,
-              subject: '[Codedeno] Payment Successful',
-              template: 'payment-success',
-              context: job.data,
-            },
-            3,
-            paymentMailerService,
-          );
+          await this.sendEmailWithRetry({
+            to: job.data.email,
+            subject: '[Codedeno] Payment Successful',
+            template: 'payment-success',
+            context: job.data,
+          }, 3, paymentMailerService);
         } else if (job.name === 'payment-failure') {
           // Send payment failure email using the dedicated mailer service
-          await this.sendEmailWithRetry(
-            {
-              to: job.data.email,
-              subject: '[Codedeno] Payment Failed',
-              template: 'payment-failure',
-              context: job.data,
-            },
-            3,
-            paymentMailerService,
-          );
+          await this.sendEmailWithRetry({
+            to: job.data.email,
+            subject: '[Codedeno] Payment Failed',
+            template: 'payment-failure',
+            context: job.data,
+          }, 3, paymentMailerService);
         } else if (job.name === 'verification-complete') {
           // Send verification email using the dedicated mailer service
-          await this.sendEmailWithRetry(
-            {
-              to: job.data.email,
-              subject: '[Codedeno] Verification Complete',
-              template: 'verification-complete',
-              context: job.data,
-            },
-            3,
-            paymentMailerService,
-          );
+          await this.sendEmailWithRetry({
+            to: job.data.email,
+            subject: '[Codedeno] Verification Complete',
+            template: 'verification-complete',
+            context: job.data,
+          }, 3, paymentMailerService);
         } else if (job.name === 'reversal-complete') {
           // Send reversal email using the dedicated mailer service
-          await this.sendEmailWithRetry(
-            {
-              to: job.data.email,
-              subject:
-                '[Codedeno] Account Balance Verification Reversal Complete',
-              template: 'reversal-complete',
-              context: job.data,
-            },
-            3,
-            paymentMailerService,
-          );
+          await this.sendEmailWithRetry({
+            to: job.data.email,
+            subject:
+              '[Codedeno] Account Balance Verification Reversal Complete',
+            template: 'reversal-complete',
+            context: job.data,
+          }, 3, paymentMailerService);
         }
       },
       {
@@ -373,7 +357,6 @@ export class MailService {
       filesChanged: number;
       additions: number;
       deletions: number;
-      fixedIssues?: number;
     };
   }) {
     try {
@@ -472,20 +455,16 @@ export class MailService {
     reportUrl: string;
   }) {
     try {
-      await this.sendEmailWithRetry(
-        {
-          to: data.email,
-          subject: `[Hikaflow] Repository Scan Complete: ${data.repositoryName}`,
-          template: './repository-scan-complete',
-          context: {
-            adminName: data.adminName,
-            repositoryName: data.repositoryName,
-            reportUrl: data.reportUrl,
-          },
+      await this.sendEmailWithRetry({
+        to: data.email,
+        subject: `[Hikaflow] Repository Scan Complete: ${data.repositoryName}`,
+        template: './repository-scan-complete',
+        context: {
+          adminName: data.adminName,
+          repositoryName: data.repositoryName,
+          reportUrl: data.reportUrl,
         },
-        3,
-        this.mailerService,
-      );
+      });
     } catch (error) {
       this.logger.error(
         `Failed to send repository scan notification: ${error.message}`,

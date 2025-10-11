@@ -128,7 +128,7 @@ export class Gemini {
 
       // Third attempt: Use Gemini to repair the JSON
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-2.5-pro',
+        model: 'gemini-1.5-pro',
       });
 
       const prompt = `
@@ -255,7 +255,7 @@ Return ONLY the fixed JSON with no other text, explanations, or code formatting.
       `;
 
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-2.5-pro',
+        model: 'gemini-1.5-pro',
       });
       let resp: any = await model.generateContent([prompt]);
       resp = this.extractCleanJSON(
@@ -291,7 +291,7 @@ Return ONLY the fixed JSON with no other text, explanations, or code formatting.
    * @returns AI response with references
    */
   async generateAnswer(input: string, result, previousQuestions?: string) {
-    let modelToUse = 'gemini-2.5-pro';
+    let modelToUse = 'gemini-1.5-pro';
     let retryCount = 0;
     const MAX_RETRIES = 3;
     let lastError = null;
@@ -389,9 +389,9 @@ END OF PREVIOUS QUESTIONS
           // Switch model if we're not making progress
           if (retryCount >= 1) {
             modelToUse =
-              modelToUse === 'gemini-2.5-pro'
-                ? 'gemini-2.5-pro'
-                : 'gemini-2.5-pro';
+              modelToUse === 'gemini-1.5-pro'
+                ? 'gemini-1.5-pro'
+                : 'gemini-1.5-pro';
             console.log(`Switching to ${modelToUse} for retry`);
           }
         } else if (apiError.status === 429) {
@@ -404,9 +404,9 @@ END OF PREVIOUS QUESTIONS
         } else {
           // For other errors, try switching model immediately
           modelToUse =
-            modelToUse === 'gemini-2.5-pro'
-              ? 'gemini-2.5-pro'
-              : 'gemini-2.5-pro';
+            modelToUse === 'gemini-1.5-pro'
+              ? 'gemini-1.5-pro'
+              : 'gemini-1.5-pro';
           console.log(`API error, switching to ${modelToUse} for retry`);
         }
 
@@ -445,7 +445,7 @@ END OF PREVIOUS QUESTIONS
     previousQuestions?: string,
     onChunk?: (chunk: string) => void,
   ) {
-    let modelToUse = 'gemini-2.5-pro';
+    let modelToUse = 'gemini-1.5-pro';
     let retryCount = 0;
     const MAX_RETRIES = 3;
     let lastError = null;
@@ -617,9 +617,9 @@ END OF PREVIOUS QUESTIONS
           // Switch model if we're not making progress
           if (retryCount >= 1) {
             modelToUse =
-              modelToUse === 'gemini-2.5-pro'
-                ? 'gemini-2.5-pro'
-                : 'gemini-2.5-pro';
+              modelToUse === 'gemini-1.5-pro'
+                ? 'gemini-1.5-pro'
+                : 'gemini-1.5-pro';
             console.log(`Switching to ${modelToUse} for retry`);
           }
         } else if (apiError.status === 429) {
@@ -632,9 +632,9 @@ END OF PREVIOUS QUESTIONS
         } else {
           // For other errors, try switching model immediately
           modelToUse =
-            modelToUse === 'gemini-2.5-pro'
-              ? 'gemini-2.5-pro'
-              : 'gemini-2.5-pro';
+            modelToUse === 'gemini-1.5-pro'
+              ? 'gemini-1.5-pro'
+              : 'gemini-1.5-pro';
           console.log(`API error, switching to ${modelToUse} for retry`);
         }
 
@@ -700,7 +700,7 @@ END OF PREVIOUS QUESTIONS
         return this.analyzeRegressionImpactInChunks(changedFiles);
       }
 
-      let modelToUse = 'gemini-2.5-pro';
+      let modelToUse = 'gemini-1.5-pro';
       let retryCount = 0;
       const MAX_RETRIES = 3;
       let lastError = null;
@@ -714,13 +714,9 @@ END OF PREVIOUS QUESTIONS
           // Prepare a more structured context with important information only to manage token count
           const fileContexts = changedFiles.map((file) => {
             // Get essential data about each file
-            const patchString =
-              typeof file.patch === 'string'
-                ? file.patch
-                : String(file.patch || '');
             const summary = {
               filename: file.filename,
-              patch: patchString.substring(0, 300), // Further limit patch size to reduce tokens
+              patch: file.patch?.substring(0, 300) || '', // Further limit patch size to reduce tokens
               importerOnly: file.importerOnly || false,
               functions: Array.isArray(file.functions)
                 ? file.functions.slice(0, 5)
@@ -814,7 +810,7 @@ ${file.previousSnippet || 'No previous content available'}
 ${file.currentSnippet || 'No current content available'}
 
 --- Patch (partial) ---
-${file.patch ? (typeof file.patch === 'string' ? file.patch : String(file.patch)).substring(0, 300) + ((typeof file.patch === 'string' ? file.patch : String(file.patch)).length > 300 ? '...' : '') : 'No patch available'}
+${file.patch ? file.patch.substring(0, 300) + (file.patch.length > 300 ? '...' : '') : 'No patch available'}
 `,
   )
   .join('\n\n')}
@@ -1003,7 +999,7 @@ The analysis must be HIGHLY DETAILED and SPECIFIC. Include exact file locations,
             systemInstruction: systemPrompt,
             generationConfig: {
               temperature: 0.2, // Slight randomness for better analysis quality
-              maxOutputTokens: modelToUse === 'gemini-2.5-pro' ? 8192 : 4096,
+              maxOutputTokens: modelToUse === 'gemini-1.5-pro' ? 8192 : 4096,
               topK: 40,
               topP: 0.95,
             },
@@ -1117,11 +1113,11 @@ The analysis must be HIGHLY DETAILED and SPECIFIC. Include exact file locations,
           // If we get rate limit error (429), wait and retry or switch model
           if (apiError.status === 429) {
             // Try with less intensive model if we're still using pro
-            if (modelToUse === 'gemini-2.5-pro') {
+            if (modelToUse === 'gemini-1.5-pro') {
               console.log(
-                'Rate limit hit with pro model, switching to gemini-2.5-pro...',
+                'Rate limit hit with pro model, switching to gemini-1.5-pro...',
               );
-              modelToUse = 'gemini-2.5-pro';
+              modelToUse = 'gemini-1.5-pro';
               // Small delay to allow quota to reset
               await new Promise((resolve) => setTimeout(resolve, 2000));
             } else {
@@ -1135,9 +1131,9 @@ The analysis must be HIGHLY DETAILED and SPECIFIC. Include exact file locations,
           } else {
             // For other errors, switch model and retry
             modelToUse =
-              modelToUse === 'gemini-2.5-pro'
-                ? 'gemini-2.5-pro'
-                : 'gemini-2.5-pro';
+              modelToUse === 'gemini-1.5-pro'
+                ? 'gemini-1.5-pro'
+                : 'gemini-1.5-pro';
           }
 
           retryCount++;
@@ -1457,20 +1453,24 @@ test('API returns correct response', async () => {
       console.log(`Analyzing chunk ${i + 1} of ${chunks.length}...`);
 
       try {
-        // Create enhanced representations of files with full content for better analysis
+        // Create compact representations of files to reduce token usage
         const compactChunk = chunks[i].map((file) => ({
           filename: file.filename,
-          patch: file.patch || '',
-          previousContent: file.previousContent || '',
-          currentContent: file.currentContent || '',
+          patch: file.patch?.substring(0, 300) || '',
+          previousContent: file.previousContent?.substring(0, 1000) || '',
+          currentContent: file.currentContent?.substring(0, 1000) || '',
           importerOnly: file.importerOnly || false,
-          functions: Array.isArray(file.functions) ? file.functions : [],
-          imports: Array.isArray(file.imports) ? file.imports : [],
-          exports: Array.isArray(file.exports) ? file.exports : [],
-          impactedBy: Array.isArray(file.impactedBy) ? file.impactedBy : [],
-          impacts: Array.isArray(file.impacts) ? file.impacts : [],
+          functions: Array.isArray(file.functions)
+            ? file.functions.slice(0, 3)
+            : [],
+          imports: Array.isArray(file.imports) ? file.imports.slice(0, 3) : [],
+          exports: Array.isArray(file.exports) ? file.exports.slice(0, 3) : [],
+          impactedBy: Array.isArray(file.impactedBy)
+            ? file.impactedBy.slice(0, 3)
+            : [],
+          impacts: Array.isArray(file.impacts) ? file.impacts.slice(0, 3) : [],
           affectedFlows: Array.isArray(file.affectedFlows)
-            ? file.affectedFlows
+            ? file.affectedFlows.slice(0, 3)
             : [],
         }));
 
@@ -1700,7 +1700,7 @@ test('API returns correct response', async () => {
   ): Promise<string> {
     try {
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-2.5-pro',
+        model: 'gemini-1.5-pro',
       });
 
       const prompt = `You are an AI assistant that helps categorize user questions about codebases into one of five types:
@@ -1796,7 +1796,7 @@ Query: ${query}`;
     try {
       // Create generative model
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-2.5-pro',
+        model: 'gemini-1.5-pro',
         generationConfig: {
           temperature: 0,
           maxOutputTokens: 1024,
@@ -1896,7 +1896,7 @@ ${content}
         const batch = input.issues.slice(i, i + BATCH_SIZE);
 
         const model = this.genAI.getGenerativeModel({
-          model: 'gemini-2.5-pro',
+          model: 'gemini-1.5-pro',
         });
 
         const prompt = `You are an expert code reviewer. Your task is to determine which PR review comments are now FIXED based on the latest commit changes.

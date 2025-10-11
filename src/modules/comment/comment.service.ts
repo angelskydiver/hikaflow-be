@@ -91,6 +91,11 @@ export class CommentService {
         data: {
           ...data,
           status: CommentStatus.OPEN,
+          // reason: data.reason || '',
+          // enhancementType: data.enhancementType,
+          // affectedCodeBlock: data.affectedCodeBlock || {},
+          // improvedCodeBlock: data.improvedCodeBlock || {},
+          // tags: data.tags || [],
         },
       });
       return {

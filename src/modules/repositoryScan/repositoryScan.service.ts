@@ -14,14 +14,8 @@ import {
   fetchFileExtension,
   ignoredExtensionsForFileScan,
 } from 'src/config/constants/unnecessary.files.constant';
-import { AnalysisConsistencyFramework } from 'src/config/helpers/ai/analysis-consistency-framework';
-import { AnalysisValidator } from 'src/config/helpers/ai/analysis-validator';
-import { CrossModelValidator } from 'src/config/helpers/ai/cross-model-validator';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
 import { Gemini } from 'src/config/helpers/ai/gemini.ai.helper';
-import { IntelligentChunker } from 'src/config/helpers/ai/intelligent-chunker';
-import { PerformanceMonitor } from 'src/config/helpers/ai/performance-monitor';
-import { TestConsistencyFramework } from 'src/config/helpers/ai/test-consistency-framework';
 import { filterHighPriorityComments } from 'src/config/helpers/comment.helper';
 import {
   bitbucketRepositoryAccess,
@@ -487,10 +481,6 @@ export class RepositoryScanService {
             issueCategory: data.category,
             severity: data.priority,
             reason: data.reason,
-            // enhancementType: data.enhancementType,
-            // affectedCodeBlock: data?.affectedCodeBlock || {},
-            // improvedCodeBlock: data?.improvedCodeBlock || {},
-            // tags: data.tags || [],
             type: CommentType.ISSUE,
           };
 
@@ -828,11 +818,7 @@ export class RepositoryScanService {
   }
 
   /**
-   * Enhanced version of analyzeRegressionImpact with Phase 2A improvements:
-   * - AST-based dependency analysis
-   * - Intelligent chunking strategy
-   * - Cross-model validation
-   * - Performance monitoring
+   * Enhanced version of analyzeRegressionImpact that improves import checking
    * @param repositoryId Repository ID
    * @param prNumber PR number
    * @param changedFiles Array of changed file paths with their content
@@ -922,17 +908,17 @@ export class RepositoryScanService {
       }
 
       // Add this after line ~1691 where commitInfo is retrieved
-      // if (
-      //   accountCredentials.accountType !== AccountCredentialsType.GITHUB_TOKEN
-      // ) {
-      //   // For Bitbucket, swap the values since they're reversed
-      //   const temp = latestCommitSha;
-      //   latestCommitSha = parentCommitSha;
-      //   parentCommitSha = temp;
-      //   console.log(
-      //     `[Bitbucket] Swapped commit SHAs - now using latest=${latestCommitSha}, parent=${parentCommitSha}`,
-      //   );
-      // }
+      if (
+        accountCredentials.accountType !== AccountCredentialsType.GITHUB_TOKEN
+      ) {
+        // For Bitbucket, swap the values since they're reversed
+        const temp = latestCommitSha;
+        latestCommitSha = parentCommitSha;
+        parentCommitSha = temp;
+        console.log(
+          `[Bitbucket] Swapped commit SHAs - now using latest=${latestCommitSha}, parent=${parentCommitSha}`,
+        );
+      }
 
       // Create a map of file documentation for quick lookup
       const fileDocMap = {};
@@ -954,10 +940,7 @@ export class RepositoryScanService {
           // Prepare file content and metadata
           const enhancedFile = {
             filename: file.filename,
-            patch:
-              typeof file.patch === 'string'
-                ? file.patch
-                : String(file.patch || ''),
+            patch: file.patch || '',
             documentation: fileDocMap[file.filename] || null,
             functions: fileDocMap[file.filename]?.functions || [],
             imports: fileDocMap[file.filename]?.imports || [],
@@ -1013,285 +996,79 @@ export class RepositoryScanService {
       // Filter out null entries
       const filteredFiles = enhancedChangedFiles.filter(Boolean);
 
-      // Phase 2A: Start performance monitoring
-      const performanceOperationId = `regression-analysis-${repositoryId}-${prNumber}`;
-      PerformanceMonitor.startOperation(performanceOperationId, 'analysis', {
-        repositoryId,
-        prNumber,
-        fileCount: filteredFiles.length,
-      });
-
-      // Phase 2A: Enhanced test case generation (removed AST analysis)
-      console.log('🧪 Phase 2A: Generating intelligent test cases...');
-      const testGenerationStart = Date.now();
-      // break's here
-      const testResults =
-        TestConsistencyFramework.generateConsistentTestScenarios(
-          filteredFiles.map((file) => ({
-            filename: file.filename,
-            content: file.currentContent || '',
-            patch:
-              typeof file.patch === 'string'
-                ? file.patch
-                : String(file.patch || ''),
-          })),
-        );
-      console.log(
-        `✅ Test case generation completed in ${Date.now() - testGenerationStart}ms`,
-      );
-      console.log(
-        `📊 Generated ${testResults.fileAnalysis.length} file analyses and ${testResults.crossFileScenarios.length} cross-file scenarios`,
-      );
-
-      // Phase 2B: Analysis consistency framework will be applied after analysisResult is created
-
-      // Phase 2A: Intelligent chunking strategy
-      console.log('🧠 Phase 2A: Applying intelligent chunking strategy...');
-      const chunkingStart = Date.now();
-
-      const chunkingResult = IntelligentChunker.createIntelligentChunks(
-        filteredFiles.map((file) => ({
-          filename: file.filename,
-          content: file.currentContent || '',
-          size: Buffer.byteLength(file.currentContent || '', 'utf8'),
-          type: 'source' as const,
-          priority: 1.0,
-          dependencies: [],
-          dependents: [],
-          complexity: 0,
-        })),
-        {
-          maxChunkSize: 50000,
-          maxFilesPerChunk: 8,
-          maxComplexityPerChunk: 80,
-          prioritizeBy: 'complexity',
-          groupRelated: true,
-          respectDependencies: true,
-        },
-      );
-
-      console.log(
-        `✅ Intelligent chunking completed in ${Date.now() - chunkingStart}ms`,
-      );
-      console.log(
-        `📊 Created ${chunkingResult.totalChunks} chunks with average size ${Math.round(chunkingResult.averageChunkSize)} bytes`,
-      );
-
-      // Process files in parallel for better performance
-      const parallelProcessedFiles =
-        await this._processFilesInParallel(filteredFiles);
-
       // Identify affected flows based on dependencies
       const affectedFlows = await this._identifyAffectedFlows(
-        parallelProcessedFiles,
+        filteredFiles,
         fileDocumentation,
         dependencyMap,
       );
 
       const deepseekAI = new DeepSeek();
-      const geminiAI = new Gemini();
 
       console.log(
         `Performing regression analysis on ${filteredFiles.length} files`,
       );
 
-      // Phase 2A: Cross-model validation
       let analysisResult = null;
-      let crossModelValidation = null;
-
       try {
-        // Get analysis from both models
-        const [deepseekResult, geminiResult] = await Promise.all([
-          deepseekAI.analyzeRegressionImpact(
-            filteredFiles.map((file) => ({
-              filename: file.filename,
-              patch:
-                typeof file.patch === 'string'
-                  ? file.patch
-                  : String(file.patch || ''),
-              previousContent: file.previousContent || '',
-              currentContent: file.currentContent || '',
-              functions: file.functions || [],
-              imports: file.imports || [],
-              exports: file.exports || [],
-              impactedBy: file.impactedBy || [],
-              impacts: file.impacts || [],
-              affectedFlows: affectedFlows.fileFlowMap[file.filename] || [],
-            })),
-          ),
-          geminiAI.analyzeRegressionImpact(
-            filteredFiles.map((file) => ({
-              filename: file.filename,
-              patch:
-                typeof file.patch === 'string'
-                  ? file.patch
-                  : String(file.patch || ''),
-              previousContent: file.previousContent || '',
-              currentContent: file.currentContent || '',
-              functions: file.functions || [],
-              imports: file.imports || [],
-              exports: file.exports || [],
-              impactedBy: file.impactedBy || [],
-              impacts: file.impacts || [],
-              affectedFlows: affectedFlows.fileFlowMap[file.filename] || [],
-            })),
-          ),
-        ]);
-
-        // Cross-model validation
-        console.log('🔍 Phase 2A: Performing cross-model validation...');
-        crossModelValidation =
-          await CrossModelValidator.validateAnalysisResults(
-            deepseekResult as any,
-            geminiResult as any,
-            'deepseek',
-            'gemini',
-          );
-
-        console.log(
-          `✅ Cross-model validation completed - Agreement: ${Math.round(crossModelValidation.modelAgreement * 100)}%`,
+        analysisResult = await deepseekAI.analyzeRegressionImpact(
+          filteredFiles.map((file) => ({
+            filename: file.filename,
+            patch: file.patch,
+            previousContent: file.previousContent || '',
+            currentContent: file.currentContent || '',
+            functions: file.functions || [],
+            imports: file.imports || [],
+            exports: file.exports || [],
+            impactedBy: file.impactedBy || [],
+            impacts: file.impacts || [],
+            affectedFlows: affectedFlows.fileFlowMap[file.filename] || [],
+          })),
         );
-
-        if (crossModelValidation.isValid) {
-          analysisResult = crossModelValidation.consensusResult;
-          console.log('✅ Using consensus result from cross-model validation');
-        } else {
-          analysisResult = deepseekResult; // Fallback to primary model
-          console.log('⚠️ Using primary model result due to low agreement');
-        }
-
-        // Validate analysis result
-        const validation =
-          AnalysisValidator.validateAnalysisResult(analysisResult);
-        if (!validation.isValid) {
-          console.warn('Analysis validation failed:', validation.errors);
-        }
-        if (validation.warnings.length > 0) {
-          console.warn('Analysis validation warnings:', validation.warnings);
-        }
-
-        // Add validation metadata to result
-        analysisResult._validation = {
-          isValid: validation.isValid,
-          confidence: validation.confidence,
-          errors: validation.errors,
-          warnings: validation.warnings,
-        };
-
-        // Phase 2A: Add cross-model validation metadata
-        if (crossModelValidation) {
-          analysisResult._crossModelValidation = {
-            isValid: crossModelValidation.isValid,
-            modelAgreement: crossModelValidation.modelAgreement,
-            disagreements: crossModelValidation.disagreements,
-            consensusUsed: crossModelValidation.isValid,
-          };
-        }
-
-        // Phase 2A: Add enhanced test case metadata
-        if (testResults) {
-          analysisResult._testGeneration = {
-            generationTime: Date.now() - testGenerationStart,
-            totalFiles: testResults.fileAnalysis.length,
-            testScenarios:
-              testResults.fileAnalysis.reduce(
-                (sum, f) => sum + f.testScenarios.length,
-                0,
-              ) + testResults.crossFileScenarios.length,
-            riskAssessment: testResults.riskAssessment,
-            recommendations: testResults.recommendations,
-            enhancedTestCases: true,
-            intelligentScenarios: true,
-          };
-        }
-
-        // Phase 2A: Add chunking metadata
-        if (chunkingResult) {
-          analysisResult._chunking = {
-            totalChunks: chunkingResult.totalChunks,
-            averageChunkSize: chunkingResult.averageChunkSize,
-            averageComplexity: chunkingResult.averageComplexity,
-            distribution: chunkingResult.distribution,
-          };
-        }
-
-        // Phase 2B: Apply analysis consistency framework
-        console.log('🔍 Phase 2B: Applying analysis consistency framework...');
-        const consistencyStart = Date.now();
-
-        const consistentAnalysis =
-          await AnalysisConsistencyFramework.generateConsistentAnalysis(
-            filteredFiles.map((file) => ({
-              filename: file.filename,
-              content: file.currentContent || '',
-              patch:
-                typeof file.patch === 'string'
-                  ? file.patch
-                  : String(file.patch || ''),
-            })),
-            analysisResult,
-          );
-
-        console.log(
-          `✅ Analysis consistency applied in ${Date.now() - consistencyStart}ms`,
-        );
-        console.log(
-          `📊 Consistency score: ${consistentAnalysis.consistencyScore}`,
-        );
-        console.log(
-          `🎯 Impacted flows: ${consistentAnalysis.impactedFlows.length}`,
-        );
-        console.log(
-          `🔄 Changed behavior: ${consistentAnalysis.changedBehavior.length}`,
-        );
-        console.log(
-          `⚠️ Potential breakages: ${consistentAnalysis.potentialBreakages.length}`,
-        );
-        console.log(`🧪 Test cases: ${consistentAnalysis.testCases.length}`);
-
-        // Phase 2B: Add consistency analysis metadata
-        if (consistentAnalysis) {
-          analysisResult._consistency = {
-            consistencyScore: consistentAnalysis.consistencyScore,
-            impactedFlows: consistentAnalysis.impactedFlows,
-            changedBehavior: consistentAnalysis.changedBehavior,
-            potentialBreakages: consistentAnalysis.potentialBreakages,
-            testCases: consistentAnalysis.testCases,
-            confidence: consistentAnalysis.confidence,
-            reasoning: consistentAnalysis.reasoning,
-            enhancedConsistency: true,
-            reliableAnalysis: true,
-          };
-        }
       } catch (error) {
         console.error('Error with DeepSeek analysis:', error);
-        // Provide default analysis result structure
-        analysisResult = {
-          summary: 'Analysis incomplete due to processing error',
-          impactedFlows: [],
-          testCases: [],
-          potentialBreakages: [],
-          changedBehavior: [],
-          collaboratorMetrics: {
-            performanceGainScore: { score: 0 },
-            codeFootprintScore: { score: 0 },
-            refactorQualityScore: { score: 0 },
-            efficiencyScore: { score: 0 },
-            businessImpact: {
-              criticalModules: [],
-              errorRateImpact: 'Not enough information',
+        console.log('🔄 [DEBUG] Falling back to Gemini analysis...');
+
+        try {
+          const geminiAI = new Gemini();
+          analysisResult = await geminiAI.analyzeRegressionImpact(
+            filteredFiles.map((file) => ({
+              filename: file.filename,
+              patch: file.patch,
+              previousContent: file.previousContent || '',
+              currentContent: file.currentContent || '',
+              functions: file.functions || [],
+              imports: file.imports || [],
+              exports: file.exports || [],
+              impactedBy: file.impactedBy || [],
+              impacts: file.impacts || [],
+              affectedFlows: affectedFlows.fileFlowMap[file.filename] || [],
+            })),
+          );
+        } catch (geminiError) {
+          console.error('Error with Gemini analysis:', geminiError);
+          // Provide default analysis result structure
+          analysisResult = {
+            summary: 'Analysis incomplete due to processing error',
+            impactedFlows: [],
+            testCases: [],
+            potentialBreakages: [],
+            changedBehavior: [],
+            collaboratorMetrics: {
+              performanceGainScore: { score: 0 },
+              codeFootprintScore: { score: 0 },
+              refactorQualityScore: { score: 0 },
+              efficiencyScore: { score: 0 },
+              businessImpact: {
+                criticalModules: [],
+                errorRateImpact: 'Not enough information',
+              },
+              testCoverageScore: { score: 0 },
+              teamCollaborationScore: { score: 0 },
+              documentationQualityScore: { score: 0 },
             },
-            testCoverageScore: { score: 0 },
-            teamCollaborationScore: { score: 0 },
-            documentationQualityScore: { score: 0 },
-          },
-          _validation: {
-            isValid: false,
-            confidence: 0,
-            errors: ['Analysis failed due to processing error'],
-            warnings: [],
-          },
-        };
+          };
+        }
       }
 
       // Create a report in the database
@@ -1448,31 +1225,12 @@ export class RepositoryScanService {
         },
       });
 
-      // Phase 2A: End performance monitoring
-      PerformanceMonitor.endOperation(performanceOperationId, true, undefined, {
-        fileCount: filteredFiles.length,
-        chunkCount: chunkingResult?.totalChunks || 0,
-        testGenerationTime: Date.now() - testGenerationStart,
-        chunkingTime: Date.now() - chunkingStart,
-        crossModelValidation: crossModelValidation?.isValid || false,
-        modelAgreement: crossModelValidation?.modelAgreement || 0,
-      });
-
-      console.log(
-        '🎉 Phase 2A: Enhanced regression analysis completed successfully!',
-      );
-
       return {
         reportId: regressionTestingReport.id,
         ...analysisResult,
       };
     } catch (error) {
       console.error('Error in analyzeRegressionImpactEnhanced:', error);
-
-      // Phase 2A: End performance monitoring with error
-      const errorOperationId = `regression-analysis-${repositoryId}-${prNumber}`;
-      PerformanceMonitor.endOperation(errorOperationId, false, error.message);
-
       throw new BadRequestException(error.message);
     }
   }
@@ -1751,87 +1509,6 @@ export class RepositoryScanService {
 
     // Non-relative imports just return as is
     return importPath;
-  }
-
-  /**
-   * Process files in parallel for better performance
-   */
-  private async _processFilesInParallel(files: any[]): Promise<any[]> {
-    const BATCH_SIZE = 5; // Process 5 files at a time to avoid overwhelming the system
-    const batches = [];
-
-    for (let i = 0; i < files.length; i += BATCH_SIZE) {
-      batches.push(files.slice(i, i + BATCH_SIZE));
-    }
-
-    const processedFiles = [];
-
-    for (const batch of batches) {
-      const batchPromises = batch.map(async (file) => {
-        try {
-          // Extract function definitions in parallel
-          const functions = this._extractFunctions(file.currentContent || '');
-
-          // Extract imports and exports in parallel
-          const imports = this._extractImports(file.currentContent || '');
-          const exports = this._extractExports(file.currentContent || '');
-
-          return {
-            ...file,
-            functions,
-            imports,
-            exports,
-            processedAt: new Date().toISOString(),
-          };
-        } catch (error) {
-          console.error(`Error processing file ${file.filename}:`, error);
-          return {
-            ...file,
-            functions: [],
-            imports: [],
-            exports: [],
-            error: error.message,
-            processedAt: new Date().toISOString(),
-          };
-        }
-      });
-
-      const batchResults = await Promise.all(batchPromises);
-      processedFiles.push(...batchResults);
-    }
-
-    return processedFiles;
-  }
-
-  /**
-   * Extract imports from file content
-   */
-  private _extractImports(content: string): string[] {
-    const importRegex = /import\s+.*?\s+from\s+['"]([^'"]+)['"]/g;
-    const imports = [];
-    let match;
-
-    while ((match = importRegex.exec(content)) !== null) {
-      imports.push(match[1]);
-    }
-
-    return imports;
-  }
-
-  /**
-   * Extract exports from file content
-   */
-  private _extractExports(content: string): string[] {
-    const exportRegex =
-      /export\s+(?:const|let|var|function|class|interface|type)\s+(\w+)/g;
-    const exports = [];
-    let match;
-
-    while ((match = exportRegex.exec(content)) !== null) {
-      exports.push(match[1]);
-    }
-
-    return exports;
   }
 
   /**
