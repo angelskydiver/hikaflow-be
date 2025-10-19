@@ -197,9 +197,7 @@ export class WebhooksService {
         throw new Error('No commits found for the PR');
       }
       const lastPrCommit = prCommits[prCommits.length - 1].sha;
-      // // commitInfo()
 
-      // // data.pull_request.patch_url
       const prInfo = {
         id: data.repository.id.toString(),
         owner: data.repository.owner.login,
@@ -273,7 +271,6 @@ export class WebhooksService {
         // Don't throw to prevent disrupting the PR workflow
       }
 
-      // let fileChanges = await synchronizePrPatches(data.pull_request.diff_url);
       let changes = [];
       fileChanges.forEach((file) => {
         changes = [
@@ -413,7 +410,7 @@ export class WebhooksService {
 
       return changes;
     } catch (error) {
-      // console.log(error.message);
+      console.error('Error in syncPR:', error);
       throw new BadRequestException(error.message);
     }
   }
@@ -613,7 +610,7 @@ export class WebhooksService {
 
       return changes;
     } catch (error) {
-      // console.log(error.message);
+      console.error('Error in syncBitbucketPR:', error);
       throw new BadRequestException(error.message);
     }
   }
@@ -1035,7 +1032,7 @@ export class WebhooksService {
         `${data.repository.name}-${data.number}-${data.action}`,
         PrTrackerStatus.REJECTED,
       );
-      // console.log(error.message);
+      console.error('Error in generatePrReport:', error);
       throw new BadRequestException(error.message);
     }
   }
@@ -1109,7 +1106,6 @@ export class WebhooksService {
       }));
       const deepSeekAgent = new DeepSeek();
 
-      // let complexityAndDuplication = {};
       const complexityAndDuplication =
         await deepSeekAgent.analyzeCodeComplexityAndDuplication(filteredFiles);
 
@@ -1134,10 +1130,8 @@ export class WebhooksService {
         };
       });
       const codeChurn = {};
-      // let codeChurn = await this._analyzeHotSpotsAndCodeChurn(commits);
       const contributorsAndCodeOwnership =
         await this._analyzeContributorsAndCodeOwnership(commits);
-      // console.log('Commits;;;', contributorsAndCodeOwnership);
 
       const repository = await this._repositoryService.getRepository(
         {
@@ -1145,7 +1139,6 @@ export class WebhooksService {
         },
         {},
       );
-      // console.log('WOW;;;', repository);
 
       const executiveReportPayload = {
         repositoryId: repository.repositoryId,
@@ -1167,11 +1160,10 @@ export class WebhooksService {
       const commitIds = commits.map((commit) => commit.hash);
 
       // First, try to associate existing commits
-      const associationResult =
-        await this._commitSummaryService.associateCommitsWithReport(
-          commitIds,
-          report.id,
-        );
+      await this._commitSummaryService.associateCommitsWithReport(
+        commitIds,
+        report.id,
+      );
 
       const payload = {
         accountId: prInfo.accountId,
@@ -1321,7 +1313,7 @@ export class WebhooksService {
         `${data.repository.name}-${data.pullrequest.id}-${data.event}`,
         PrTrackerStatus.REJECTED,
       );
-      // console.log(error.message);
+      console.error('Error in generateBitbucketPrReport:', error);
       throw new BadRequestException(error.message);
     }
   }
@@ -1609,11 +1601,6 @@ export class WebhooksService {
       );
 
       // Apply advanced filtering pipeline
-      // const highQualityIssues = await advancedIssueFiltering(
-      //   allIssues,
-      //   repository?.repositorySettings || [],
-      //   deepSeekWrapper,
-      // );
       let highQualityIssues = allIssues;
 
       console.log(
@@ -2573,15 +2560,6 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
       );
 
       // Apply advanced filtering pipeline
-      // const highQualityIssues = await advancedIssueFiltering(
-      //   allIssues,
-      //   repository?.repositorySettings || [],
-      //   deepSeekWrapper,
-      // );
-
-      // console.log(
-      //   `Quality filtering: ${allIssues.length} -> ${highQualityIssues.length} issues`,
-      // );
 
       // Simplified comment creation logic - save ALL filtered issues
       const createCommentsMapping = allIssues
@@ -2616,21 +2594,19 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
       );
 
       // Execute final operations in parallel
-      const [updateResult, duplicateResult, commentResults] = await Promise.all(
-        [
-          this._pullRequestService.updatePullRequest(prInfo.prId, {
-            summary: analyzeCombineSummary.prSummary,
-          }),
-          this._commentService.registerDuplicateCode(
-            duplicateCodes.map((data) => ({
-              ...data,
-              repositoryId: prInfo.repositoryId,
-              prId: prInfo.prNumber.toString(),
-            })),
-          ),
-          Promise.allSettled(createCommentsMapping),
-        ],
-      );
+      const [, , commentResults] = await Promise.all([
+        this._pullRequestService.updatePullRequest(prInfo.prId, {
+          summary: analyzeCombineSummary.prSummary,
+        }),
+        this._commentService.registerDuplicateCode(
+          duplicateCodes.map((data) => ({
+            ...data,
+            repositoryId: prInfo.repositoryId,
+            prId: prInfo.prNumber.toString(),
+          })),
+        ),
+        Promise.allSettled(createCommentsMapping),
+      ]);
 
       // Log comment creation results
       const successfulComments = commentResults.filter(
@@ -2781,13 +2757,6 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
         ),
       );
 
-      // const results = await Promise.all(commitPromises);
-      // const successfulCommits = results.filter(Boolean);
-
-      // console.log(
-      //   `Processed ${successfulCommits.length} commits from push event`,
-      // );
-
       return {
         success: true,
         message: `Processed ${data.commits.length} commits`,
@@ -2826,18 +2795,6 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
         );
 
       console.log('subscriptionStatus: ', subscriptionStatus);
-
-      // if (!subscriptionStatus.isActive) {
-      //   console.log(
-      //     `Organization ${repository.organization.id} does not have active subscription for push event processing`,
-      //   );
-      //   return {
-      //     success: false,
-      //     message:
-      //       subscriptionStatus.message ||
-      //       'Active subscription required to process commits',
-      //   };
-      // }
 
       // Get repository credentials to fetch commit file information
       const organizationAccount =
