@@ -1528,9 +1528,29 @@ export class WebhooksService {
                   repository?.organizationId,
                   false,
                 );
+
+              // Validate AI response structure
+              if (!AiResponse || typeof AiResponse !== 'object') {
+                console.error(
+                  `Invalid AI response structure for file ${changes.file}`,
+                );
+                return { codeIssues: [], chunkSummary: '' };
+              }
+
+              // Ensure codeIssues is an array
+              const codeIssues = Array.isArray(AiResponse.codeIssues)
+                ? AiResponse.codeIssues
+                : [];
+
+              // Ensure chunkSummary is a string
+              const chunkSummary =
+                typeof AiResponse.chunkSummary === 'string'
+                  ? AiResponse.chunkSummary
+                  : '';
+
               return {
-                codeIssues: AiResponse.codeIssues,
-                chunkSummary: AiResponse.chunkSummary,
+                codeIssues,
+                chunkSummary,
               };
             } catch (error) {
               console.error(
@@ -1553,11 +1573,29 @@ export class WebhooksService {
       // Wait for all batches to complete
       const allBatchResults = await Promise.all(batchPromises);
 
-      // Flatten results
+      // Flatten results with defensive checks
       allBatchResults.forEach((batchResults) => {
+        if (!Array.isArray(batchResults)) {
+          console.warn('⚠️ batchResults is not an array, skipping');
+          return;
+        }
+
         batchResults.forEach((result) => {
-          allIssues = [...allIssues, ...result.codeIssues];
-          if (result.chunkSummary) {
+          // Defensive check for result structure
+          if (!result || typeof result !== 'object') {
+            console.warn('⚠️ Invalid result object, skipping');
+            return;
+          }
+
+          // Ensure codeIssues is an array before spreading
+          if (Array.isArray(result.codeIssues)) {
+            allIssues = [...allIssues, ...result.codeIssues];
+          } else {
+            console.warn('⚠️ result.codeIssues is not an array, skipping');
+          }
+
+          // Add summary if it exists and is a string
+          if (result.chunkSummary && typeof result.chunkSummary === 'string') {
             allSummaries.push(result.chunkSummary);
           }
         });
@@ -1587,10 +1625,6 @@ export class WebhooksService {
         await deepSeekWrapper.analyzeCombineSummary(combinedSummary);
 
       // Generate contextual AI prompts for each issue
-      const contextualPrompts = await deepSeekWrapper.generateContextualPrompts(
-        highQualityIssues,
-        prInfo,
-      );
 
       // Simplified comment creation logic - save ALL filtered issues
       const createCommentsMapping = highQualityIssues
@@ -1621,24 +1655,16 @@ export class WebhooksService {
       );
 
       // Execute final operations in parallel
-      const [updateResult, duplicateResult, commentResults] = await Promise.all(
-        [
-          this._pullRequestService.updatePullRequest(prInfo.prId, {
-            summary: analyzeCombineSummary.prSummary,
-            contextualPrompt: contextualPrompts.summaryPrompt || '',
-            expectedSolution: contextualPrompts.expectedSolution || '',
-            copyPasteCode: contextualPrompts.copyPasteCode || '',
-          }),
-          this._commentService.registerDuplicateCode(
-            duplicateCodes.map((data) => ({
-              ...data,
-              repositoryId: prInfo.repositoryId,
-              prId: prInfo.prNumber.toString(),
-            })),
-          ),
-          Promise.allSettled(createCommentsMapping),
-        ],
-      );
+      const [duplicateResult, commentResults] = await Promise.all([
+        this._commentService.registerDuplicateCode(
+          duplicateCodes.map((data) => ({
+            ...data,
+            repositoryId: prInfo.repositoryId,
+            prId: prInfo.prNumber.toString(),
+          })),
+        ),
+        Promise.allSettled(createCommentsMapping),
+      ]);
 
       // Log comment creation results
       const successfulComments = commentResults.filter(
@@ -1659,7 +1685,6 @@ export class WebhooksService {
       // Format the enhanced comment with AI prompts summary
       const enhancedComment = this.formatEnhancedComment(
         analyzeCombineSummary.prSummary,
-        contextualPrompts.summaryPrompt,
       );
 
       let { decryptedToken } = await this._accountCredentialByRepository({
@@ -1733,6 +1758,20 @@ export class WebhooksService {
             console.error('Error logging PR analysis usage:', logError);
           }),
       ]);
+
+      console.log('highQualityIssues: ', highQualityIssues);
+      console.log('prInfo: ', prInfo);
+      const contextualPrompts = await deepSeekWrapper.generateContextualPrompts(
+        highQualityIssues,
+        prInfo,
+      );
+      console.log('contextualPrompts: ', contextualPrompts);
+
+      await this._pullRequestService.updatePullRequest(prInfo.prId, {
+        contextualPrompt: contextualPrompts.summaryPrompt || '',
+        expectedSolution: contextualPrompts.expectedSolution || '',
+        copyPasteCode: contextualPrompts.copyPasteCode || '',
+      });
 
       return {
         AiResponse: {
@@ -2432,9 +2471,29 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
                   repository?.organizationId,
                   false,
                 );
+
+              // Validate AI response structure
+              if (!AiResponse || typeof AiResponse !== 'object') {
+                console.error(
+                  `Invalid AI response structure for file ${changes.file}`,
+                );
+                return { codeIssues: [], chunkSummary: '' };
+              }
+
+              // Ensure codeIssues is an array
+              const codeIssues = Array.isArray(AiResponse.codeIssues)
+                ? AiResponse.codeIssues
+                : [];
+
+              // Ensure chunkSummary is a string
+              const chunkSummary =
+                typeof AiResponse.chunkSummary === 'string'
+                  ? AiResponse.chunkSummary
+                  : '';
+
               return {
-                codeIssues: AiResponse.codeIssues,
-                chunkSummary: AiResponse.chunkSummary,
+                codeIssues,
+                chunkSummary,
               };
             } catch (error) {
               console.error(`Error analyzing file ${changes.file}:`, error);
@@ -2454,11 +2513,29 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
       // Wait for all batches to complete
       const allBatchResults = await Promise.all(batchPromises);
 
-      // Flatten results
+      // Flatten results with defensive checks
       allBatchResults.forEach((batchResults) => {
+        if (!Array.isArray(batchResults)) {
+          console.warn('⚠️ batchResults is not an array, skipping');
+          return;
+        }
+
         batchResults.forEach((result) => {
-          allIssues = [...allIssues, ...result.codeIssues];
-          if (result.chunkSummary) {
+          // Defensive check for result structure
+          if (!result || typeof result !== 'object') {
+            console.warn('⚠️ Invalid result object, skipping');
+            return;
+          }
+
+          // Ensure codeIssues is an array before spreading
+          if (Array.isArray(result.codeIssues)) {
+            allIssues = [...allIssues, ...result.codeIssues];
+          } else {
+            console.warn('⚠️ result.codeIssues is not an array, skipping');
+          }
+
+          // Add summary if it exists and is a string
+          if (result.chunkSummary && typeof result.chunkSummary === 'string') {
             allSummaries.push(result.chunkSummary);
           }
         });
@@ -2610,10 +2687,14 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
       this.performanceMetrics.totalProcessingTime += totalTime;
 
       // Generate contextual AI prompts for the GitHub PR
+      console.log('allIssues: ', allIssues);
+      console.log('prInfo: ', prInfo);
       const contextualPrompts = await deepSeekWrapper.generateContextualPrompts(
         allIssues,
         prInfo,
       );
+
+      console.log('contextualPrompts: ', contextualPrompts);
 
       await this._pullRequestService.updatePullRequest(prInfo.prId, {
         contextualPrompt: contextualPrompts?.summaryPrompt || '',
