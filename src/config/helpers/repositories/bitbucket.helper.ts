@@ -1,10 +1,52 @@
 import * as atlassianJwt from 'atlassian-jwt';
-import axios from 'axios';
+import axios, { AxiosResponse } from 'axios';
 import * as moment from 'moment';
 import {
   ignoredExtensionsForFileScan,
   ignoredFilesForFileScan,
 } from 'src/config/constants/unnecessary.files.constant';
+
+// Helper function to handle API calls with automatic token refresh on 401 errors
+async function makeAuthenticatedRequest<T>(
+  url: string,
+  data: {
+    token: string;
+    tokenData?: { sharedSecret: string; baseUrl: string; clientKey: string };
+  },
+  method: string = 'GET',
+  resource: string = '',
+): Promise<AxiosResponse<T>> {
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: data.token,
+      },
+    });
+    return response;
+  } catch (error) {
+    // Check if it's a 401 Unauthorized error and we have token data for refresh
+    if (error.response?.status === 401 && data.tokenData) {
+      console.log('Token expired, generating fresh token...');
+
+      // Generate a fresh token once
+      const newToken = getAuthToken(data.tokenData, method, resource);
+
+      // Update the token in the data object
+      data.token = newToken;
+
+      // Retry the request with the new token
+      const response = await axios.get(url, {
+        headers: {
+          Authorization: newToken,
+        },
+      });
+      return response;
+    }
+
+    // If it's not a 401 error or no token data available, throw the error
+    throw error;
+  }
+}
 export function getAuthToken(
   data: { sharedSecret: string; baseUrl: string; clientKey: string },
   method,
@@ -55,6 +97,7 @@ export function getAuthToken(
 export const fetchBitbucketRepositories = async (data: {
   workspace: string;
   token: string;
+  tokenData?: { sharedSecret: string; baseUrl: string; clientKey: string };
 }) => {
   try {
     const method = 'GET';
@@ -64,11 +107,23 @@ export const fetchBitbucketRepositories = async (data: {
     let nextPageUrl = `https://api.bitbucket.org${resource}`; // Initial URL
 
     while (hasNextPage) {
-      const response = await axios.get(nextPageUrl, {
-        headers: {
-          Authorization: `${data.token}`, // Correct header name
-        },
-      });
+      let response;
+
+      // Use retry mechanism if tokenData is provided, otherwise use direct call
+      if (data.tokenData) {
+        response = await makeAuthenticatedRequest(
+          nextPageUrl,
+          data,
+          method,
+          resource,
+        );
+      } else {
+        response = await axios.get(nextPageUrl, {
+          headers: {
+            Authorization: `${data.token}`,
+          },
+        });
+      }
 
       // Extract the current page's repositories
       const currentPageRepositories = response.data.values;
@@ -616,6 +671,7 @@ export async function bitbucketRepositoryAccess(data: {
   repo: string;
   branch: string;
   token: string;
+  tokenData?: { sharedSecret: string; baseUrl: string; clientKey: string };
 }) {
   try {
     // BitBucket doesn't have a recursive parameter like GitHub
@@ -626,11 +682,23 @@ export async function bitbucketRepositoryAccess(data: {
     async function fetchDirectoryContents(path: string = '') {
       const url = `https://api.bitbucket.org/2.0/repositories/${data.workspace}/${data.repo}/src/${data.branch}/${path}`;
 
-      const response = await axios.get(url, {
-        headers: {
-          Authorization: data.token,
-        },
-      });
+      let response;
+
+      // Use retry mechanism if tokenData is provided, otherwise use direct call
+      if (data.tokenData) {
+        response = await makeAuthenticatedRequest(
+          url,
+          data,
+          'GET',
+          `/2.0/repositories/${data.workspace}/${data.repo}/src/${data.branch}/${path}`,
+        );
+      } else {
+        response = await axios.get(url, {
+          headers: {
+            Authorization: data.token,
+          },
+        });
+      }
 
       if (!response.data || !response.data.values) {
         throw new Error('Invalid repository structure.');
