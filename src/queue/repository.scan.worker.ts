@@ -138,10 +138,10 @@ const processOnDemandFileScan = async (job) => {
     });
 
     // Check if file exists in the repository
-    const fileContent = await fetchFileByUrl(
-      `${filePath}`,
-      accountCredentials.decryptedToken,
-    );
+    const { fileContent } = await fetchFileByUrl(`${filePath}`, {
+      token: accountCredentials.decryptedToken,
+      tokenData: accountCredentials.tokenData,
+    });
 
     if (!fileContent) {
       throw new Error(`File ${filePath} not found in repository`);

@@ -198,6 +198,13 @@ export class RepositoryScanService {
       if (!repository)
         throw new Error(`Repository "${repositoryName}" not found.`);
 
+      const organizationAccount =
+        await this.prisma.organizationAccounts.findFirst({
+          where: { role: 'ADMIN', organizationId: repository.organizationId },
+          include: { account: true },
+        });
+      accountId = organizationAccount.accountId;
+
       let repositoryStructure;
       const accountCredentials =
         await this.accountCredentialService.getAccountToken({ accountId });
@@ -217,6 +224,7 @@ export class RepositoryScanService {
           repo: repository.name.replace(' ', '-'),
           branch: repository.baseBranch.replace(' ', '-'),
           token: accountCredentials.decryptedToken,
+          tokenData: accountCredentials.tokenData,
         });
       }
 
@@ -241,6 +249,7 @@ export class RepositoryScanService {
                 repository.id,
                 repositoryScanId,
                 repository,
+                accountCredentials?.tokenData,
               );
             } catch (fileError) {
               console.error(
@@ -326,10 +335,17 @@ export class RepositoryScanService {
     repositoryId: string,
     repositoryScanId: string,
     repository: any,
+    tokenData?: { sharedSecret: string; baseUrl: string; clientKey: string },
   ) {
     try {
       const deepseekAI = new DeepSeek();
-      let fileContent = await fetchFileByUrl(fileChanges.filePath, token);
+      let { fileContent, newToken } = await fetchFileByUrl(
+        fileChanges.filePath,
+        { token, tokenData },
+      );
+      if (newToken) {
+        token = newToken;
+      }
       let lines;
       if (typeof fileContent !== 'string') {
         fileContent = JSON.stringify(fileContent);
@@ -2694,6 +2710,7 @@ export class RepositoryScanService {
               repo: repo.name.replace(' ', '-'),
               branch: repo.baseBranch.replace(' ', '-'),
               token: accountCredentials.decryptedToken,
+              tokenData: accountCredentials.tokenData,
             });
           }
 
@@ -2729,35 +2746,6 @@ export class RepositoryScanService {
             const fileExtension = fileName.includes('.')
               ? fileName.substring(fileName.lastIndexOf('.')).toLowerCase()
               : '';
-
-            // List of supported extensions for scanning
-            // const supportedExtensions = [
-            //   '.js',
-            //   '.jsx',
-            //   '.ts',
-            //   '.tsx',
-            //   '.py',
-            //   '.rb',
-            //   '.java',
-            //   '.c',
-            //   '.cpp',
-            //   '.h',
-            //   '.cs',
-            //   '.php',
-            //   '.go',
-            //   '.rs',
-            //   '.swift',
-            //   '.kt',
-            //   '.html',
-            //   '.css',
-            //   '.scss',
-            //   '.json',
-            //   '.xml',
-            //   '.yaml',
-            //   '.yml',
-            //   '.md',
-            //   '.txt',
-            // ];
 
             // Skip if extension is not supported
             if (ignoredExtensionsForFileScan.includes(fileExtension)) {

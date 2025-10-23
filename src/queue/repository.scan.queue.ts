@@ -163,7 +163,7 @@ export async function queueOnDemandFileScan(
       }
 
       console.log(`Fetching file from URL: ${fileUrl}`);
-      const fileContent = await fetchFileByUrl(
+      const { fileContent } = await fetchFileByUrl(
         fileUrl,
         accountCredentials.decryptedToken,
       );

@@ -366,7 +366,29 @@ CONTENT REQUIREMENTS:
 - DO NOT rephrase or rewrite content
 - DO NOT add new information
 - DO NOT remove existing information
-- ONLY improve the markdown formatting and structure
+- ONLY improve the markdown formatting and structure, NO NEED TO ADD EXTRA INFORMATION, Acknowledgement, etc.
+
+Correct EXAMPLE:
+Issue Analysis
+Problem: <Problem description>
+
+Impact: <Impact description>
+
+Solution: <Solution description>
+
+Benefits: <Benefits description>
+
+Wrong EXAMPLE:
+Of course. Here is the reformatted analysis with improved visual structure and readability.<I don't need any of this line>
+
+🔍 Issue Analysis
+Problem: <Problem description>.
+
+Impact: <Impact description>.
+
+Solution: <Solution description>.
+
+Benefits: <Benefits description>.
 
 Original Analysis:
 ${comment.reason}
