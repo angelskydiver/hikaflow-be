@@ -197,9 +197,7 @@ export class WebhooksService {
         throw new Error('No commits found for the PR');
       }
       const lastPrCommit = prCommits[prCommits.length - 1].sha;
-      // // commitInfo()
 
-      // // data.pull_request.patch_url
       const prInfo = {
         id: data.repository.id.toString(),
         owner: data.repository.owner.login,
@@ -273,7 +271,6 @@ export class WebhooksService {
         // Don't throw to prevent disrupting the PR workflow
       }
 
-      // let fileChanges = await synchronizePrPatches(data.pull_request.diff_url);
       let changes = [];
       fileChanges.forEach((file) => {
         changes = [
@@ -413,7 +410,7 @@ export class WebhooksService {
 
       return changes;
     } catch (error) {
-      // console.log(error.message);
+      console.error('Error in syncPR:', error);
       throw new BadRequestException(error.message);
     }
   }
@@ -613,7 +610,7 @@ export class WebhooksService {
 
       return changes;
     } catch (error) {
-      // console.log(error.message);
+      console.error('Error in syncBitbucketPR:', error);
       throw new BadRequestException(error.message);
     }
   }
@@ -1035,7 +1032,7 @@ export class WebhooksService {
         `${data.repository.name}-${data.number}-${data.action}`,
         PrTrackerStatus.REJECTED,
       );
-      // console.log(error.message);
+      console.error('Error in generatePrReport:', error);
       throw new BadRequestException(error.message);
     }
   }
@@ -1103,7 +1100,7 @@ export class WebhooksService {
         patch: data.changes.map((change) => change.lines.join('\n')).join('\n'),
       }));
       const deepSeekAgent = new DeepSeek();
-      // let complexityAndDuplication = {};
+
       const complexityAndDuplication =
         await deepSeekAgent.analyzeCodeComplexityAndDuplication(filteredFiles);
       const mapPrCommit = prCommits.map((data) => {
@@ -1126,10 +1123,8 @@ export class WebhooksService {
         };
       });
       const codeChurn = {};
-      // let codeChurn = await this._analyzeHotSpotsAndCodeChurn(commits);
       const contributorsAndCodeOwnership =
         await this._analyzeContributorsAndCodeOwnership(commits);
-      // console.log('Commits;;;', contributorsAndCodeOwnership);
 
       const repository = await this._repositoryService.getRepository(
         {
@@ -1137,7 +1132,6 @@ export class WebhooksService {
         },
         {},
       );
-      // console.log('WOW;;;', repository);
 
       const executiveReportPayload = {
         repositoryId: repository.repositoryId,
@@ -1159,11 +1153,10 @@ export class WebhooksService {
       const commitIds = commits.map((commit) => commit.hash);
 
       // First, try to associate existing commits
-      const associationResult =
-        await this._commitSummaryService.associateCommitsWithReport(
-          commitIds,
-          report.id,
-        );
+      await this._commitSummaryService.associateCommitsWithReport(
+        commitIds,
+        report.id,
+      );
 
       const payload = {
         accountId: prInfo.accountId,
@@ -1313,7 +1306,7 @@ export class WebhooksService {
         `${data.repository.name}-${data.pullrequest.id}-${data.event}`,
         PrTrackerStatus.REJECTED,
       );
-      // console.log(error.message);
+      console.error('Error in generateBitbucketPrReport:', error);
       throw new BadRequestException(error.message);
     }
   }
@@ -1520,9 +1513,29 @@ export class WebhooksService {
                   repository?.organizationId,
                   false,
                 );
+
+              // Validate AI response structure
+              if (!AiResponse || typeof AiResponse !== 'object') {
+                console.error(
+                  `Invalid AI response structure for file ${changes.file}`,
+                );
+                return { codeIssues: [], chunkSummary: '' };
+              }
+
+              // Ensure codeIssues is an array
+              const codeIssues = Array.isArray(AiResponse.codeIssues)
+                ? AiResponse.codeIssues
+                : [];
+
+              // Ensure chunkSummary is a string
+              const chunkSummary =
+                typeof AiResponse.chunkSummary === 'string'
+                  ? AiResponse.chunkSummary
+                  : '';
+
               return {
-                codeIssues: AiResponse.codeIssues,
-                chunkSummary: AiResponse.chunkSummary,
+                codeIssues,
+                chunkSummary,
               };
             } catch (error) {
               console.error(
@@ -1545,11 +1558,29 @@ export class WebhooksService {
       // Wait for all batches to complete
       const allBatchResults = await Promise.all(batchPromises);
 
-      // Flatten results
+      // Flatten results with defensive checks
       allBatchResults.forEach((batchResults) => {
+        if (!Array.isArray(batchResults)) {
+          console.warn('⚠️ batchResults is not an array, skipping');
+          return;
+        }
+
         batchResults.forEach((result) => {
-          allIssues = [...allIssues, ...result.codeIssues];
-          if (result.chunkSummary) {
+          // Defensive check for result structure
+          if (!result || typeof result !== 'object') {
+            console.warn('⚠️ Invalid result object, skipping');
+            return;
+          }
+
+          // Ensure codeIssues is an array before spreading
+          if (Array.isArray(result.codeIssues)) {
+            allIssues = [...allIssues, ...result.codeIssues];
+          } else {
+            console.warn('⚠️ result.codeIssues is not an array, skipping');
+          }
+
+          // Add summary if it exists and is a string
+          if (result.chunkSummary && typeof result.chunkSummary === 'string') {
             allSummaries.push(result.chunkSummary);
           }
         });
@@ -1563,11 +1594,6 @@ export class WebhooksService {
       );
 
       // Apply advanced filtering pipeline
-      // const highQualityIssues = await advancedIssueFiltering(
-      //   allIssues,
-      //   repository?.repositorySettings || [],
-      //   deepSeekWrapper,
-      // );
       let highQualityIssues = allIssues;
 
       console.log(
@@ -1579,10 +1605,6 @@ export class WebhooksService {
         await deepSeekWrapper.analyzeCombineSummary(combinedSummary);
 
       // Generate contextual AI prompts for each issue
-      const contextualPrompts = await deepSeekWrapper.generateContextualPrompts(
-        highQualityIssues,
-        prInfo,
-      );
 
       // Simplified comment creation logic - save ALL filtered issues
       const createCommentsMapping = highQualityIssues
@@ -1613,24 +1635,16 @@ export class WebhooksService {
       );
 
       // Execute final operations in parallel
-      const [updateResult, duplicateResult, commentResults] = await Promise.all(
-        [
-          this._pullRequestService.updatePullRequest(prInfo.prId, {
-            summary: analyzeCombineSummary.prSummary,
-            contextualPrompt: contextualPrompts.summaryPrompt || '',
-            expectedSolution: contextualPrompts.expectedSolution || '',
-            copyPasteCode: contextualPrompts.copyPasteCode || '',
-          }),
-          this._commentService.registerDuplicateCode(
-            duplicateCodes.map((data) => ({
-              ...data,
-              repositoryId: prInfo.repositoryId,
-              prId: prInfo.prNumber.toString(),
-            })),
-          ),
-          Promise.allSettled(createCommentsMapping),
-        ],
-      );
+      const [duplicateResult, commentResults] = await Promise.all([
+        this._commentService.registerDuplicateCode(
+          duplicateCodes.map((data) => ({
+            ...data,
+            repositoryId: prInfo.repositoryId,
+            prId: prInfo.prNumber.toString(),
+          })),
+        ),
+        Promise.allSettled(createCommentsMapping),
+      ]);
 
       // Log comment creation results
       const successfulComments = commentResults.filter(
@@ -1651,7 +1665,6 @@ export class WebhooksService {
       // Format the enhanced comment with AI prompts summary
       const enhancedComment = this.formatEnhancedComment(
         analyzeCombineSummary.prSummary,
-        contextualPrompts.summaryPrompt,
       );
 
       let { decryptedToken } = await this._accountCredentialByRepository({
@@ -1725,6 +1738,20 @@ export class WebhooksService {
             console.error('Error logging PR analysis usage:', logError);
           }),
       ]);
+
+      console.log('highQualityIssues: ', highQualityIssues);
+      console.log('prInfo: ', prInfo);
+      const contextualPrompts = await deepSeekWrapper.generateContextualPrompts(
+        highQualityIssues,
+        prInfo,
+      );
+      console.log('contextualPrompts: ', contextualPrompts);
+
+      await this._pullRequestService.updatePullRequest(prInfo.prId, {
+        contextualPrompt: contextualPrompts.summaryPrompt || '',
+        expectedSolution: contextualPrompts.expectedSolution || '',
+        copyPasteCode: contextualPrompts.copyPasteCode || '',
+      });
 
       return {
         AiResponse: {
@@ -2424,9 +2451,29 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
                   repository?.organizationId,
                   false,
                 );
+
+              // Validate AI response structure
+              if (!AiResponse || typeof AiResponse !== 'object') {
+                console.error(
+                  `Invalid AI response structure for file ${changes.file}`,
+                );
+                return { codeIssues: [], chunkSummary: '' };
+              }
+
+              // Ensure codeIssues is an array
+              const codeIssues = Array.isArray(AiResponse.codeIssues)
+                ? AiResponse.codeIssues
+                : [];
+
+              // Ensure chunkSummary is a string
+              const chunkSummary =
+                typeof AiResponse.chunkSummary === 'string'
+                  ? AiResponse.chunkSummary
+                  : '';
+
               return {
-                codeIssues: AiResponse.codeIssues,
-                chunkSummary: AiResponse.chunkSummary,
+                codeIssues,
+                chunkSummary,
               };
             } catch (error) {
               console.error(`Error analyzing file ${changes.file}:`, error);
@@ -2446,11 +2493,29 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
       // Wait for all batches to complete
       const allBatchResults = await Promise.all(batchPromises);
 
-      // Flatten results
+      // Flatten results with defensive checks
       allBatchResults.forEach((batchResults) => {
+        if (!Array.isArray(batchResults)) {
+          console.warn('⚠️ batchResults is not an array, skipping');
+          return;
+        }
+
         batchResults.forEach((result) => {
-          allIssues = [...allIssues, ...result.codeIssues];
-          if (result.chunkSummary) {
+          // Defensive check for result structure
+          if (!result || typeof result !== 'object') {
+            console.warn('⚠️ Invalid result object, skipping');
+            return;
+          }
+
+          // Ensure codeIssues is an array before spreading
+          if (Array.isArray(result.codeIssues)) {
+            allIssues = [...allIssues, ...result.codeIssues];
+          } else {
+            console.warn('⚠️ result.codeIssues is not an array, skipping');
+          }
+
+          // Add summary if it exists and is a string
+          if (result.chunkSummary && typeof result.chunkSummary === 'string') {
             allSummaries.push(result.chunkSummary);
           }
         });
@@ -2488,15 +2553,6 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
       );
 
       // Apply advanced filtering pipeline
-      // const highQualityIssues = await advancedIssueFiltering(
-      //   allIssues,
-      //   repository?.repositorySettings || [],
-      //   deepSeekWrapper,
-      // );
-
-      // console.log(
-      //   `Quality filtering: ${allIssues.length} -> ${highQualityIssues.length} issues`,
-      // );
 
       // Simplified comment creation logic - save ALL filtered issues
       const createCommentsMapping = allIssues
@@ -2531,21 +2587,19 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
       );
 
       // Execute final operations in parallel
-      const [updateResult, duplicateResult, commentResults] = await Promise.all(
-        [
-          this._pullRequestService.updatePullRequest(prInfo.prId, {
-            summary: analyzeCombineSummary.prSummary,
-          }),
-          this._commentService.registerDuplicateCode(
-            duplicateCodes.map((data) => ({
-              ...data,
-              repositoryId: prInfo.repositoryId,
-              prId: prInfo.prNumber.toString(),
-            })),
-          ),
-          Promise.allSettled(createCommentsMapping),
-        ],
-      );
+      const [, , commentResults] = await Promise.all([
+        this._pullRequestService.updatePullRequest(prInfo.prId, {
+          summary: analyzeCombineSummary.prSummary,
+        }),
+        this._commentService.registerDuplicateCode(
+          duplicateCodes.map((data) => ({
+            ...data,
+            repositoryId: prInfo.repositoryId,
+            prId: prInfo.prNumber.toString(),
+          })),
+        ),
+        Promise.allSettled(createCommentsMapping),
+      ]);
 
       // Log comment creation results
       const successfulComments = commentResults.filter(
@@ -2602,10 +2656,14 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
       this.performanceMetrics.totalProcessingTime += totalTime;
 
       // Generate contextual AI prompts for the GitHub PR
+      console.log('allIssues: ', allIssues);
+      console.log('prInfo: ', prInfo);
       const contextualPrompts = await deepSeekWrapper.generateContextualPrompts(
         allIssues,
         prInfo,
       );
+
+      console.log('contextualPrompts: ', contextualPrompts);
 
       await this._pullRequestService.updatePullRequest(prInfo.prId, {
         contextualPrompt: contextualPrompts?.summaryPrompt || '',
@@ -2692,13 +2750,6 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
         ),
       );
 
-      // const results = await Promise.all(commitPromises);
-      // const successfulCommits = results.filter(Boolean);
-
-      // console.log(
-      //   `Processed ${successfulCommits.length} commits from push event`,
-      // );
-
       return {
         success: true,
         message: `Processed ${data.commits.length} commits`,
@@ -2737,18 +2788,6 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
         );
 
       console.log('subscriptionStatus: ', subscriptionStatus);
-
-      // if (!subscriptionStatus.isActive) {
-      //   console.log(
-      //     `Organization ${repository.organization.id} does not have active subscription for push event processing`,
-      //   );
-      //   return {
-      //     success: false,
-      //     message:
-      //       subscriptionStatus.message ||
-      //       'Active subscription required to process commits',
-      //   };
-      // }
 
       // Get repository credentials to fetch commit file information
       const organizationAccount =
