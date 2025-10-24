@@ -128,7 +128,7 @@ export class Gemini {
 
       // Third attempt: Use Gemini to repair the JSON
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-2.5-pro',
+        model: 'gemini-2.5-flash',
       });
 
       const prompt = `
@@ -136,19 +136,7 @@ Fix this invalid JSON without analyzing it. The JSON is from a file analysis and
 
 ${invalidJson}
 
-The output must be properly formatted JSON with this structure:
-{
-  "summary": "Brief description",
-  "tags": ["TAG1", "TAG2"],  
-  "functions": [],
-  "classes": [],
-  "components": [],
-  "relations": {
-    "imports": [],
-    "exports": []
-  }
-}
-
+The output must be properly formatted JSON.
 Return ONLY the fixed JSON with no other text, explanations, or code formatting.
 `;
 

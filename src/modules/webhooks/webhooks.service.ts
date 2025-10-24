@@ -1080,11 +1080,9 @@ export class WebhooksService {
       if (prCommits.length === 0) {
         throw new Error('No commits found for the PR');
       }
-
       const lastPrCommit = prCommits[prCommits.length - 1].hash;
-
       const prInfo = {
-        owner: data.actor.display_name,
+        owner: data.actor?.display_name || data.actor.nickname,
         prNumber: data.repository.id,
         repo: data.repository.name,
         lastCommit: lastPrCommit,
@@ -1092,34 +1090,28 @@ export class WebhooksService {
         accountId,
         links: data.pullrequest.links,
       };
-
       const fileChanges = await fetchBitbucketPrPatch({
         token: decryptedToken,
         diffUrl: prInfo.links.diff.href,
       }); // after this I want to check each file patch
-
       const { modified, added } = this._countChanges(fileChanges);
 
       // remove setup or unnecessary files.
       let filteredFiles = filterFiles(fileChanges);
-
       filteredFiles = filteredFiles.map((data) => ({
         filename: data.filename,
         patch: data.changes.map((change) => change.lines.join('\n')).join('\n'),
       }));
       const deepSeekAgent = new DeepSeek();
-
       // let complexityAndDuplication = {};
       const complexityAndDuplication =
         await deepSeekAgent.analyzeCodeComplexityAndDuplication(filteredFiles);
-
       const mapPrCommit = prCommits.map((data) => {
         return commitInfoBitbucket({
           token: decryptedToken,
           commitDiffUrl: data.links.diff.href,
         });
       });
-
       let commits = await Promise.all(mapPrCommit);
       commits = commits.map((data, index) => {
         return {

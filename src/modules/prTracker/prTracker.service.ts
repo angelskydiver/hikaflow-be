@@ -71,11 +71,11 @@ export class PrTrackerService {
       console.log('Total Number of in complete PRs: ', prs.length);
       const prMapping = prs.map((body) => {
         // @ts-ignore
-        if (body.response?.action == 'opened') {
+        if (body.prId.split('-')[body.prId.split('-').length - 1] == 'opened') {
           return this._webhooksService.managePRs(body.response);
         } else if (
           // @ts-ignore
-          body.response?.action == 'closed' &&
+          body.prId.split('-')[body.prId.split('-').length - 1] == 'closed' &&
           // @ts-ignore
           body.response?.pull_request?.merged
         ) {
@@ -83,6 +83,23 @@ export class PrTrackerService {
           // @ts-ignore
         } else if (body.response?.action == 'synchronize') {
           return this._webhooksService.syncPR(body.response);
+        }
+        // for bitbucket
+        else if (
+          body.prId.split('-')[body.prId.split('-').length - 1] ==
+          'pullrequest:created'
+        ) {
+          return this._webhooksService.bitbucketCreateRequest(body.response);
+        } else if (
+          body.prId.split('-')[body.prId.split('-').length - 1] ==
+          'pullrequest:fulfilled'
+        ) {
+          return this._webhooksService.generateBitbucketPrReport(body.response);
+        } else if (
+          body.prId.split('-')[body.prId.split('-').length - 1] ==
+          'pullrequest:updated'
+        ) {
+          return this._webhooksService.syncBitbucketPR(body.response);
         }
       });
       await Promise.all(prMapping);
