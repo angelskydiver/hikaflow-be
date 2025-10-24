@@ -379,7 +379,7 @@ END OF PREVIOUS QUESTIONS
             modelToUse =
               modelToUse === 'gemini-2.5-pro'
                 ? 'gemini-2.5-pro'
-                : 'gemini-2.5-pro';
+                : 'gemini-2.5-flash';
             console.log(`Switching to ${modelToUse} for retry`);
           }
         } else if (apiError.status === 429) {
@@ -607,7 +607,7 @@ END OF PREVIOUS QUESTIONS
             modelToUse =
               modelToUse === 'gemini-2.5-pro'
                 ? 'gemini-2.5-pro'
-                : 'gemini-2.5-pro';
+                : 'gemini-2.5-flash';
             console.log(`Switching to ${modelToUse} for retry`);
           }
         } else if (apiError.status === 429) {
@@ -1125,7 +1125,7 @@ The analysis must be HIGHLY DETAILED and SPECIFIC. Include exact file locations,
             modelToUse =
               modelToUse === 'gemini-2.5-pro'
                 ? 'gemini-2.5-pro'
-                : 'gemini-2.5-pro';
+                : 'gemini-2.5-flash';
           }
 
           retryCount++;
