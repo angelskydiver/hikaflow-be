@@ -172,91 +172,172 @@ export class WebhooksService {
     };
   };
 
-  async syncPR(data: any) {
+  private async validateBaseBranchMatch(data: any): Promise<boolean> {
+    const isBaseBranchMatch = await this._prismaService.repository.findUnique({
+      where: {
+        repositoryId: data.repository.id.toString(),
+        baseBranch: data.pull_request.base.ref,
+      },
+    });
+    return !!isBaseBranchMatch;
+  }
+
+  private async getPrInfo(data: any, decryptedToken: string) {
+    const prCommits = await fetchPrCommits(
+      data.pull_request.commits_url,
+      decryptedToken,
+    );
+    if (prCommits.length === 0) {
+      throw new Error('No commits found for the PR');
+    }
+    const lastPrCommit = prCommits[prCommits.length - 1].sha;
+
+    return {
+      id: data.repository.id.toString(),
+      owner: data.repository.owner.login,
+      prNumber: data.number,
+      repo: data.repository.name,
+      lastCommit: lastPrCommit,
+      token: decryptedToken,
+    };
+  }
+
+  private async getFileChanges(prInfo: any, decryptedToken: string) {
+    const resp = await commitInfo({
+      owner: prInfo.owner,
+      repo: prInfo.repo,
+      commitSha: prInfo.lastCommit,
+      token: decryptedToken,
+    });
+    return parseGitHubPatchResponse(resp.files);
+  }
+
+  private async findPullRequest(prUrl: string) {
+    const pullRequest = await this._prismaService.pullRequest.findFirst({
+      where: { prUrl },
+    });
+    if (!pullRequest) {
+      throw new Error('Pull request not found');
+    }
+    return pullRequest;
+  }
+
+  private calculateChangesSummary(fileChanges: any[]) {
+    return {
+      filesChanged: fileChanges.length,
+      additions: fileChanges.reduce(
+        (total, file) =>
+          total +
+          file.changes.reduce(
+            (sum, change) =>
+              sum + (change.type === 'addition' ? change.lines.length : 0),
+            0,
+          ),
+        0,
+      ),
+      deletions: fileChanges.reduce(
+        (total, file) =>
+          total +
+          file.changes.reduce(
+            (sum, change) =>
+              sum + (change.type === 'deletion' ? change.lines.length : 0),
+            0,
+          ),
+        0,
+      ),
+    };
+  }
+
+  private async sendPrUpdatedNotificationSafely(
+    data: any,
+    accountId: string,
+    changesSummary: any,
+  ) {
     try {
-      const isBaseBranchMatch = await this._prismaService.repository.findUnique(
-        {
-          where: {
-            repositoryId: data.repository.id.toString(),
-            baseBranch: data.pull_request.base.ref,
-          },
+      await this.sendPrUpdatedNotification({
+        accountId: accountId,
+        authorName: data.pull_request.user.login,
+        prNumber: data.number.toString(),
+        repositoryInfo: {
+          repositoryName: data.repository.name,
+          repositoryId: data.repository.id.toString(),
         },
+        changesSummary: changesSummary,
+      });
+    } catch (emailError) {
+      console.error('Failed to send PR updated notification:', emailError);
+      // Don't throw to prevent disrupting the PR workflow
+    }
+  }
+
+  private processFileChanges(fileChanges: any[]) {
+    let changes = [];
+    fileChanges.forEach((file) => {
+      changes = [
+        ...changes,
+        ...file.changes
+          .map((change) =>
+            change.lines.map((eachline, i) => ({
+              lineNumber: change.startLine + i,
+              content: eachline,
+              fileName: file.file,
+              type: change.type,
+            })),
+          )
+          .flat(),
+      ];
+    });
+    return changes;
+  }
+
+  private async detectFixedComments(
+    pullRequestId: string,
+    changes: any[],
+    prNumber: number,
+  ) {
+    const gemini = new Gemini();
+
+    // Get all existing comments for this PR (not just changed files)
+    const allPrComments = await this._prismaService.comment.findMany({
+      where: {
+        prId: pullRequestId,
+        status: { not: 'OUTDATED' }, // Only check active issues
+      },
+    });
+
+    console.log(
+      `Analyzing ${allPrComments.length} existing issues for fixes in PR #${prNumber}`,
+    );
+
+    // Enhanced fixed comment detection
+    return await gemini.detectFixedComments({
+      issues: allPrComments.map((c) => ({
+        id: c.id,
+        file: c.file,
+        line: Number(c.line) || 0,
+        content: c.content || '',
+        issue: c.issue || '',
+        reason: c.reason || '',
+      })),
+      changes,
+    });
+  }
+
+  private async handleFixedIssues(
+    fixedIds: any[],
+    data: any,
+    accountId: string,
+  ) {
+    if (fixedIds.length > 0) {
+      console.log(
+        `Found ${fixedIds.length} fixed issues in PR #${data.number}:`,
+        fixedIds,
       );
-      if (!isBaseBranchMatch) {
-        return;
-      }
+      await this._commentService.updateComments(fixedIds);
 
-      const { decryptedToken, accountId } =
-        await this._accountCredentialByRepository(data);
-
-      const prCommits = await fetchPrCommits(
-        data.pull_request.commits_url,
-        decryptedToken,
-      );
-      if (prCommits.length === 0) {
-        throw new Error('No commits found for the PR');
-      }
-      const lastPrCommit = prCommits[prCommits.length - 1].sha;
-
-      const prInfo = {
-        id: data.repository.id.toString(),
-        owner: data.repository.owner.login,
-        prNumber: data.number,
-        repo: data.repository.name,
-        lastCommit: lastPrCommit,
-        token: decryptedToken,
-      };
-
-      const resp = await commitInfo({
-        owner: prInfo.owner,
-        repo: prInfo.repo,
-        commitSha: lastPrCommit,
-        token: decryptedToken,
-      });
-      const fileChanges = parseGitHubPatchResponse(resp.files);
-
-      const pullRequest = await this._prismaService.pullRequest.findFirst({
-        where: { prUrl: data.pull_request.url },
-      });
-
-      if (!pullRequest) {
-        throw new Error('Pull request not found');
-      }
-      const currentComments = await this._prismaService.comment.findMany({
-        where: {
-          prId: pullRequest.id,
-          file: { in: fileChanges.map((data) => data.file) },
-        },
-      });
-
-      // Calculate changes summary for email notification
-      const changesSummary = {
-        filesChanged: fileChanges.length,
-        additions: fileChanges.reduce(
-          (total, file) =>
-            total +
-            file.changes.reduce(
-              (sum, change) =>
-                sum + (change.type === 'addition' ? change.lines.length : 0),
-              0,
-            ),
-          0,
-        ),
-        deletions: fileChanges.reduce(
-          (total, file) =>
-            total +
-            file.changes.reduce(
-              (sum, change) =>
-                sum + (change.type === 'deletion' ? change.lines.length : 0),
-              0,
-            ),
-          0,
-        ),
-      };
-
-      // Send PR updated notification
+      // Send notification about fixed issues
       try {
-        await this.sendPrUpdatedNotification({
+        await this.sendPrIssuesFixedNotification({
           accountId: accountId,
           authorName: data.pull_request.user.login,
           prNumber: data.number.toString(),
@@ -264,150 +345,126 @@ export class WebhooksService {
             repositoryName: data.repository.name,
             repositoryId: data.repository.id.toString(),
           },
-          changesSummary: changesSummary,
+          fixedIssuesCount: fixedIds.length,
+          fixedIssues: fixedIds,
         });
       } catch (emailError) {
-        console.error('Failed to send PR updated notification:', emailError);
-        // Don't throw to prevent disrupting the PR workflow
+        console.error('Failed to send fixed issues notification:', emailError);
       }
+    } else {
+      console.log(`No issues were fixed in PR #${data.number} update`);
+    }
+  }
 
-      let changes = [];
-      fileChanges.forEach((file) => {
-        changes = [
-          ...changes,
-          ...file.changes
-            // .filter((change) => change.type === 'addition')
-            .map((change) =>
-              change.lines.map((eachline, i) => ({
-                lineNumber: change.startLine + i,
-                content: eachline,
-                fileName: file.file,
-                type: change.type,
-              })),
-            )
-            .flat(),
-        ];
+  private async analyzeNewIssues(changes: any[], pullRequestId: string) {
+    const deepSeekWrapper = new DeepSeek();
+    const AiResponse = await deepSeekWrapper.analyzeCodeFilesForIssues(
+      changes.filter((data) => data.type === 'addition'),
+    );
+
+    // Check for duplicate issues within the same PR
+    return await this._commentService.checkForDuplicateIssuesInPR(
+      AiResponse.codeIssues,
+    );
+  }
+
+  private async createAndPostComments(
+    filteredIssues: any[],
+    prInfo: any,
+    pullRequestId: string,
+  ) {
+    // lastCommit should need to send.
+    const commentsMapping = filteredIssues.map((data) =>
+      commentPr(data, prInfo),
+    );
+
+    prInfo['prId'] = pullRequestId;
+
+    const createCommentsMapping = filteredIssues.map((data) => {
+      const payload = {
+        repositoryId: prInfo.id,
+        prId: pullRequestId,
+        content: data.content,
+        line: data.line,
+        file: data.file,
+        issue: data.issue,
+        issueCategory: data.category,
+        severity: data.priority.split(' ')[0],
+        reason: data.reason,
+        type: CommentType.PULL_REQUEST,
+        enhancementType: data.enhancementType,
+        affectedCodeBlock: data.affectedCodeBlock || {},
+        improvedCodeBlock: data.improvedCodeBlock || {},
+        tags: data.tags || [],
+      };
+      return this._commentService.createComment(payload);
+    });
+
+    await Promise.allSettled(commentsMapping);
+    await Promise.allSettled(createCommentsMapping);
+  }
+
+  private async logBillingUsage(data: any) {
+    try {
+      // Find the repository to get its ID and organization ID
+      const repository = await this._prismaService.repository.findUnique({
+        where: { repositoryId: data.repository.id.toString() },
       });
 
-      // Enhanced fixed comment detection with better analysis
-      const gemini = new Gemini();
+      if (repository) {
+        await this._billingService.trackUsageWithQuota({
+          organizationId: repository.organizationId,
+          repositoryId: repository.id,
+          type: 'PR_ANALYSIS',
+          description: `PR Analysis: #${data.number} in ${data.repository.name}`,
+        });
+      }
+    } catch (logError) {
+      console.error('Error logging PR analysis usage:', logError);
+    }
+  }
 
-      // Get all existing comments for this PR (not just changed files)
-      const allPrComments = await this._prismaService.comment.findMany({
+  async syncPR(data: any) {
+    try {
+      if (!(await this.validateBaseBranchMatch(data))) {
+        return;
+      }
+
+      const { decryptedToken, accountId } =
+        await this._accountCredentialByRepository(data);
+
+      const prInfo = await this.getPrInfo(data, decryptedToken);
+      const fileChanges = await this.getFileChanges(prInfo, decryptedToken);
+      const pullRequest = await this.findPullRequest(data.pull_request.url);
+      const currentComments = await this._prismaService.comment.findMany({
         where: {
           prId: pullRequest.id,
-          status: { not: 'OUTDATED' }, // Only check active issues
+          file: { in: fileChanges.map((data) => data.file) },
         },
       });
 
-      console.log(
-        `Analyzing ${allPrComments.length} existing issues for fixes in PR #${data.number}`,
+      const changesSummary = this.calculateChangesSummary(fileChanges);
+      await this.sendPrUpdatedNotificationSafely(
+        data,
+        accountId,
+        changesSummary,
       );
 
-      // Enhanced fixed comment detection
-      const fixedIds = await gemini.detectFixedComments({
-        issues: allPrComments.map((c) => ({
-          id: c.id,
-          file: c.file,
-          line: Number(c.line) || 0,
-          content: c.content || '',
-          issue: c.issue || '',
-          reason: c.reason || '',
-        })),
+      const changes = this.processFileChanges(fileChanges);
+      const fixedIds = await this.detectFixedComments(
+        pullRequest.id,
         changes,
-      });
-
-      if (fixedIds.length > 0) {
-        console.log(
-          `Found ${fixedIds.length} fixed issues in PR #${data.number}:`,
-          fixedIds,
-        );
-        await this._commentService.updateComments(fixedIds);
-
-        // Send notification about fixed issues
-        try {
-          await this.sendPrIssuesFixedNotification({
-            accountId: accountId,
-            authorName: data.pull_request.user.login,
-            prNumber: data.number.toString(),
-            repositoryInfo: {
-              repositoryName: data.repository.name,
-              repositoryId: data.repository.id.toString(),
-            },
-            fixedIssuesCount: fixedIds.length,
-            fixedIssues: fixedIds,
-          });
-        } catch (emailError) {
-          console.error(
-            'Failed to send fixed issues notification:',
-            emailError,
-          );
-        }
-      } else {
-        console.log(`No issues were fixed in PR #${data.number} update`);
-      }
-
-      const deepSeekWrapper = new DeepSeek();
-      const AiResponse = await deepSeekWrapper.analyzeCodeFilesForIssues(
-        changes.filter((data) => data.type === 'addition'),
+        data.number,
       );
 
-      // Check for duplicate issues within the same PR
-      const filteredIssues =
-        await this._commentService.checkForDuplicateIssuesInPR(
-          AiResponse.codeIssues,
-        );
-
-      // lastCommit should need to send.
-      const commentsMapping = filteredIssues.map((data) =>
-        commentPr(data, prInfo),
+      await this.handleFixedIssues(fixedIds, data, accountId);
+      const filteredIssues = await this.analyzeNewIssues(
+        changes,
+        pullRequest.id,
       );
 
-      // await this._pullRequestService.registerPullRequest(pullRequestPayload);
-      prInfo['prId'] = pullRequest.id;
-
-      const createCommentsMapping = filteredIssues.map((data) => {
-        const payload = {
-          repositoryId: prInfo.id,
-          prId: pullRequest.id,
-          content: data.content,
-          line: data.line,
-          file: data.file,
-          issue: data.issue,
-          issueCategory: data.category,
-          severity: data.priority.split(' ')[0],
-          reason: data.reason,
-          type: CommentType.PULL_REQUEST,
-          enhancementType: data.enhancementType,
-          affectedCodeBlock: data.affectedCodeBlock || {},
-          improvedCodeBlock: data.improvedCodeBlock || {},
-          tags: data.tags || [],
-        };
-        return this._commentService.createComment(payload);
-      });
-
-      await Promise.allSettled(commentsMapping);
-      await Promise.allSettled(createCommentsMapping);
-
-      // Log PR evaluation usage for billing
-      try {
-        // Find the repository to get its ID and organization ID
-        const repository = await this._prismaService.repository.findUnique({
-          where: { repositoryId: data.repository.id.toString() },
-        });
-
-        if (repository) {
-          await this._billingService.trackUsageWithQuota({
-            organizationId: repository.organizationId,
-            repositoryId: repository.id,
-            type: 'PR_ANALYSIS',
-            description: `PR Analysis: #${data.number} in ${data.repository.name}`,
-          });
-        }
-      } catch (logError) {
-        console.error('Error logging PR analysis usage:', logError);
-      }
-
+      await this.createAndPostComments(filteredIssues, prInfo, pullRequest.id);
+      await this.logBillingUsage(data);
       return changes;
     } catch (error) {
       console.error('Error in syncPR:', error);
@@ -689,7 +746,13 @@ export class WebhooksService {
       prInfo['head'] = data.pull_request.head.ref;
 
       // Fire and forget - don't await the analysis to return response faster
-      this.diffFunctionality3(prInfo);
+      this.diffFunctionality3(prInfo).catch((error) => {
+        console.error('Error in diffFunctionality3:', error);
+        this._prTrackerService.updatePrInfo(
+          `${prInfo.repo}-${prInfo.prNumber}-${prInfo.action}`,
+          PrTrackerStatus.REJECTED,
+        );
+      });
     } catch (error) {
       throw new BadRequestException(error.message);
     }
@@ -779,7 +842,13 @@ export class WebhooksService {
       prInfo['head'] = data.pullrequest.source.branch.name;
 
       // Fire and forget - don't await the analysis to return response faster
-      this.bitbucketDiffFunctionality(prInfo);
+      this.bitbucketDiffFunctionality(prInfo).catch((error) => {
+        console.error('Error in bitbucketDiffFunctionality:', error);
+        this._prTrackerService.updatePrInfo(
+          `${prInfo.repo}-${prInfo.prNumber}-${prInfo.action}`,
+          PrTrackerStatus.REJECTED,
+        );
+      });
     } catch (error) {
       console.log(error.message);
       throw new BadRequestException(error.message);
@@ -1077,11 +1146,9 @@ export class WebhooksService {
       if (prCommits.length === 0) {
         throw new Error('No commits found for the PR');
       }
-
       const lastPrCommit = prCommits[prCommits.length - 1].hash;
-
       const prInfo = {
-        owner: data.actor.display_name,
+        owner: data.actor?.display_name || data.actor.nickname,
         prNumber: data.repository.id,
         repo: data.repository.name,
         lastCommit: lastPrCommit,
@@ -1089,17 +1156,14 @@ export class WebhooksService {
         accountId,
         links: data.pullrequest.links,
       };
-
       const fileChanges = await fetchBitbucketPrPatch({
         token: decryptedToken,
         diffUrl: prInfo.links.diff.href,
       }); // after this I want to check each file patch
-
       const { modified, added } = this._countChanges(fileChanges);
 
       // remove setup or unnecessary files.
       let filteredFiles = filterFiles(fileChanges);
-
       filteredFiles = filteredFiles.map((data) => ({
         filename: data.filename,
         patch: data.changes.map((change) => change.lines.join('\n')).join('\n'),
@@ -1108,14 +1172,12 @@ export class WebhooksService {
 
       const complexityAndDuplication =
         await deepSeekAgent.analyzeCodeComplexityAndDuplication(filteredFiles);
-
       const mapPrCommit = prCommits.map((data) => {
         return commitInfoBitbucket({
           token: decryptedToken,
           commitDiffUrl: data.links.diff.href,
         });
       });
-
       let commits = await Promise.all(mapPrCommit);
       commits = commits.map((data, index) => {
         return {
