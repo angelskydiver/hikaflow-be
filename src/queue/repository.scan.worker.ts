@@ -12,6 +12,7 @@ import { BillingService } from 'src/modules/billing/billing.service';
 import { CommentService } from 'src/modules/comment/comment.service';
 import { FeedbackService } from 'src/modules/feedback/feedback.service';
 import { RepositoryScanService } from 'src/modules/repositoryScan/repositoryScan.service';
+import { SeniorEngineerAnalysisService } from 'src/modules/repositoryScan/seniorEngineerAnalysis.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 // Initialize Prisma & Services
@@ -45,6 +46,7 @@ const mailerService = new MailerService(
 );
 const mailService = new MailService(mailerService, prisma);
 const billingService = new BillingService(prisma, configService, mailService);
+const seniorEngineerAnalysisService = new SeniorEngineerAnalysisService();
 
 // Initialize repository scan service with required dependencies
 const repositoryScanService = new RepositoryScanService(
@@ -54,6 +56,31 @@ const repositoryScanService = new RepositoryScanService(
   billingService,
   mailService,
 );
+
+// Add cleanup handlers for graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('Received SIGINT, closing Prisma connection...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('Received SIGTERM, closing Prisma connection...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+process.on('uncaughtException', async (error) => {
+  console.error('Uncaught Exception:', error);
+  await prisma.$disconnect();
+  process.exit(1);
+});
+
+process.on('unhandledRejection', async (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  await prisma.$disconnect();
+  process.exit(1);
+});
 
 // Function to process full repository scan jobs
 const processRepositoryScan = async (job) => {

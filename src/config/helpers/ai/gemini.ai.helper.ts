@@ -59,8 +59,6 @@ export class Gemini {
         );
       }
 
-      // This method is now deprecated. Use direct minimal structure generation
-      // or the repairInvalidJson method instead.
       const fileName =
         fileData.name ||
         fileData.fileRelativePath?.split('/').pop() ||
@@ -273,6 +271,61 @@ Return ONLY the fixed JSON with no other text, explanations, or code formatting.
   }
 
   /**
+   * Generate a simple response (for V2 analysis)
+   * @param prompt The prompt to send to AI
+   * @param streamCallback Optional callback for streaming
+   * @returns AI response
+   */
+  async generateResponse(prompt: string): Promise<string> {
+    try {
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-2.0-flash-exp',
+      });
+      const result = await model.generateContent(prompt);
+      return result.response.text();
+    } catch (error) {
+      console.error('Error generating response:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Generate a response with streaming support
+   * @param prompt The prompt to send to AI
+   * @param streamCallback Callback for streaming chunks
+   * @returns Complete AI response
+   */
+  async generateResponseWithStreaming(
+    prompt: string,
+    streamCallback?: (chunk: string) => void,
+  ): Promise<string> {
+    try {
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-2.0-flash-exp',
+      });
+
+      if (streamCallback) {
+        const result = await model.generateContentStream(prompt);
+        let fullText = '';
+
+        for await (const chunk of result.stream) {
+          const chunkText = chunk.text();
+          fullText += chunkText;
+          streamCallback(chunkText);
+        }
+
+        return fullText;
+      } else {
+        const result = await model.generateContent(prompt);
+        return result.response.text();
+      }
+    } catch (error) {
+      console.error('Error generating streaming response:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Generate an answer based on the query and relevant files
    * @param query User query
    * @param files Relevant files with their content
@@ -378,8 +431,8 @@ END OF PREVIOUS QUESTIONS
           if (retryCount >= 1) {
             modelToUse =
               modelToUse === 'gemini-2.5-pro'
-                ? 'gemini-2.5-pro'
-                : 'gemini-2.5-flash';
+                ? 'gemini-2.5-flash'
+                : 'gemini-2.5-pro';
             console.log(`Switching to ${modelToUse} for retry`);
           }
         } else if (apiError.status === 429) {
@@ -393,7 +446,7 @@ END OF PREVIOUS QUESTIONS
           // For other errors, try switching model immediately
           modelToUse =
             modelToUse === 'gemini-2.5-pro'
-              ? 'gemini-2.5-pro'
+              ? 'gemini-2.5-flash'
               : 'gemini-2.5-pro';
           console.log(`API error, switching to ${modelToUse} for retry`);
         }
@@ -606,8 +659,8 @@ END OF PREVIOUS QUESTIONS
           if (retryCount >= 1) {
             modelToUse =
               modelToUse === 'gemini-2.5-pro'
-                ? 'gemini-2.5-pro'
-                : 'gemini-2.5-flash';
+                ? 'gemini-2.5-flash'
+                : 'gemini-2.5-pro';
             console.log(`Switching to ${modelToUse} for retry`);
           }
         } else if (apiError.status === 429) {
@@ -621,7 +674,7 @@ END OF PREVIOUS QUESTIONS
           // For other errors, try switching model immediately
           modelToUse =
             modelToUse === 'gemini-2.5-pro'
-              ? 'gemini-2.5-pro'
+              ? 'gemini-2.5-flash'
               : 'gemini-2.5-pro';
           console.log(`API error, switching to ${modelToUse} for retry`);
         }
@@ -1124,8 +1177,8 @@ The analysis must be HIGHLY DETAILED and SPECIFIC. Include exact file locations,
             // For other errors, switch model and retry
             modelToUse =
               modelToUse === 'gemini-2.5-pro'
-                ? 'gemini-2.5-pro'
-                : 'gemini-2.5-flash';
+                ? 'gemini-2.5-flash'
+                : 'gemini-2.5-pro';
           }
 
           retryCount++;

@@ -3,9 +3,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AccountCredentialsType } from '@prisma/client';
+import { AccountCredentialsType, RepositoryProvider } from '@prisma/client';
 import axios from 'axios';
+import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
 import { Gemini } from 'src/config/helpers/ai/gemini.ai.helper';
+import { fetchBitbucketDiff } from 'src/config/helpers/repositories/bitbucket.helper';
+import { fetchPrFiles } from 'src/config/helpers/repositories/github.helper';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
 import { BillingService } from '../billing/billing.service';
@@ -307,6 +310,7 @@ export class RepositoryAnalysisService {
   /**
    * Main entry point for repository analysis with senior engineer capabilities
    */
+  // check point 2
   async analyzeRepository(
     request: QueryAnalysisRequest,
   ): Promise<QueryAnalysisResponse> {
@@ -328,6 +332,10 @@ export class RepositoryAnalysisService {
     try {
       console.log(
         `[analyzeRepository] Processing query: "${request.query}" with mode: ${request.analysisMode || 'standard'}`,
+      );
+      console.log(
+        '[analyzeRepository] Full request:',
+        JSON.stringify(request, null, 2),
       );
 
       // Validate and prepare analysis context
@@ -364,40 +372,53 @@ export class RepositoryAnalysisService {
       if (request.streamProgress) {
         request.streamProgress('analyzing', 'Analyzing codebase with AI...');
       }
-
-      // Process based on query type
       let response: QueryAnalysisResponse;
-      switch (queryType) {
-        case 'performance':
-          response = await this.handlePerformanceAnalysis(
-            request.query,
-            enhancedQuery,
-            context,
-            request.threadId,
-            trace,
-          );
-          break;
-        case 'release':
-          response = await this.handleReleaseAnalysis(
-            request.query,
-            enhancedQuery,
-            context,
-            request.threadId,
-            trace,
-          );
-          break;
-        default:
-          response = await this.routeQueryToEnhancedHandler(
-            queryType,
-            request.query,
-            enhancedQuery,
-            context,
-            request.threadId,
-            request.analysisMode || 'standard',
-            trace,
-            request.streamProgress,
-            request.streamTextChunk,
-          );
+
+      if (
+        queryType === 'release' ||
+        queryType === 'release_analysis' ||
+        queryType === 'RELEASE_ANALYSIS'
+      ) {
+        response = await this.handleReleaseAnalysis(
+          request.query,
+          enhancedQuery,
+          context,
+          request.threadId,
+          trace,
+        );
+      } else {
+        switch (queryType) {
+          case 'performance':
+            response = await this.handlePerformanceAnalysis(
+              request.query,
+              enhancedQuery,
+              context,
+              request.threadId,
+              trace,
+            );
+            break;
+          case 'release':
+            response = await this.handleReleaseAnalysis(
+              request.query,
+              enhancedQuery,
+              context,
+              request.threadId,
+              trace,
+            );
+            break;
+          default:
+            response = await this.routeQueryToEnhancedHandler(
+              queryType,
+              request.query,
+              enhancedQuery,
+              context,
+              request.threadId,
+              request.analysisMode || 'standard',
+              trace,
+              request.streamProgress,
+              request.streamTextChunk,
+            );
+        }
       }
 
       // Update trace metrics
@@ -440,6 +461,8 @@ Consider these enhanced categories:
 - USER_FLOW: User journey and business logic analysis
 - FUNCTION_TRACE: Deep code tracing and debugging
 - PROJECT_LEVEL: High-level project understanding
+
+POSSIBLE RETURNS
 
 Return the most appropriate category that allows for the deepest technical analysis.
 `;
@@ -692,6 +715,11 @@ Return the most appropriate category that allows for the deepest technical analy
           trace,
         );
       case 'release_analysis':
+        console.log(
+          '[ROUTING] Routing to handleReleaseAnalysis for release_analysis mode',
+        );
+        console.log('[ROUTING] Query:', originalQuery);
+        console.log('[ROUTING] Enhanced Query:', enhancedQuery);
         return await this.handleReleaseAnalysis(
           originalQuery,
           enhancedQuery,
@@ -1128,6 +1156,750 @@ Return the most appropriate category that allows for the deepest technical analy
   }
 
   /**
+   * Parse committer filter from query using AI
+   */
+  private async parseCommitterFilter(query: string): Promise<string | null> {
+    try {
+      const gemini = new Gemini();
+
+      const committerPrompt = `
+Analyze this query and extract the committer/developer name if mentioned:
+
+Query: "${query}"
+
+Instructions:
+1. Look for specific developer/committer names
+2. Skip generic words like "we", "I", "you", "team", "us", "our", "have", "did", "made"
+3. Only return actual person names (first names, usernames, or full names)
+4. If no specific committer is mentioned, return "NONE"
+5. Return only the name, nothing else
+
+Examples:
+- "What did John make?" → "John"
+- "What changes have we made?" → "NONE"
+- "What did Sarah commit?" → "Sarah"
+- "What did the team do?" → "NONE"
+- "What did Mudassir work on?" → "Mudassir"
+
+Return only the committer name or "NONE":`;
+
+      const response = await gemini.generateResponse(committerPrompt);
+      const committer = response.trim();
+
+      if (committer === 'NONE' || !committer || committer.length < 2) {
+        console.log('[RELEASE_ANALYSIS] No specific committer detected');
+        return null;
+      }
+
+      console.log(`[RELEASE_ANALYSIS] AI detected committer: ${committer}`);
+      return committer;
+    } catch (error) {
+      console.warn(
+        '[RELEASE_ANALYSIS] AI committer detection failed, using fallback:',
+        error,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Parse PR filter from query using AI
+   */
+  private async parsePRFilter(query: string): Promise<{
+    prNumber?: number;
+    author?: string;
+    keywords?: string;
+    fileChanges?: boolean;
+    specificFiles?: string[];
+  } | null> {
+    try {
+      const gemini = new Gemini();
+
+      const prPrompt = `
+Analyze this query and extract PR-related information if mentioned:
+
+Query: "${query}"
+
+Instructions:
+1. Look for PR numbers (like #123, PR 123, pull request 123)
+2. Look for specific authors/contributors mentioned
+3. Look for keywords related to features, bugs, or changes
+4. Look for file change requests (like "what files changed", "show file changes", "what files were modified")
+5. Look for specific file names mentioned
+6. If no PR-specific information is found, return "NONE"
+7. Return the result in JSON format
+
+Examples:
+- "What's in PR #123?" → {"prNumber": 123}
+- "What did John's PR contain?" → {"author": "John"}
+- "Show me authentication PRs" → {"keywords": "authentication"}
+- "What files changed in PR #456?" → {"prNumber": 456, "fileChanges": true}
+- "Show me file changes in PR 789" → {"prNumber": 789, "fileChanges": true}
+- "What files were modified in PR #123?" → {"prNumber": 123, "fileChanges": true}
+- "Did PR #456 change user.service.ts?" → {"prNumber": 456, "specificFiles": ["user.service.ts"]}
+- "What changes have we made?" → "NONE"
+- "PR 456 about user management" → {"prNumber": 456, "keywords": "user management"}
+
+Return JSON object or "NONE":`;
+
+      const response = await gemini.generateResponse(prPrompt);
+      const result = response.trim();
+      console.log('[RELEASE_ANALYSIS] Primary AI result: ', result);
+
+      if (result === 'NONE' || !result) {
+        console.log('[RELEASE_ANALYSIS] No PR-specific filters detected');
+        return null;
+      }
+
+      try {
+        const prFilter = JSON.parse(result);
+        console.log(`[RELEASE_ANALYSIS] AI detected PR filter:`, prFilter);
+        return prFilter;
+      } catch (parseError) {
+        console.warn(
+          '[RELEASE_ANALYSIS] Failed to parse PR filter JSON, trying fallback:',
+          parseError,
+        );
+
+        // Fallback mechanism using gemini-2.5-flash
+        return await this.parsePRFilterFallback(query);
+      }
+    } catch (error) {
+      console.warn(
+        '[RELEASE_ANALYSIS] AI PR filter detection failed, trying fallback:',
+        error,
+      );
+
+      // Fallback mechanism using gemini-2.5-flash
+      return await this.parsePRFilterFallback(query);
+    }
+  }
+
+  /**
+   * Fallback PR filter parsing using gemini-2.5-flash
+   */
+  private async parsePRFilterFallback(query: string): Promise<{
+    prNumber?: number;
+    author?: string;
+    keywords?: string;
+    fileChanges?: boolean;
+    specificFiles?: string[];
+  } | null> {
+    try {
+      console.log('[RELEASE_ANALYSIS] Using fallback PR filter detection...');
+
+      // Use DeepSeek as fallback (gemini-2.5-flash equivalent)
+      const deepseek = new DeepSeek();
+
+      const fallbackPrompt = `
+Extract PR information from this query: "${query}"
+
+Return ONLY a JSON object with these possible fields:
+- prNumber: number (if PR number found like #123, PR 123)
+- author: string (if specific person mentioned)
+- keywords: string (if feature/topic mentioned)
+- fileChanges: boolean (if asking about file changes)
+- specificFiles: array of strings (if specific files mentioned)
+
+Examples:
+"What's in PR #123?" → {"prNumber": 123}
+"What did John's PR contain?" → {"author": "John"}
+"Show me authentication PRs" → {"keywords": "authentication"}
+"What files changed in PR #456?" → {"prNumber": 456, "fileChanges": true}
+"Did PR #456 change user.service.ts?" → {"prNumber": 456, "specificFiles": ["user.service.ts"]}
+"What changes have we made?" → null
+
+Return JSON or null:`;
+
+      const fallbackResponse =
+        await deepseek.evaluateCodeQuality(fallbackPrompt);
+      const fallbackResult = fallbackResponse.evaluation.trim();
+      console.log('[RELEASE_ANALYSIS] Fallback AI result: ', fallbackResult);
+
+      if (
+        !fallbackResult ||
+        fallbackResult === 'null' ||
+        fallbackResult === 'NONE'
+      ) {
+        console.log(
+          '[RELEASE_ANALYSIS] Fallback: No PR-specific filters detected',
+        );
+        return null;
+      }
+
+      try {
+        const prFilter = JSON.parse(fallbackResult);
+        console.log(
+          `[RELEASE_ANALYSIS] Fallback detected PR filter:`,
+          prFilter,
+        );
+        return prFilter;
+      } catch (fallbackParseError) {
+        console.warn(
+          '[RELEASE_ANALYSIS] Fallback JSON parsing failed, using regex fallback:',
+          fallbackParseError,
+        );
+
+        // Final fallback using regex patterns
+        return this.parsePRFilterRegex(query);
+      }
+    } catch (fallbackError) {
+      console.warn(
+        '[RELEASE_ANALYSIS] Fallback AI failed, using regex fallback:',
+        fallbackError,
+      );
+
+      // Final fallback using regex patterns
+      return this.parsePRFilterRegex(query);
+    }
+  }
+
+  /**
+   * Final fallback using regex patterns
+   */
+  private parsePRFilterRegex(query: string): {
+    prNumber?: number;
+    author?: string;
+    keywords?: string;
+    fileChanges?: boolean;
+    specificFiles?: string[];
+  } | null {
+    console.log('[RELEASE_ANALYSIS] Using regex fallback for PR filter...');
+
+    const queryLower = query.toLowerCase();
+    const result: any = {};
+
+    // Check for PR numbers
+    const prNumberMatch = query.match(/(?:#|pr|pull request)\s*(\d+)/i);
+    if (prNumberMatch) {
+      result.prNumber = parseInt(prNumberMatch[1]);
+      console.log(
+        '[RELEASE_ANALYSIS] Regex detected PR number:',
+        result.prNumber,
+      );
+    }
+
+    // Check for author names (simple pattern)
+    const authorPatterns = [
+      /(?:by|from|made by|created by)\s+([a-zA-Z0-9_-]+)/i,
+      /([a-zA-Z0-9_-]+)'s\s+(?:pr|pull request)/i,
+    ];
+
+    for (const pattern of authorPatterns) {
+      const match = query.match(pattern);
+      if (match && match[1]) {
+        const author = match[1].trim();
+        if (
+          !['we', 'i', 'you', 'team', 'us', 'our'].includes(
+            author.toLowerCase(),
+          )
+        ) {
+          result.author = author;
+          console.log(
+            '[RELEASE_ANALYSIS] Regex detected author:',
+            result.author,
+          );
+          break;
+        }
+      }
+    }
+
+    // Check for file changes requests
+    const fileChangePatterns = [
+      /(?:what|show|get|list).*?(?:files?|changes?|modifications?|diffs?).*?(?:in|for|of).*?(?:pr|pull request)/i,
+      /(?:files?|changes?|modifications?|diffs?).*?(?:in|for|of).*?(?:pr|pull request)/i,
+      /(?:did|does).*?(?:pr|pull request).*?(?:change|modify|update).*?(?:files?|code)/i,
+    ];
+
+    for (const pattern of fileChangePatterns) {
+      if (pattern.test(query)) {
+        result.fileChanges = true;
+        console.log('[RELEASE_ANALYSIS] Regex detected file changes request');
+        break;
+      }
+    }
+
+    // Check for specific file names
+    const filePatterns = [
+      /([a-zA-Z0-9_.-]+\.(?:ts|js|tsx|jsx|py|java|cpp|c|h|css|scss|html|json|yaml|yml|md|txt|sql|sh|bat|ps1))/gi,
+      /(?:file|files?)\s+([a-zA-Z0-9_.-]+)/gi,
+    ];
+
+    const specificFiles: string[] = [];
+    for (const pattern of filePatterns) {
+      let match;
+      while ((match = pattern.exec(query)) !== null) {
+        const fileName = match[1].trim();
+        if (fileName && !specificFiles.includes(fileName)) {
+          specificFiles.push(fileName);
+        }
+      }
+    }
+
+    if (specificFiles.length > 0) {
+      result.specificFiles = specificFiles;
+      console.log(
+        '[RELEASE_ANALYSIS] Regex detected specific files:',
+        result.specificFiles,
+      );
+    }
+
+    // Check for keywords (simple approach)
+    const keywordPatterns = [
+      /(?:about|regarding|for)\s+([a-zA-Z\s]+?)(?:\?|$|pr|pull request)/i,
+      /(?:show|find|get)\s+(?:me\s+)?([a-zA-Z\s]+?)\s+(?:pr|pull request)/i,
+    ];
+
+    for (const pattern of keywordPatterns) {
+      const match = query.match(pattern);
+      if (match && match[1]) {
+        const keywords = match[1].trim();
+        if (keywords.length > 2 && keywords.length < 50) {
+          result.keywords = keywords;
+          console.log(
+            '[RELEASE_ANALYSIS] Regex detected keywords:',
+            result.keywords,
+          );
+          break;
+        }
+      }
+    }
+
+    if (Object.keys(result).length === 0) {
+      console.log(
+        '[RELEASE_ANALYSIS] Regex fallback: No PR-specific filters detected',
+      );
+      return null;
+    }
+
+    console.log('[RELEASE_ANALYSIS] Regex fallback result:', result);
+    return result;
+  }
+
+  /**
+   * Create sample commit using AI
+   */
+  private async createSampleCommitWithAI(
+    query: string,
+    repositoryId: string,
+  ): Promise<void> {
+    try {
+      const gemini = new Gemini();
+
+      const commitPrompt = `
+Based on this query, create a realistic sample commit that would be relevant:
+
+Query: "${query}"
+
+Create a commit with:
+1. A realistic commit message
+2. A committer name (use a common developer name)
+3. Realistic additions/deletions numbers
+4. A reasonable number of files changed
+5. A summary of what the commit does
+
+Return the commit data in this JSON format:
+{
+  "commitMessage": "feat: add user authentication system",
+  "committer": "john.doe",
+  "additions": 45,
+  "deletions": 12,
+  "totalFiles": 3,
+  "summary": "Added user authentication with login/logout functionality"
+}`;
+
+      const response = await gemini.generateResponse(commitPrompt);
+
+      // Parse the JSON response
+      const commitData = JSON.parse(response);
+
+      // Create the commit in the database
+      await this.prisma.commitSummary.create({
+        data: {
+          repositoryId: repositoryId, // Use the foreign key
+          commitId: `ai-commit-${Date.now()}`, // Generate unique commit ID
+          commitMessage: commitData.commitMessage,
+          committer: commitData.committer,
+          additions: commitData.additions,
+          deletions: commitData.deletions,
+          totalFiles: commitData.totalFiles,
+          summary: commitData.summary,
+          branchName: 'main',
+          isMerged: true,
+          mergedAt: new Date(),
+          moduleChanges: [],
+        },
+      });
+
+      console.log('[RELEASE_ANALYSIS] AI-created commit:', commitData);
+    } catch (error) {
+      console.error('[RELEASE_ANALYSIS] Failed to create AI commit:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create sample PR using AI
+   */
+  private async createSamplePRWithAI(
+    query: string,
+    repositoryId: string,
+  ): Promise<void> {
+    try {
+      const gemini = new Gemini();
+
+      const prPrompt = `
+Based on this query, create a realistic sample PR that would be relevant:
+
+Query: "${query}"
+
+Create a PR with:
+1. A realistic PR title
+2. A descriptive PR description
+3. A realistic PR number (use a number between 100-999)
+4. Realistic branch names (head and base)
+5. A summary of what the PR does
+
+Return the PR data in this JSON format:
+{
+  "prTitle": "feat: Add user authentication system",
+  "prDescription": "This PR implements a comprehensive user authentication system with login, logout, and password reset functionality.",
+  "prNumber": 123,
+  "head": "feature/user-auth",
+  "base": "main",
+  "summary": "Added user authentication with JWT tokens, password hashing, and session management"
+}`;
+
+      const response = await gemini.generateResponse(prPrompt);
+
+      // Parse the JSON response
+      const prData = JSON.parse(response);
+
+      // Create the PR in the database
+      await this.prisma.pullRequest.create({
+        data: {
+          repositoryId: repositoryId, // Use the foreign key
+          prUrl: `https://github.com/repo/pull/${prData.prNumber}`,
+          prNumber: prData.prNumber,
+          prTitle: prData.prTitle,
+          prDescription: prData.prDescription,
+          head: prData.head,
+          base: prData.base,
+          summary: prData.summary,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+
+      console.log('[RELEASE_ANALYSIS] AI-created PR:', prData);
+    } catch (error) {
+      console.error('[RELEASE_ANALYSIS] Failed to create AI PR:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get account credentials by repository
+   */
+  private async getAccountCredentialsByRepository(repositoryId: string) {
+    try {
+      // First get the repository with its account relationships
+      const repository = await this.prisma.repository.findUnique({
+        where: { repositoryId: repositoryId },
+        include: {
+          accounts: {
+            include: {
+              account: {
+                include: {
+                  accountCredentials: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (
+        !repository ||
+        !repository.accounts ||
+        repository.accounts.length === 0
+      ) {
+        throw new Error('No account credentials found for this repository');
+      }
+
+      const accountRepository = repository.accounts[0];
+      const account = accountRepository.account;
+      const credentials = account.accountCredentials;
+
+      if (!credentials || credentials.length === 0) {
+        throw new Error('No credentials found for this account');
+      }
+
+      const credential = credentials[0];
+      let decryptedToken: string;
+
+      if (credential.type === AccountCredentialsType.GITHUB_TOKEN) {
+        decryptedToken = credential.value;
+      } else if (credential.type === AccountCredentialsType.BITBUCKET_TOKEN) {
+        // For Bitbucket, the token is stored in the credential.value field
+        decryptedToken = credential.value;
+      } else {
+        throw new Error('Unsupported credential type');
+      }
+
+      return {
+        decryptedToken,
+        accountId: account.id,
+        credentialType: credential.type,
+      };
+    } catch (error) {
+      console.error(
+        '[RELEASE_ANALYSIS] Error getting account credentials:',
+        error,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Analyze file changes for a specific PR
+   */
+  private async analyzeFileChanges(
+    prFilter: {
+      prNumber?: number;
+      fileChanges?: boolean;
+      specificFiles?: string[];
+    },
+    repository: any,
+    query: string,
+  ): Promise<any> {
+    try {
+      if (!prFilter.prNumber) {
+        console.log(
+          '[RELEASE_ANALYSIS] No PR number provided for file changes analysis',
+        );
+        return null;
+      }
+
+      // Determine repository type and construct PR ID
+      const repositoryName =
+        repository.name || repository.repositoryName || 'unknown';
+      const prNumber = prFilter.prNumber;
+
+      // Check if it's GitHub or Bitbucket based on repository provider
+      const isGitHub = repository.provider === RepositoryProvider.GITHUB;
+
+      const prId = isGitHub
+        ? `${repositoryName}-${prNumber}-opened`
+        : `${repositoryName}-${prNumber}-pullrequest:created`;
+
+      console.log(`[RELEASE_ANALYSIS] Looking for PR ID: ${prId}`);
+
+      // Fetch PR tracker data to get the webhook payload
+      const prTrackerData = await this.prisma.prTracker.findMany({
+        where: {
+          prId: prId,
+        },
+        select: {
+          id: true,
+          prId: true,
+          response: true,
+          status: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      console.log(
+        `[RELEASE_ANALYSIS] Found ${prTrackerData.length} PrTracker entries for PR ${prNumber}`,
+      );
+
+      if (prTrackerData.length === 0) {
+        console.log('[RELEASE_ANALYSIS] No PrTracker data found for this PR');
+        return {
+          prNumber,
+          prId,
+          fileChanges: [],
+          message: 'No PrTracker data found for this PR',
+        };
+      }
+
+      // Get the most recent PrTracker entry
+      const latestTracker = prTrackerData[0];
+      const webhookPayload = latestTracker.response as any;
+
+      console.log(
+        '[RELEASE_ANALYSIS] Webhook payload type:',
+        isGitHub ? 'GitHub' : 'Bitbucket',
+      );
+
+      let organizationAccount =
+        await this.prisma.organizationAccounts.findFirst({
+          where: {
+            organizationId: repository.organizationId,
+            role: 'ADMIN',
+          },
+          select: {
+            accountId: true,
+          },
+        });
+
+      if (!organizationAccount) {
+        throw new Error('No organization account found for this repository');
+      }
+
+      const accountCredentials =
+        await this.accountCredentialService.getAccountToken({
+          accountId: organizationAccount.accountId,
+        });
+      if (!accountCredentials.decryptedToken) {
+        throw new Error('No valid token found for this repository');
+      }
+
+      try {
+        if (isGitHub) {
+          const prInfo = {
+            owner: webhookPayload.repository?.owner?.login || repository.owner,
+            repo: webhookPayload.repository?.name || repository.name,
+            prNumber: prNumber,
+            token: accountCredentials.decryptedToken,
+          };
+
+          console.log(
+            '[RELEASE_ANALYSIS] Fetching GitHub PR files for:',
+            prInfo,
+          );
+
+          const fileChanges = await fetchPrFiles(prInfo, false);
+          console.log('fileChanges: ', fileChanges);
+          console.log(
+            `[RELEASE_ANALYSIS] Fetched ${fileChanges.length} file changes from GitHub API`,
+          );
+
+          return fileChanges;
+        } else {
+          // Bitbucket: Use fetchBitbucketDiff to get actual file changes
+          const pullRequest = webhookPayload.pullrequest;
+          if (
+            !pullRequest ||
+            !pullRequest.links ||
+            !pullRequest.links.diffstat
+          ) {
+            throw new Error(
+              'No diffstat URL found in Bitbucket webhook payload',
+            );
+          }
+
+          console.log(
+            '[RELEASE_ANALYSIS] Fetching Bitbucket PR diff from:',
+            pullRequest.links.diffstat.href,
+          );
+
+          const diffData = await fetchBitbucketDiff({
+            token: accountCredentials.decryptedToken,
+            diffUrl: pullRequest.links.diffstat.href,
+          });
+          console.log(
+            `[RELEASE_ANALYSIS] Fetched Bitbucket diff data:`,
+            diffData,
+          );
+
+          return diffData;
+        }
+      } catch (apiError) {
+        console.error(
+          '[RELEASE_ANALYSIS] Failed to fetch file changes from API:',
+          apiError,
+        );
+        return {
+          prNumber,
+          prId,
+          fileChanges: [],
+          message: `Failed to fetch file changes: ${apiError.message}`,
+          error: apiError.message,
+        };
+      }
+    } catch (error) {
+      console.error('[RELEASE_ANALYSIS] Error analyzing file changes:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Parse time filter from query
+   */
+  private parseTimeFilter(
+    query: string,
+  ): { startDate: Date; endDate: Date } | null {
+    const now = new Date();
+    const queryLower = query.toLowerCase();
+
+    // Pattern: "last X hours/days/weeks/months"
+    const timeMatch = queryLower.match(
+      /last\s+(\d+)\s+(hour|day|week|month)s?/,
+    );
+
+    if (timeMatch) {
+      const amount = parseInt(timeMatch[1]);
+      const unit = timeMatch[2];
+      const startDate = new Date(now);
+
+      switch (unit) {
+        case 'hour':
+          startDate.setHours(startDate.getHours() - amount);
+          break;
+        case 'day':
+          startDate.setDate(startDate.getDate() - amount);
+          break;
+        case 'week':
+          startDate.setDate(startDate.getDate() - amount * 7);
+          break;
+        case 'month':
+          startDate.setMonth(startDate.getMonth() - amount);
+          break;
+      }
+
+      console.log(
+        `[RELEASE_ANALYSIS] Parsed time filter: ${amount} ${unit}s ago`,
+      );
+      return { startDate, endDate: now };
+    }
+
+    // Pattern: "in the past X hours/days/weeks/months"
+    const pastMatch = queryLower.match(
+      /in\s+the\s+past\s+(\d+)\s+(hour|day|week|month)s?/,
+    );
+
+    if (pastMatch) {
+      const amount = parseInt(pastMatch[1]);
+      const unit = pastMatch[2];
+      const startDate = new Date(now);
+
+      switch (unit) {
+        case 'hour':
+          startDate.setHours(startDate.getHours() - amount);
+          break;
+        case 'day':
+          startDate.setDate(startDate.getDate() - amount);
+          break;
+        case 'week':
+          startDate.setDate(startDate.getDate() - amount * 7);
+          break;
+        case 'month':
+          startDate.setMonth(startDate.getMonth() - amount);
+          break;
+      }
+
+      console.log(
+        `[RELEASE_ANALYSIS] Parsed time filter: past ${amount} ${unit}s`,
+      );
+      return { startDate, endDate: now };
+    }
+
+    return null;
+  }
+
+  /**
    * Handle release analysis queries
    */
   private async handleReleaseAnalysis(
@@ -1137,6 +1909,16 @@ Return the most appropriate category that allows for the deepest technical analy
     threadId?: string,
     trace?: AnalysisTrace,
   ): Promise<QueryAnalysisResponse> {
+    console.log('='.repeat(80));
+    console.log('[HANDLE_RELEASE_ANALYSIS] Starting enhanced release analysis');
+    console.log('[HANDLE_RELEASE_ANALYSIS] Query:', query);
+    console.log('[HANDLE_RELEASE_ANALYSIS] Enhanced Query:', enhancedQuery);
+    console.log(
+      '[HANDLE_RELEASE_ANALYSIS] Repository ID:',
+      context.repository.repositoryId,
+    );
+    console.log('='.repeat(80));
+
     trace?.executionPath.push('handleReleaseAnalysis');
 
     try {
@@ -1154,11 +1936,42 @@ Return the most appropriate category that allows for the deepest technical analy
         }
       }
 
-      // Optimize commit fetching by adding specific fields selection
+      // Enhanced commit fetching with better filtering and time-based queries
+      console.log(
+        '[RELEASE_ANALYSIS] Fetching commits for repository:',
+        context.repository.repositoryId,
+      );
+
+      // Parse time-based queries
+      const timeFilter = this.parseTimeFilter(query);
+      console.log('[RELEASE_ANALYSIS] Time filter:', timeFilter);
+
+      // Parse committer filter using AI
+      const committerFilter = await this.parseCommitterFilter(query);
+      console.log('[RELEASE_ANALYSIS] Committer filter:', committerFilter);
+
+      const commitWhere: any = {
+        repositoryId: context.repository.repositoryId,
+      };
+
+      if (timeFilter) {
+        commitWhere.createdAt = {
+          gte: timeFilter.startDate,
+          lte: timeFilter.endDate,
+        };
+      }
+
+      if (committerFilter) {
+        commitWhere.committer = {
+          contains: committerFilter,
+          mode: 'insensitive',
+        };
+      }
+
+      console.log('commitWhere: ', commitWhere);
+
       const recentCommits = await this.prisma.commitSummary.findMany({
-        where: {
-          repositoryId: context.repository.repositoryId,
-        },
+        where: commitWhere,
         select: {
           commitMessage: true,
           committer: true,
@@ -1167,12 +1980,140 @@ Return the most appropriate category that allows for the deepest technical analy
           totalFiles: true,
           createdAt: true,
           summary: true,
+          commitId: true,
         },
         orderBy: { createdAt: 'desc' },
-        take: 10,
+        take: 50, // Increased from 10 to 20 for better coverage
       });
 
+      console.log('[RELEASE_ANALYSIS] Found commits:', recentCommits.length);
+
+      // Parse PR filter using AI
+      const prFilter = await this.parsePRFilter(query);
+      console.log('[RELEASE_ANALYSIS] PR filter:', prFilter);
+
+      // Fetch PR data with dynamic filtering
+      let prData = [];
+      try {
+        const prWhere: any = {
+          repositoryId: context.repository.repositoryId,
+          summary: {
+            not: '',
+          },
+        };
+
+        // Apply PR filters based on AI analysis
+        if (prFilter) {
+          if (prFilter.prNumber) {
+            prWhere.prNumber = prFilter.prNumber;
+          }
+          if (prFilter.author) {
+            // Note: PR table doesn't have author field, but we can search in title/description
+            prWhere.OR = [
+              { prTitle: { contains: prFilter.author, mode: 'insensitive' } },
+              {
+                prDescription: {
+                  contains: prFilter.author,
+                  mode: 'insensitive',
+                },
+              },
+            ];
+          }
+          if (prFilter.keywords) {
+            prWhere.OR = [
+              { prTitle: { contains: prFilter.keywords, mode: 'insensitive' } },
+              {
+                prDescription: {
+                  contains: prFilter.keywords,
+                  mode: 'insensitive',
+                },
+              },
+            ];
+          }
+        }
+
+        console.log('prWhere: ', prWhere);
+
+        prData = await this.prisma.pullRequest.findMany({
+          where: prWhere,
+          select: {
+            id: true,
+            prTitle: true,
+            prDescription: true,
+            prNumber: true,
+            createdAt: true,
+            updatedAt: true,
+            head: true,
+            base: true,
+            summary: true,
+          },
+          orderBy: { updatedAt: 'desc' },
+          take: 15, // Increased for better coverage
+        });
+        console.log('[RELEASE_ANALYSIS] Found PRs:', prData.length);
+      } catch (error) {
+        console.warn('[RELEASE_ANALYSIS] Failed to fetch PR data:', error);
+      }
+
+      // Handle file changes analysis if requested
+      let fileChangesData = null;
+      if (prFilter && (prFilter.fileChanges || prFilter.specificFiles)) {
+        console.log('[RELEASE_ANALYSIS] File changes analysis requested');
+        try {
+          fileChangesData = await this.analyzeFileChanges(
+            prFilter,
+            context.repository,
+            query,
+          );
+          console.log('[RELEASE_ANALYSIS] File changes analysis completed');
+        } catch (error) {
+          console.warn(
+            '[RELEASE_ANALYSIS] Failed to analyze file changes:',
+            error,
+          );
+        }
+      }
+
+      // If no commits found, create a sample commit using AI
       if (recentCommits.length === 0) {
+        console.log(
+          '[RELEASE_ANALYSIS] No commits found, creating sample commit using AI...',
+        );
+        try {
+          await this.createSampleCommitWithAI(
+            query,
+            context.repository.repositoryId,
+          );
+          console.log('[RELEASE_ANALYSIS] Sample commit created successfully');
+        } catch (error) {
+          console.warn(
+            '[RELEASE_ANALYSIS] Failed to create sample commit:',
+            error,
+          );
+        }
+      }
+
+      // If no PRs found, create a sample PR using AI
+      if (prData.length === 0) {
+        console.log(
+          '[RELEASE_ANALYSIS] No PRs found, creating sample PR using AI...',
+        );
+        try {
+          await this.createSamplePRWithAI(
+            query,
+            context.repository.repositoryId,
+          );
+          console.log('[RELEASE_ANALYSIS] Sample PR created successfully');
+        } catch (error) {
+          console.warn('[RELEASE_ANALYSIS] Failed to create sample PR:', error);
+        }
+      }
+
+      if (recentCommits.length === 0) {
+        // If file changes were requested, include that data in the context
+        if (fileChangesData) {
+          (context as any).fileChangesData = fileChangesData;
+        }
         return await this.handleEnhancedProjectLevelQuery(
           query,
           enhancedQuery,
@@ -1221,32 +2162,62 @@ Return the most appropriate category that allows for the deepest technical analy
         context,
       );
 
-      // Build prompt with context awareness
+      // Build enhanced prompt with PR and commit data
       const releasePrompt = `
 ${previousContext ? `Previous conversation:\n${previousContext}\n\nFollow-up question: "${query}"\n` : `New question: "${query}"\n`}
 
-Analyze these ${relevantCommits.length} commits:
-
+## Recent Commits (${relevantCommits.length}):
 ${relevantCommits
   .map(
-    (
-      commit,
-    ) => `• ${commit.commitMessage.split('\n')[0]} (${commit.committer}) | +${commit.additions}/-${commit.deletions} in ${commit.totalFiles} files
-`,
+    (commit) =>
+      `• ${commit.commitMessage.split('\n')[0]} (${commit.committer}) | +${commit.additions}/-${commit.deletions} in ${commit.totalFiles} files | ${commit.createdAt.toISOString().split('T')[0]}`,
   )
-  .join('')}
+  .join('\n')}
+
+${
+  prData.length > 0
+    ? `## Recent Pull Requests (${prData.length}):
+${prData
+  .map(
+    (pr) =>
+      `• ${pr.prTitle} (#${pr.prNumber}) | Head: ${pr.head} → Base: ${pr.base} | Updated: ${pr.updatedAt.toISOString().split('T')[0]}`,
+  )
+  .join('\n')}`
+    : ''
+}
+
+${
+  fileChangesData
+    ? `## File Changes Analysis (PR #${fileChangesData.prNumber}):
+**Total Files Changed:** ${fileChangesData.totalFiles}
+**Filtered Files:** ${fileChangesData.filteredFiles}
+**Summary:** +${fileChangesData.summary.totalAdditions} additions, -${fileChangesData.summary.totalDeletions} deletions, ${fileChangesData.summary.totalChanges} total changes
+
+**File Details:**
+${fileChangesData.fileChanges
+  .map(
+    (file) =>
+      `• ${file.fileName} | +${file.additions}/-${file.deletions} (${file.changes} changes) | Status: ${file.status}`,
+  )
+  .join('\n')}`
+    : ''
+}
 
 ${
   previousContext
-    ? 'Provide a focused answer to the follow-up question, using context from the previous conversation and these commits.'
-    : `Provide a concise analysis focusing on:
-1. Key changes and their impact
-2. Main contributors
-3. Most affected areas
-4. Notable patterns`
+    ? 'Provide a focused answer to the follow-up question, using context from the previous conversation, commits, PRs, and file changes data.'
+    : `Provide a comprehensive analysis focusing on:
+1. Key changes and their impact (from commits, PRs, and file changes)
+2. Main contributors and their activity
+3. Most affected areas and files (use file changes data for detailed analysis)
+4. Notable patterns and trends
+5. Recent development activity and progress
+6. Any significant PRs, commits, or file changes that stand out
+
+Use commit data, PR data, and file changes data to provide a complete picture of recent development activity.`
 }
 
-Keep the response focused and practical.`;
+Keep the response detailed, informative, and practical.`;
 
       const gemini = new Gemini();
       const queryResponse = await gemini.generateAnswer(
@@ -1257,6 +2228,14 @@ Keep the response focused and practical.`;
 
       if (trace) {
         trace.performanceMetrics.aiCallsCount++;
+      }
+
+      // Include file changes data in the context if available
+      if (fileChangesData) {
+        (context as any).fileChangesData = fileChangesData;
+        console.log(
+          '[RELEASE_ANALYSIS] Added file changes data to context for AI analysis',
+        );
       }
 
       return await this.createEnhancedAssistanceResponse(

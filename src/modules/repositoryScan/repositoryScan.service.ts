@@ -58,6 +58,7 @@ export class RepositoryScanService {
   /**
    * Refactored repository analysis method - uses the new RepositoryAnalysisService
    */
+  // need to work re
   async analyzeRepositoryRefactored(
     repositoryId: string,
     query: string,
@@ -77,6 +78,7 @@ export class RepositoryScanService {
         `[analyzeRepositoryRefactored] Processing query: "${query}" with threadId: ${threadId || 'none'} and mode: ${analysisMode || 'standard'}`,
       );
 
+      // For all other modes, use the original service
       const seniorEngineerAnalysisService = new SeniorEngineerAnalysisService();
       const analysisService = new RepositoryAnalysisService(
         this.prisma,
@@ -99,8 +101,7 @@ export class RepositoryScanService {
         accountId,
         threadId: validThreadId,
         analysisMode: analysisMode || 'standard',
-        includeTracing:
-          analysisMode === 'senior' || analysisMode === 'release_analysis',
+        includeTracing: analysisMode === 'senior',
         streamProgress,
         streamTextChunk,
       });
@@ -236,7 +237,7 @@ export class RepositoryScanService {
       });
 
       // Process files in batches with better error handling
-      let analyzedFiles = [];
+      let analyzedFiles: any[] = [];
       try {
         analyzedFiles = await this._processInBatches(
           repositoryStructure,
