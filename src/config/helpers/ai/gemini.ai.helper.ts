@@ -59,8 +59,6 @@ export class Gemini {
         );
       }
 
-      // This method is now deprecated. Use direct minimal structure generation
-      // or the repairInvalidJson method instead.
       const fileName =
         fileData.name ||
         fileData.fileRelativePath?.split('/').pop() ||
@@ -433,8 +431,8 @@ END OF PREVIOUS QUESTIONS
           if (retryCount >= 1) {
             modelToUse =
               modelToUse === 'gemini-2.5-pro'
-                ? 'gemini-2.5-pro'
-                : 'gemini-2.5-flash';
+                ? 'gemini-2.5-flash'
+                : 'gemini-2.5-pro';
             console.log(`Switching to ${modelToUse} for retry`);
           }
         } else if (apiError.status === 429) {
@@ -448,7 +446,7 @@ END OF PREVIOUS QUESTIONS
           // For other errors, try switching model immediately
           modelToUse =
             modelToUse === 'gemini-2.5-pro'
-              ? 'gemini-2.5-pro'
+              ? 'gemini-2.5-flash'
               : 'gemini-2.5-pro';
           console.log(`API error, switching to ${modelToUse} for retry`);
         }
@@ -661,8 +659,8 @@ END OF PREVIOUS QUESTIONS
           if (retryCount >= 1) {
             modelToUse =
               modelToUse === 'gemini-2.5-pro'
-                ? 'gemini-2.5-pro'
-                : 'gemini-2.5-flash';
+                ? 'gemini-2.5-flash'
+                : 'gemini-2.5-pro';
             console.log(`Switching to ${modelToUse} for retry`);
           }
         } else if (apiError.status === 429) {
@@ -676,7 +674,7 @@ END OF PREVIOUS QUESTIONS
           // For other errors, try switching model immediately
           modelToUse =
             modelToUse === 'gemini-2.5-pro'
-              ? 'gemini-2.5-pro'
+              ? 'gemini-2.5-flash'
               : 'gemini-2.5-pro';
           console.log(`API error, switching to ${modelToUse} for retry`);
         }
@@ -1179,8 +1177,8 @@ The analysis must be HIGHLY DETAILED and SPECIFIC. Include exact file locations,
             // For other errors, switch model and retry
             modelToUse =
               modelToUse === 'gemini-2.5-pro'
-                ? 'gemini-2.5-pro'
-                : 'gemini-2.5-flash';
+                ? 'gemini-2.5-flash'
+                : 'gemini-2.5-pro';
           }
 
           retryCount++;

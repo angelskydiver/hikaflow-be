@@ -57,6 +57,31 @@ const repositoryScanService = new RepositoryScanService(
   mailService,
 );
 
+// Add cleanup handlers for graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('Received SIGINT, closing Prisma connection...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('Received SIGTERM, closing Prisma connection...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+process.on('uncaughtException', async (error) => {
+  console.error('Uncaught Exception:', error);
+  await prisma.$disconnect();
+  process.exit(1);
+});
+
+process.on('unhandledRejection', async (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  await prisma.$disconnect();
+  process.exit(1);
+});
+
 // Function to process full repository scan jobs
 const processRepositoryScan = async (job) => {
   const { repositoryName, accountId, repositoryScanId } = job.data;

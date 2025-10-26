@@ -237,7 +237,7 @@ export class RepositoryScanService {
       });
 
       // Process files in batches with better error handling
-      let analyzedFiles = [];
+      let analyzedFiles: any[] = [];
       try {
         analyzedFiles = await this._processInBatches(
           repositoryStructure,

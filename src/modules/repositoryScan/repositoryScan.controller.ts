@@ -65,12 +65,22 @@ export class RepositoryScanController {
     @Request() req: any,
   ) {
     try {
+      if (!req.user || !req.user.accountId) {
+        throw new BadRequestException('User authentication required');
+      }
+      
       return await this._repositoryScanService.queueRepositoryScan(
         id,
         req.user.accountId,
       );
     } catch (error) {
-      console.error(error);
+      console.error('Error in QueueRepositoryScan:', error);
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        error.message || 'Failed to queue repository scan',
+      );
     }
   }
 
@@ -145,7 +155,6 @@ export class RepositoryScanController {
 
     // Disable buffering for reverse proxies (critical for HTTPS production)
     res.setHeader('X-Accel-Buffering', 'no'); // Nginx
-    res.setHeader('X-Accel-Buffering', 'no'); // Additional Nginx directive
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
     res.setHeader('Transfer-Encoding', 'chunked');
