@@ -12,6 +12,7 @@ import { BillingService } from 'src/modules/billing/billing.service';
 import { CommentService } from 'src/modules/comment/comment.service';
 import { FeedbackService } from 'src/modules/feedback/feedback.service';
 import { RepositoryScanService } from 'src/modules/repositoryScan/repositoryScan.service';
+import { SeniorEngineerAnalysisService } from 'src/modules/repositoryScan/seniorEngineerAnalysis.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 // Initialize Prisma & Services
@@ -45,6 +46,7 @@ const mailerService = new MailerService(
 );
 const mailService = new MailService(mailerService, prisma);
 const billingService = new BillingService(prisma, configService, mailService);
+const seniorEngineerAnalysisService = new SeniorEngineerAnalysisService();
 
 // Initialize repository scan service with required dependencies
 const repositoryScanService = new RepositoryScanService(

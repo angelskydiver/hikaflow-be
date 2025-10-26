@@ -16,6 +16,7 @@ import { ScanStatus } from '@prisma/client';
 import { Response } from 'express';
 import { Public } from 'src/decorators/public';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { RepositoryAnalysisV2Service } from './repositoryAnalysisV2.service';
 import { RepositoryScanService } from './repositoryScan.service';
 
 @Controller('repositoryScan')
@@ -23,6 +24,7 @@ export class RepositoryScanController {
   constructor(
     private _repositoryScanService: RepositoryScanService,
     private _prismaService: PrismaService,
+    private _repositoryAnalysisV2Service: RepositoryAnalysisV2Service,
   ) {}
 
   /**
@@ -308,6 +310,115 @@ export class RepositoryScanController {
       } catch (endError) {
         console.error('Error closing stream after error:', endError);
         // Force close the response
+        try {
+          res.end();
+        } catch (forceCloseError) {
+          console.error('Force close failed:', forceCloseError);
+        }
+      }
+    }
+  }
+
+  /**
+   * V2 Enhanced Ask Question Endpoint
+   * Uses AI-powered query parsing and safe database execution
+   * This endpoint provides more accurate and confident responses
+   */
+  @ApiBearerAuth()
+  @Post('askQuestionV2/:repositoryId')
+  async AnalyzeAssistanceV2(
+    @Param('repositoryId') repositoryId: string,
+    @Body() body: any,
+    @Request() req: any,
+    @Res() res: Response,
+  ) {
+    // Set headers for Server-Sent Events
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader(
+      'Cache-Control',
+      'no-cache, no-store, must-revalidate, private',
+    );
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Transfer-Encoding', 'chunked');
+
+    try {
+      const streamProgress = (step: string, message: string, data?: any) => {
+        try {
+          const eventData = {
+            step,
+            message,
+            timestamp: new Date().toISOString(),
+            thinking: true,
+            ...(data && { data }),
+          };
+
+          res.write(`data: ${JSON.stringify(eventData)}\n\n`);
+          this.forceFlush(res);
+        } catch (error) {
+          console.error('Error streaming progress:', error);
+        }
+      };
+
+      const streamTextChunk = (chunk: string) => {
+        try {
+          if (!chunk || chunk.trim() === '') return;
+
+          const eventData = {
+            step: 'text_chunk',
+            chunk: chunk.trim(),
+            timestamp: new Date().toISOString(),
+            streaming: true,
+          };
+
+          res.write(`data: ${JSON.stringify(eventData)}\n\n`);
+          this.forceFlush(res);
+        } catch (error) {
+          console.error('Error streaming text chunk:', error);
+        }
+      };
+
+      // Send initial progress
+      streamProgress('initializing', 'Starting V2 analysis with AI...');
+
+      // Execute V2 analysis
+      const result = await this._repositoryAnalysisV2Service.analyzeQueryV2(
+        body.query,
+        repositoryId,
+        streamProgress,
+        streamTextChunk,
+      );
+
+      // Send completion
+      streamProgress('completed', 'Analysis completed successfully', result);
+
+      // End the stream
+      res.write('event: end\ndata: {}\n\n');
+      this.forceFlush(res);
+      res.end();
+
+      console.log('[V2] Analysis completed and stream closed');
+    } catch (error) {
+      console.error('Error in V2 streaming analysis:', error);
+
+      try {
+        const errorData = {
+          step: 'error',
+          message: error.message || 'An error occurred during analysis',
+          timestamp: new Date().toISOString(),
+        };
+
+        res.write(`data: ${JSON.stringify(errorData)}\n\n`);
+        this.forceFlush(res);
+        res.write('event: end\ndata: {}\n\n');
+        this.forceFlush(res);
+        res.end();
+      } catch (endError) {
+        console.error('Error closing stream after error:', endError);
         try {
           res.end();
         } catch (forceCloseError) {
