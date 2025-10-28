@@ -42,7 +42,8 @@ import { RepositoryService } from '../repository/repository.service';
 import { RepositoryScanService } from '../repositoryScan/repositoryScan.service';
 import { PrismaService } from './../../prisma/prisma.service';
 
-const MAX_TOKENS = 62000;
+// Configuration: Allow override via environment variable for different deployment scenarios
+const MAX_TOKENS = parseInt(process.env.MAX_ANALYSIS_TOKENS) || 62000;
 
 /**
  * WebhooksService - Optimized for Performance
@@ -102,6 +103,22 @@ export class WebhooksService {
     private _prTrackerService: PrTrackerService,
     private _repositoryScanService: RepositoryScanService,
   ) {}
+
+  /**
+   * Normalizes content to a string format, handling objects, null, and undefined
+   * @param content Content to normalize (can be string, object, null, or undefined)
+   * @returns Normalized string content
+   */
+  private normalizeContent(content: any): string {
+    if (typeof content === 'object' && content !== null) {
+      // Convert object to formatted JSON string with line breaks
+      return JSON.stringify(content, null, 2);
+    } else if (content === null || content === undefined) {
+      return '';
+    } else {
+      return String(content);
+    }
+  }
 
   /**
    * Get current performance metrics for monitoring
@@ -1024,11 +1041,17 @@ export class WebhooksService {
         console.log('changedFiles', changedFiles);
 
         // Queue changed files for rescanning to keep docs and embeddings up to date
+        // Skip issue detection on PR close to avoid re-catching issues from changed files
         if (changedFiles.length > 0) {
           console.log('changedFiles', changedFiles);
-          await queueChangedFilesScan(repository.id, changedFiles, accountId);
+          await queueChangedFilesScan(
+            repository.id,
+            changedFiles,
+            accountId,
+            true,
+          );
           console.log(
-            `Queued ${changedFiles.length} files for rescanning after PR merge`,
+            `Queued ${changedFiles.length} files for rescanning after PR merge (skipIssueDetection: true)`,
           );
         }
 
@@ -1311,10 +1334,16 @@ export class WebhooksService {
         }
 
         // Queue changed files for rescanning to keep docs and embeddings up to date
+        // Skip issue detection on PR close to avoid re-catching issues from changed files
         if (changedFiles.length > 0) {
-          await queueChangedFilesScan(repository.id, changedFiles, accountId);
+          await queueChangedFilesScan(
+            repository.id,
+            changedFiles,
+            accountId,
+            true,
+          );
           console.log(
-            `Queued ${changedFiles.length} files for rescanning after Bitbucket PR merge`,
+            `Queued ${changedFiles.length} files for rescanning after Bitbucket PR merge (skipIssueDetection: true)`,
           );
         }
 
@@ -1533,7 +1562,9 @@ export class WebhooksService {
       const filesContent = [];
 
       files.forEach((data) => {
-        const lines = data.content.split('\n');
+        const contentStr = this.normalizeContent(data.content);
+
+        const lines = contentStr.split('\n');
         const withLineNumbers = lines
           .map((line, index) => `${index + 1}: ${line}`)
           .join('\n');
@@ -1669,11 +1700,19 @@ export class WebhooksService {
         `Quality filtering: ${allIssues.length} -> ${highQualityIssues.length} issues`,
       );
 
-      // Get PR summary analysis
-      const analyzeCombineSummary =
-        await deepSeekWrapper.analyzeCombineSummary(combinedSummary);
+      let { decryptedToken } = await this._accountCredentialByRepository({
+        repository: { id: repository.repositoryId },
+      });
+      // Create comments mapping - prepare this early
+      const commentsMapping = highQualityIssues.map((data) =>
+        commentBitbucketPrIssue(data, { ...prInfo, token: decryptedToken }),
+      );
 
-      // Generate contextual AI prompts for each issue
+      // Wait for reliability analysis and execute comments in parallel
+      const [comments, analyzeCombineSummary] = await Promise.all([
+        Promise.allSettled(commentsMapping),
+        deepSeekWrapper.analyzeCombineSummary(combinedSummary),
+      ]);
 
       // Simplified comment creation logic - save ALL filtered issues
       const createCommentsMapping = highQualityIssues
@@ -1704,7 +1743,10 @@ export class WebhooksService {
       );
 
       // Execute final operations in parallel
-      const [duplicateResult, commentResults] = await Promise.all([
+      const [, , commentResults] = await Promise.all([
+        this._pullRequestService.updatePullRequest(prInfo.prId, {
+          summary: analyzeCombineSummary.prSummary,
+        }),
         this._commentService.registerDuplicateCode(
           duplicateCodes.map((data) => ({
             ...data,
@@ -1736,15 +1778,6 @@ export class WebhooksService {
         analyzeCombineSummary.prSummary,
       );
 
-      let { decryptedToken } = await this._accountCredentialByRepository({
-        repository: { id: repository.repositoryId },
-      });
-
-      // Create individual issue comments mapping - similar to GitHub approach
-      const commentsMapping = highQualityIssues.map((data) =>
-        commentBitbucketPrIssue(data, { ...prInfo, token: decryptedToken }),
-      );
-
       // Execute individual issue comments in parallel
       const individualCommentResults =
         await Promise.allSettled(commentsMapping);
@@ -1767,7 +1800,7 @@ export class WebhooksService {
         );
       }
 
-      // Also create the summary comment
+      // Post summary comment
       await commentBitbucketPr({
         token: decryptedToken,
         commentUrl: prInfo.links.comments.href,
@@ -1817,9 +1850,9 @@ export class WebhooksService {
       console.log('contextualPrompts: ', contextualPrompts);
 
       await this._pullRequestService.updatePullRequest(prInfo.prId, {
-        contextualPrompt: contextualPrompts.summaryPrompt || '',
-        expectedSolution: contextualPrompts.expectedSolution || '',
-        copyPasteCode: contextualPrompts.copyPasteCode || '',
+        contextualPrompt: contextualPrompts?.summaryPrompt || '',
+        expectedSolution: contextualPrompts?.expectedSolution || '',
+        copyPasteCode: contextualPrompts?.copyPasteCode || '',
       });
 
       return {
@@ -2461,7 +2494,9 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
       const filesContent = [];
 
       files.forEach((data) => {
-        const lines = data.content.split('\n');
+        const contentStr = this.normalizeContent(data.content);
+
+        const lines = contentStr.split('\n');
         const withLineNumbers = lines
           .map((line, index) => `${index + 1}: ${line}`)
           .join('\n');

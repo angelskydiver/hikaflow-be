@@ -5,9 +5,70 @@ import { Gemini } from 'src/config/helpers/ai/gemini.ai.helper';
 import { fetchFileByUrl } from 'src/config/helpers/repositories/github.helper';
 import { PrismaService } from 'src/prisma/prisma.service';
 
-export class connectionType {
+export class ConnectionType {
   host: string;
   port: number;
+}
+
+// Type definitions
+interface RepositoryData {
+  owner: string;
+  name: string;
+  baseBranch: string;
+}
+
+interface AccountCredentials {
+  accountType: AccountCredentialsType;
+  decryptedToken: string;
+  payload?: {
+    workspace: string;
+  };
+}
+
+interface OnDemandFileScanOptions {
+  repositoryId: string;
+  filePath: string;
+  accountId: string;
+  processDirect?: boolean;
+  prisma?: PrismaService;
+  repositoryData?: RepositoryData;
+  accountCredentials?: AccountCredentials;
+}
+
+// Configuration constants
+const SKIP_EXTENSIONS = [
+  '.md',
+  '.json',
+  '.yaml',
+  '.yml',
+  '.lock',
+  '.gitignore',
+];
+
+const SKIP_DIRECTORIES = ['node_modules/', 'dist/', 'build/', '.git/', 'temp/'];
+
+/**
+ * Sanitizes file path to prevent directory traversal attacks
+ * @param filePath The file path to sanitize
+ * @returns Sanitized file path
+ */
+function sanitizeFilePath(filePath: string): string {
+  if (!filePath) {
+    throw new Error('File path is required');
+  }
+
+  // Remove any '..' sequences to prevent directory traversal
+  let sanitized = filePath.replace(/\.\.\//g, '').replace(/\.\./g, '');
+
+  // Remove leading slashes and dots
+  sanitized = sanitized.replace(/^[./]+/, '');
+
+  // Ensure the path doesn't contain null bytes
+  if (sanitized.includes('\0')) {
+    throw new Error('Invalid file path: contains null bytes');
+  }
+
+  return sanitized;
 }
 
 /**
@@ -15,7 +76,7 @@ export class connectionType {
  */
 export const repositoryScanQueue = new Queue('repository-scan', {
   connection: {
-    host: '127.0.0.1',
+    host: process.env.REDIS_HOST || '127.0.0.1',
     port: parseInt(process.env.REDIS_PORT),
   },
   defaultJobOptions: {
@@ -27,30 +88,23 @@ export const repositoryScanQueue = new Queue('repository-scan', {
 /**
  * Queue for rescanning changed files
  * Uses the same queue name so it can be processed by the same worker
+ * @param skipIssueDetection - If true, only updates documentation/embeddings without catching new issues
  */
 export async function queueChangedFilesScan(
   repositoryId: string,
   changedFiles: string[],
   accountId: string,
+  skipIssueDetection: boolean = false,
 ) {
   // Filter out files that we don't want to scan
   const filteredFiles = changedFiles.filter((file) => {
     // Skip files with extensions we don't want to scan
-    const skipExtensions = [
-      '.md',
-      '.json',
-      '.yaml',
-      '.yml',
-      '.lock',
-      '.gitignore',
-    ];
-    if (skipExtensions.some((ext) => file.endsWith(ext))) {
+    if (SKIP_EXTENSIONS.some((ext) => file.endsWith(ext))) {
       return false;
     }
 
     // Skip files in certain directories
-    const skipDirs = ['node_modules/', 'dist/', 'build/', '.git/', 'temp/'];
-    if (skipDirs.some((dir) => file.startsWith(dir))) {
+    if (SKIP_DIRECTORIES.some((dir) => file.startsWith(dir))) {
       return false;
     }
 
@@ -70,6 +124,7 @@ export async function queueChangedFilesScan(
       repositoryId,
       changedFiles: filteredFiles,
       accountId,
+      skipIssueDetection,
     },
     {
       attempts: 3,
@@ -80,7 +135,9 @@ export async function queueChangedFilesScan(
     },
   );
 
-  console.log(`Queued ${filteredFiles.length} changed files for scanning`);
+  console.log(
+    `Queued ${filteredFiles.length} changed files for scanning (skipIssueDetection: ${skipIssueDetection})`,
+  );
   return filteredFiles.length;
 }
 
@@ -88,41 +145,39 @@ export async function queueChangedFilesScan(
  * Queue for on-demand file scanning
  * Uses the same queue name so it can be processed by the same worker
  *
- * @param repositoryId Repository ID
- * @param filePath Path to the file to scan
- * @param accountId Account ID
- * @param processDirect If true, processes the file directly instead of queuing (for API responses)
- * @param prisma Optional PrismaService instance for direct processing
- * @param repositoryData Optional repository data for direct processing
- * @param accountCredentials Optional account credentials for direct processing
+ * @param options Options object containing all parameters
  */
-export async function queueOnDemandFileScan(
-  repositoryId: string,
-  filePath: string,
-  accountId: string,
-  processDirect = false,
-  prisma?: PrismaService,
-  repositoryData?: any,
-  accountCredentials?: any,
-) {
+export async function queueOnDemandFileScan(options: OnDemandFileScanOptions) {
+  const {
+    repositoryId,
+    filePath,
+    accountId,
+    processDirect = false,
+    prisma,
+    repositoryData,
+    accountCredentials,
+  } = options;
+
   // Validate inputs
   if (!repositoryId || !filePath || !accountId) {
     console.error('Missing required parameters for on-demand file scan');
     return { success: false, error: 'Missing required parameters' };
   }
 
-  // Skip files with extensions we don't want to scan
-  const skipExtensions = [
-    '.md',
-    '.json',
-    '.yaml',
-    '.yml',
-    '.lock',
-    '.gitignore',
-  ];
+  // Sanitize file path to prevent directory traversal
+  let sanitizedFilePath: string;
+  try {
+    sanitizedFilePath = sanitizeFilePath(filePath);
+  } catch (error) {
+    console.error(`Invalid file path: ${error.message}`);
+    return { success: false, error: error.message };
+  }
 
-  if (skipExtensions.some((ext) => filePath.endsWith(ext))) {
-    console.log(`Skipping file with unsupported extension: ${filePath}`);
+  // Skip files with extensions we don't want to scan
+  if (SKIP_EXTENSIONS.some((ext) => sanitizedFilePath.endsWith(ext))) {
+    console.log(
+      `Skipping file with unsupported extension: ${sanitizedFilePath}`,
+    );
     return {
       success: false,
       error: 'File has unsupported extension',
@@ -130,9 +185,8 @@ export async function queueOnDemandFileScan(
   }
 
   // Skip files in certain directories
-  const skipDirs = ['node_modules/', 'dist/', 'build/', '.git/', 'temp/'];
-  if (skipDirs.some((dir) => filePath.startsWith(dir))) {
-    console.log(`Skipping file in excluded directory: ${filePath}`);
+  if (SKIP_DIRECTORIES.some((dir) => sanitizedFilePath.startsWith(dir))) {
+    console.log(`Skipping file in excluded directory: ${sanitizedFilePath}`);
     return {
       success: false,
       error: 'File is in excluded directory',
@@ -142,31 +196,46 @@ export async function queueOnDemandFileScan(
   // If direct processing is requested (for API responses)
   if (processDirect && prisma && repositoryData && accountCredentials) {
     try {
-      console.log(`Directly processing file scan for: ${filePath}`);
+      console.log(`Directly processing file scan for: ${sanitizedFilePath}`);
+
+      // Validate required data fields
+      if (
+        !repositoryData.owner ||
+        !repositoryData.name ||
+        !repositoryData.baseBranch
+      ) {
+        return { success: false, error: 'Invalid repository data' };
+      }
+
+      if (!accountCredentials.decryptedToken) {
+        return { success: false, error: 'Missing account credentials token' };
+      }
 
       // Check if file exists in the repository - construct proper URL based on provider
-      let fileUrl = filePath;
+      let fileUrl: string;
 
       if (
-        accountCredentials.accountType === AccountCredentialsType.GITHUB_TOKEN
+        accountCredentials?.accountType === AccountCredentialsType.GITHUB_TOKEN
       ) {
-        fileUrl = `https://raw.githubusercontent.com/${repositoryData.owner}/${repositoryData.name}/${repositoryData.baseBranch}/${filePath}`;
+        fileUrl = `https://raw.githubusercontent.com/${repositoryData.owner}/${repositoryData.name}/${repositoryData.baseBranch}/${sanitizedFilePath}`;
       } else {
         // Bitbucket
-        const workspace = accountCredentials.payload.workspace.replace(
+        const workspace = accountCredentials.payload?.workspace?.replace(
           ' ',
           '-',
         );
+        if (!workspace) {
+          return { success: false, error: 'Missing Bitbucket workspace' };
+        }
         const repo = repositoryData.name.replace(' ', '-');
         const branch = repositoryData.baseBranch.replace(' ', '-');
-        fileUrl = `https://api.bitbucket.org/2.0/repositories/${workspace}/${repo}/src/${branch}/${filePath}`;
+        fileUrl = `https://api.bitbucket.org/2.0/repositories/${workspace}/${repo}/src/${branch}/${sanitizedFilePath}`;
       }
 
       console.log(`Fetching file from URL: ${fileUrl}`);
-      const { fileContent } = await fetchFileByUrl(
-        fileUrl,
-        accountCredentials.decryptedToken,
-      );
+      const { fileContent } = await fetchFileByUrl(fileUrl, {
+        token: accountCredentials.decryptedToken,
+      });
 
       if (!fileContent) {
         return { success: false, error: 'File not found in repository' };
@@ -193,9 +262,9 @@ export async function queueOnDemandFileScan(
 
       // Process the file
       const fileObj = {
-        name: filePath.split('/').pop(),
-        filePath: filePath,
-        fileRelativePath: filePath,
+        name: sanitizedFilePath.split('/').pop(),
+        filePath: sanitizedFilePath,
+        fileRelativePath: sanitizedFilePath,
         content: fileContent,
       };
 
@@ -217,12 +286,12 @@ export async function queueOnDemandFileScan(
       const existingDoc = await prisma.fileDocumentation.findFirst({
         where: {
           repositoryId,
-          fullPath: filePath,
+          fullPath: sanitizedFilePath,
         },
       });
 
       // Extract file extension and name
-      const fileName = filePath.split('/').pop();
+      const fileName = sanitizedFilePath.split('/').pop();
 
       // Determine file type based on analysis tags
       const fileTypeStr = analysisResult.tags?.[0] || 'UNKNOWN';
@@ -245,7 +314,7 @@ export async function queueOnDemandFileScan(
           where: { id: existingDoc.id },
           data: {
             name: fileName,
-            fullPath: filePath,
+            fullPath: sanitizedFilePath,
             fileType: [docType],
             summary: analysisResult.summary || '',
             imports: analysisResult.imports || [],
@@ -260,7 +329,7 @@ export async function queueOnDemandFileScan(
         fileDoc = await prisma.fileDocumentation.create({
           data: {
             name: fileName,
-            fullPath: filePath,
+            fullPath: sanitizedFilePath,
             fileType: [docType],
             summary: analysisResult.summary || '',
             imports: analysisResult.imports || [],
@@ -290,7 +359,9 @@ export async function queueOnDemandFileScan(
         `;
       }
 
-      console.log(`Successfully processed file scan directly: ${filePath}`);
+      console.log(
+        `Successfully processed file scan directly: ${sanitizedFilePath}`,
+      );
       return { success: true, fileDoc };
     } catch (error) {
       console.error(`Error in direct file processing: ${error.message}`);
@@ -306,7 +377,7 @@ export async function queueOnDemandFileScan(
       {
         type: 'on-demand-file-scan',
         repositoryId,
-        filePath,
+        filePath: sanitizedFilePath,
         accountId,
       },
       {
@@ -320,7 +391,7 @@ export async function queueOnDemandFileScan(
     );
 
     console.log(
-      `Queued on-demand scan for file: ${filePath}, job ID: ${job.id}`,
+      `Queued on-demand scan for file: ${sanitizedFilePath}, job ID: ${job.id}`,
     );
     return {
       success: true,

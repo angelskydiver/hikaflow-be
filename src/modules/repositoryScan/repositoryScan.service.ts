@@ -45,6 +45,9 @@ import { CommentService } from '../comment/comment.service';
 import { RepositoryAnalysisService } from './repositoryAnalysis.service';
 import { SeniorEngineerAnalysisService } from './seniorEngineerAnalysis.service';
 
+// Configuration constants
+const FILE_ANALYSIS_BATCH_SIZE = 25;
+
 @Injectable()
 export class RepositoryScanService {
   constructor(
@@ -53,6 +56,7 @@ export class RepositoryScanService {
     private readonly accountCredentialService: AccountCredentialService,
     private readonly _billingService: BillingService,
     private readonly _mailService: MailService,
+    private readonly _seniorEngineerAnalysisService: SeniorEngineerAnalysisService,
   ) {}
 
   /**
@@ -78,14 +82,13 @@ export class RepositoryScanService {
         `[analyzeRepositoryRefactored] Processing query: "${query}" with threadId: ${threadId || 'none'} and mode: ${analysisMode || 'standard'}`,
       );
 
-      // For all other modes, use the original service
-      const seniorEngineerAnalysisService = new SeniorEngineerAnalysisService();
+      // Use injected dependencies for better testability and loose coupling
       const analysisService = new RepositoryAnalysisService(
         this.prisma,
         this._commentService,
         this.accountCredentialService,
         this._billingService,
-        seniorEngineerAnalysisService,
+        this._seniorEngineerAnalysisService,
       );
 
       // Ensure threadId is properly handled - convert undefined/null to undefined
@@ -241,7 +244,7 @@ export class RepositoryScanService {
       try {
         analyzedFiles = await this._processInBatches(
           repositoryStructure,
-          25, // Batch size
+          FILE_ANALYSIS_BATCH_SIZE,
           async (data) => {
             try {
               return await this.analyzeFiles(
@@ -337,6 +340,7 @@ export class RepositoryScanService {
     repositoryScanId: string,
     repository: any,
     tokenData?: { sharedSecret: string; baseUrl: string; clientKey: string },
+    skipIssueDetection: boolean = false,
   ) {
     try {
       const deepseekAI = new DeepSeek();
@@ -471,51 +475,63 @@ export class RepositoryScanService {
         }
       }
 
-      // Continue with code issue analysis
-      const withLineNumbers = lines
-        .map((line, index) => `${index + 1}: ${line}`)
-        .join('\n');
+      // Only perform issue detection if skipIssueDetection is false
+      if (!skipIssueDetection) {
+        console.log(
+          `Performing issue detection for ${fileChanges.fileRelativePath}`,
+        );
 
-      let { codeIssues } = await deepseekAI.deepAnalyzeCodeFilesForIssues(
-        { file: fileChanges.name, content: withLineNumbers },
-        repository.repositorySettings,
-        this.prisma,
-        repository.organizationId,
-        true,
-      );
+        // Continue with code issue analysis
+        const withLineNumbers = lines
+          .map((line, index) => `${index + 1}: ${line}`)
+          .join('\n');
 
-      codeIssues = (
-        await deepseekAI.deepAnalyzeCodeFilesForIssuesReliability(codeIssues)
-      )?.codeIssues;
+        let { codeIssues } = await deepseekAI.deepAnalyzeCodeFilesForIssues(
+          { file: fileChanges.name, content: withLineNumbers },
+          repository.repositorySettings,
+          this.prisma,
+          repository.organizationId,
+          true,
+        );
 
-      const filteredIssues = filterHighPriorityComments(
-        codeIssues.filter((data) => data.content !== ''),
-      );
+        codeIssues = (
+          await deepseekAI.deepAnalyzeCodeFilesForIssuesReliability(codeIssues)
+        )?.codeIssues;
 
-      // Create comments for issues
-      const createCommentsMapping = filteredIssues
-        .map((data) => {
-          const payload = {
-            repositoryId: repository.repositoryId,
-            content: data.content,
-            line: parseInt(data.line),
-            file: data.file,
-            issue: data.issue,
-            issueCategory: data.category,
-            severity: data.priority,
-            reason: data.reason,
-            // enhancementType: data.enhancementType,
-            // affectedCodeBlock: data?.affectedCodeBlock || {},
-            // improvedCodeBlock: data?.improvedCodeBlock || {},
-            // tags: data.tags || [],
-            type: CommentType.ISSUE,
-          };
+        const filteredIssues = filterHighPriorityComments(
+          codeIssues.filter((data) => data.content !== ''),
+        );
 
-          return this._commentService.createComment(payload);
-        })
-        .filter((comment) => comment !== undefined);
+        // Create comments for issues with suggested code blocks
+        const createCommentsMapping = filteredIssues
+          .map((data) => {
+            const payload = {
+              repositoryId: repository.repositoryId,
+              content: data.content,
+              line: parseInt(data.line),
+              file: data.file,
+              issue: data.issue,
+              issueCategory: data.category,
+              severity: data.priority,
+              reason: data.reason,
+              enhancementType: data.enhancementType, // Now enabled for suggested code
+              affectedCodeBlock: data?.affectedCodeBlock || {}, // Store original code
+              improvedCodeBlock: data?.improvedCodeBlock || {}, // Store suggested fix
+              tags: data.tags || [], // Store issue tags for filtering
+              type: CommentType.ISSUE,
+            };
 
-      await Promise.all(createCommentsMapping);
+            return this._commentService.createComment(payload);
+          })
+          .filter((comment) => comment !== undefined);
+
+        await Promise.all(createCommentsMapping);
+      } else {
+        console.log(
+          `Skipping issue detection for ${fileChanges.fileRelativePath} (PR closed context)`,
+        );
+      }
+
       return analysisResult;
     } catch (error) {
       console.error('❌ Error in analyzeFiles:', error);
@@ -937,19 +953,6 @@ export class RepositoryScanService {
         console.log('Using HEAD and baseBranch as fallback');
         parentCommitSha = repository.baseBranch;
       }
-
-      // Add this after line ~1691 where commitInfo is retrieved
-      // if (
-      //   accountCredentials.accountType !== AccountCredentialsType.GITHUB_TOKEN
-      // ) {
-      //   // For Bitbucket, swap the values since they're reversed
-      //   const temp = latestCommitSha;
-      //   latestCommitSha = parentCommitSha;
-      //   parentCommitSha = temp;
-      //   console.log(
-      //     `[Bitbucket] Swapped commit SHAs - now using latest=${latestCommitSha}, parent=${parentCommitSha}`,
-      //   );
-      // }
 
       // Create a map of file documentation for quick lookup
       const fileDocMap = {};
@@ -2313,8 +2316,13 @@ export class RepositoryScanService {
     repositoryId: string,
     changedFiles: string[],
     accountId: string,
+    skipIssueDetection: boolean = false,
   ) {
     try {
+      console.log(
+        `Rescanning changed files (skipIssueDetection: ${skipIssueDetection})`,
+      );
+
       // Get account credentials
       const accountCredentials =
         await this.accountCredentialService.getAccountToken({ accountId });
@@ -2392,6 +2400,8 @@ export class RepositoryScanService {
             repository.id,
             repositoryScan.id,
             repository,
+            undefined,
+            skipIssueDetection,
           ),
       );
 
@@ -2455,17 +2465,7 @@ export class RepositoryScanService {
                   : String(doc.summary),
               );
 
-              // Store embeddings as JSON
-              // await this.prisma.fileDocumentation.update({
-              //   where: { id: doc.id },
-              //   data: {
-              //     summaryEmbedding: embedding,
-              //   },
-              // });
-
-              // The below uses raw SQL to update the vector field directly
-              // Uncomment if your database supports vector operations
-
+              // Store embeddings using raw SQL for vector operations
               await this.prisma.$executeRaw`
                 UPDATE "FileDocumentation"
                 SET "summaryEmbedding" = ${embedding}::vector
@@ -2923,15 +2923,15 @@ export class RepositoryScanService {
         `Processing file directly: ${filePath} in repository ${repositoryId}`,
       );
 
-      const result = await queueOnDemandFileScan(
+      const result = await queueOnDemandFileScan({
         repositoryId,
         filePath,
         accountId,
-        true, // Process directly
-        this.prisma,
-        repository,
+        processDirect: true,
+        prisma: this.prisma,
+        repositoryData: repository,
         accountCredentials,
-      );
+      });
 
       if (!result.success) {
         console.error(
