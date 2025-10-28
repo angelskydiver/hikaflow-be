@@ -337,6 +337,7 @@ export class RepositoryScanService {
     repositoryScanId: string,
     repository: any,
     tokenData?: { sharedSecret: string; baseUrl: string; clientKey: string },
+    skipIssueDetection: boolean = false,
   ) {
     try {
       const deepseekAI = new DeepSeek();
@@ -471,51 +472,63 @@ export class RepositoryScanService {
         }
       }
 
-      // Continue with code issue analysis
-      const withLineNumbers = lines
-        .map((line, index) => `${index + 1}: ${line}`)
-        .join('\n');
+      // Only perform issue detection if skipIssueDetection is false
+      if (!skipIssueDetection) {
+        console.log(
+          `Performing issue detection for ${fileChanges.fileRelativePath}`,
+        );
 
-      let { codeIssues } = await deepseekAI.deepAnalyzeCodeFilesForIssues(
-        { file: fileChanges.name, content: withLineNumbers },
-        repository.repositorySettings,
-        this.prisma,
-        repository.organizationId,
-        true,
-      );
+        // Continue with code issue analysis
+        const withLineNumbers = lines
+          .map((line, index) => `${index + 1}: ${line}`)
+          .join('\n');
 
-      codeIssues = (
-        await deepseekAI.deepAnalyzeCodeFilesForIssuesReliability(codeIssues)
-      )?.codeIssues;
+        let { codeIssues } = await deepseekAI.deepAnalyzeCodeFilesForIssues(
+          { file: fileChanges.name, content: withLineNumbers },
+          repository.repositorySettings,
+          this.prisma,
+          repository.organizationId,
+          true,
+        );
 
-      const filteredIssues = filterHighPriorityComments(
-        codeIssues.filter((data) => data.content !== ''),
-      );
+        codeIssues = (
+          await deepseekAI.deepAnalyzeCodeFilesForIssuesReliability(codeIssues)
+        )?.codeIssues;
 
-      // Create comments for issues
-      const createCommentsMapping = filteredIssues
-        .map((data) => {
-          const payload = {
-            repositoryId: repository.repositoryId,
-            content: data.content,
-            line: parseInt(data.line),
-            file: data.file,
-            issue: data.issue,
-            issueCategory: data.category,
-            severity: data.priority,
-            reason: data.reason,
-            // enhancementType: data.enhancementType,
-            // affectedCodeBlock: data?.affectedCodeBlock || {},
-            // improvedCodeBlock: data?.improvedCodeBlock || {},
-            // tags: data.tags || [],
-            type: CommentType.ISSUE,
-          };
+        const filteredIssues = filterHighPriorityComments(
+          codeIssues.filter((data) => data.content !== ''),
+        );
 
-          return this._commentService.createComment(payload);
-        })
-        .filter((comment) => comment !== undefined);
+        // Create comments for issues with suggested code blocks
+        const createCommentsMapping = filteredIssues
+          .map((data) => {
+            const payload = {
+              repositoryId: repository.repositoryId,
+              content: data.content,
+              line: parseInt(data.line),
+              file: data.file,
+              issue: data.issue,
+              issueCategory: data.category,
+              severity: data.priority,
+              reason: data.reason,
+              enhancementType: data.enhancementType, // Now enabled for suggested code
+              affectedCodeBlock: data?.affectedCodeBlock || {}, // Store original code
+              improvedCodeBlock: data?.improvedCodeBlock || {}, // Store suggested fix
+              tags: data.tags || [], // Store issue tags for filtering
+              type: CommentType.ISSUE,
+            };
 
-      await Promise.all(createCommentsMapping);
+            return this._commentService.createComment(payload);
+          })
+          .filter((comment) => comment !== undefined);
+
+        await Promise.all(createCommentsMapping);
+      } else {
+        console.log(
+          `Skipping issue detection for ${fileChanges.fileRelativePath} (PR closed context)`,
+        );
+      }
+
       return analysisResult;
     } catch (error) {
       console.error('❌ Error in analyzeFiles:', error);
@@ -2313,8 +2326,13 @@ export class RepositoryScanService {
     repositoryId: string,
     changedFiles: string[],
     accountId: string,
+    skipIssueDetection: boolean = false,
   ) {
     try {
+      console.log(
+        `Rescanning changed files (skipIssueDetection: ${skipIssueDetection})`,
+      );
+
       // Get account credentials
       const accountCredentials =
         await this.accountCredentialService.getAccountToken({ accountId });
@@ -2392,6 +2410,8 @@ export class RepositoryScanService {
             repository.id,
             repositoryScan.id,
             repository,
+            undefined,
+            skipIssueDetection,
           ),
       );
 

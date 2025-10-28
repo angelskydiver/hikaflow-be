@@ -102,10 +102,12 @@ const processRepositoryScan = async (job) => {
 
 // Function to process changed files scan jobs
 const processChangedFilesScan = async (job) => {
-  const { repositoryId, changedFiles, accountId } = job.data;
+  const { repositoryId, changedFiles, accountId, skipIssueDetection } =
+    job.data;
 
   console.log(`Processing changed files scan for repository ${repositoryId}`);
   console.log(`Changed files: ${changedFiles.length}`);
+  console.log(`Skip issue detection: ${skipIssueDetection || false}`);
 
   try {
     // Find existing scan for this repository
@@ -126,6 +128,7 @@ const processChangedFilesScan = async (job) => {
       repositoryId,
       changedFiles,
       accountId,
+      skipIssueDetection || false,
     );
 
     console.log(

@@ -331,8 +331,13 @@ Return ONLY the fixed JSON with no other text, explanations, or code formatting.
    * @param files Relevant files with their content
    * @returns AI response with references
    */
-  async generateAnswer(input: string, result, previousQuestions?: string) {
-    let modelToUse = 'gemini-2.5-pro';
+  async generateAnswer(
+    input: string,
+    result,
+    previousQuestions?: string,
+    modelToUse?: string,
+  ) {
+    modelToUse = modelToUse || 'gemini-2.5-pro';
     let retryCount = 0;
     const MAX_RETRIES = 3;
     let lastError = null;

@@ -27,11 +27,13 @@ export const repositoryScanQueue = new Queue('repository-scan', {
 /**
  * Queue for rescanning changed files
  * Uses the same queue name so it can be processed by the same worker
+ * @param skipIssueDetection - If true, only updates documentation/embeddings without catching new issues
  */
 export async function queueChangedFilesScan(
   repositoryId: string,
   changedFiles: string[],
   accountId: string,
+  skipIssueDetection: boolean = false,
 ) {
   // Filter out files that we don't want to scan
   const filteredFiles = changedFiles.filter((file) => {
@@ -70,6 +72,7 @@ export async function queueChangedFilesScan(
       repositoryId,
       changedFiles: filteredFiles,
       accountId,
+      skipIssueDetection,
     },
     {
       attempts: 3,
@@ -80,7 +83,9 @@ export async function queueChangedFilesScan(
     },
   );
 
-  console.log(`Queued ${filteredFiles.length} changed files for scanning`);
+  console.log(
+    `Queued ${filteredFiles.length} changed files for scanning (skipIssueDetection: ${skipIssueDetection})`,
+  );
   return filteredFiles.length;
 }
 

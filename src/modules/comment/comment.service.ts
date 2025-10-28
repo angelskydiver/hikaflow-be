@@ -395,8 +395,20 @@ ${comment.reason}
 
 Please provide the reformatted analysis with improved markdown formatting:`;
 
-      const geminiResponse = await gemini.generateAnswer(reformatPrompt, []);
-      const reformattedReason = geminiResponse.output.response.text();
+      const geminiResponse = await gemini.generateAnswer(
+        reformatPrompt,
+        [],
+        '',
+        'gemini-2.5-flash',
+      );
+      let reformattedReason = geminiResponse.output.response.text();
+
+      // Clean up the response - remove markdown code blocks if AI wrapped the response
+      reformattedReason = reformattedReason
+        .replace(/^```markdown\s*/i, '') // Remove opening ```markdown
+        .replace(/^```\s*/i, '') // Remove opening ``` without language
+        .replace(/\s*```$/i, '') // Remove closing ```
+        .trim();
 
       // Update the comment with reformatted reason
       const updatedComment = await this._prismaService.comment.update({
