@@ -45,6 +45,9 @@ import { CommentService } from '../comment/comment.service';
 import { RepositoryAnalysisService } from './repositoryAnalysis.service';
 import { SeniorEngineerAnalysisService } from './seniorEngineerAnalysis.service';
 
+// Configuration constants
+const FILE_ANALYSIS_BATCH_SIZE = 25;
+
 @Injectable()
 export class RepositoryScanService {
   constructor(
@@ -53,6 +56,7 @@ export class RepositoryScanService {
     private readonly accountCredentialService: AccountCredentialService,
     private readonly _billingService: BillingService,
     private readonly _mailService: MailService,
+    private readonly _seniorEngineerAnalysisService: SeniorEngineerAnalysisService,
   ) {}
 
   /**
@@ -78,14 +82,13 @@ export class RepositoryScanService {
         `[analyzeRepositoryRefactored] Processing query: "${query}" with threadId: ${threadId || 'none'} and mode: ${analysisMode || 'standard'}`,
       );
 
-      // For all other modes, use the original service
-      const seniorEngineerAnalysisService = new SeniorEngineerAnalysisService();
+      // Use injected dependencies for better testability and loose coupling
       const analysisService = new RepositoryAnalysisService(
         this.prisma,
         this._commentService,
         this.accountCredentialService,
         this._billingService,
-        seniorEngineerAnalysisService,
+        this._seniorEngineerAnalysisService,
       );
 
       // Ensure threadId is properly handled - convert undefined/null to undefined
@@ -241,7 +244,7 @@ export class RepositoryScanService {
       try {
         analyzedFiles = await this._processInBatches(
           repositoryStructure,
-          25, // Batch size
+          FILE_ANALYSIS_BATCH_SIZE,
           async (data) => {
             try {
               return await this.analyzeFiles(
@@ -950,19 +953,6 @@ export class RepositoryScanService {
         console.log('Using HEAD and baseBranch as fallback');
         parentCommitSha = repository.baseBranch;
       }
-
-      // Add this after line ~1691 where commitInfo is retrieved
-      // if (
-      //   accountCredentials.accountType !== AccountCredentialsType.GITHUB_TOKEN
-      // ) {
-      //   // For Bitbucket, swap the values since they're reversed
-      //   const temp = latestCommitSha;
-      //   latestCommitSha = parentCommitSha;
-      //   parentCommitSha = temp;
-      //   console.log(
-      //     `[Bitbucket] Swapped commit SHAs - now using latest=${latestCommitSha}, parent=${parentCommitSha}`,
-      //   );
-      // }
 
       // Create a map of file documentation for quick lookup
       const fileDocMap = {};
@@ -2475,17 +2465,7 @@ export class RepositoryScanService {
                   : String(doc.summary),
               );
 
-              // Store embeddings as JSON
-              // await this.prisma.fileDocumentation.update({
-              //   where: { id: doc.id },
-              //   data: {
-              //     summaryEmbedding: embedding,
-              //   },
-              // });
-
-              // The below uses raw SQL to update the vector field directly
-              // Uncomment if your database supports vector operations
-
+              // Store embeddings using raw SQL for vector operations
               await this.prisma.$executeRaw`
                 UPDATE "FileDocumentation"
                 SET "summaryEmbedding" = ${embedding}::vector
@@ -2943,15 +2923,15 @@ export class RepositoryScanService {
         `Processing file directly: ${filePath} in repository ${repositoryId}`,
       );
 
-      const result = await queueOnDemandFileScan(
+      const result = await queueOnDemandFileScan({
         repositoryId,
         filePath,
         accountId,
-        true, // Process directly
-        this.prisma,
-        repository,
+        processDirect: true,
+        prisma: this.prisma,
+        repositoryData: repository,
         accountCredentials,
-      );
+      });
 
       if (!result.success) {
         console.error(

@@ -55,6 +55,7 @@ const repositoryScanService = new RepositoryScanService(
   accountCredentialService,
   billingService,
   mailService,
+  seniorEngineerAnalysisService,
 );
 
 // Add cleanup handlers for graceful shutdown
@@ -269,10 +270,10 @@ const repositoryScanWorker = new Worker(
   },
   {
     connection: {
-      host: '127.0.0.1',
+      host: process.env.REDIS_HOST || '127.0.0.1',
       port: parseInt(process.env.REDIS_PORT),
     },
-    concurrency: 2, // Maximum parallel jobs
+    concurrency: parseInt(process.env.SCAN_WORKER_CONCURRENCY) || 2,
   },
 );
 

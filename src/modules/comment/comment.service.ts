@@ -51,23 +51,26 @@ export class CommentService {
         });
       if (!accountRepository)
         throw new BadRequestException('Repository not found');
-      const repositoryGithubId = accountRepository.repository.repositoryId;
-      let pullRequests = null;
-      if (data.prId) {
-        pullRequests = await this._prismaService.pullRequest.findFirst({
-          where: {
-            repositoryId: repositoryGithubId,
-            prNumber: parseInt(data.prId),
-          },
-        });
+
+      // Validate pagination parameters
+      const currentPage = parseInt(data.currentPage);
+      const pageSize = parseInt(data.pageSize);
+
+      if (isNaN(currentPage) || currentPage < 1) {
+        throw new BadRequestException('Invalid page number');
       }
+
+      if (isNaN(pageSize) || pageSize < 1) {
+        throw new BadRequestException('Invalid page size');
+      }
+
       const comments = await this._prismaService.duplicatedCode.findMany({
         where: {
           repositoryId: accountRepository.repository.id,
           ...(data.prId && { prId: data.prId }),
         },
-        skip: (parseInt(data.currentPage) - 1) * parseInt(data.pageSize),
-        take: parseInt(data.pageSize),
+        skip: (currentPage - 1) * pageSize,
+        take: pageSize,
         orderBy: { createdAt: 'desc' },
       });
 
@@ -80,8 +83,9 @@ export class CommentService {
 
       return { comments: comments, commentCount: commentCount };
     } catch (error) {
-      console.log(error.message);
-      throw new BadRequestException(error.message);
+      console.error('Error fetching comments:', error.message);
+      // Use generic error message to avoid exposing internal details
+      throw new BadRequestException('Failed to fetch comments');
     }
   }
 

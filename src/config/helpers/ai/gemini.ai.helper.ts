@@ -1,5 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
+// Constants
+const EMBEDDING_DIMENSION = 768; // Gemini embedding-001 model dimension
+
 /**
  * Gemini AI helper for analysis and embeddings
  */
@@ -20,7 +23,6 @@ export class Gemini {
    * @returns Embedding array
    */
   async getEmbeddings(text: string): Promise<number[]> {
-    let EMBEDDING_DIMENSION = 768;
     try {
       // Create embedding model
       const model = this.genAI.getGenerativeModel({ model: 'embedding-001' });
@@ -461,6 +463,7 @@ END OF PREVIOUS QUESTIONS
         // If we've exhausted retries, throw the last error
         if (retryCount > MAX_RETRIES) {
           console.error('All retry attempts exhausted for generateAnswer');
+          console.error('Last error:', lastError);
           throw new Error(
             `Failed to generate answer after ${MAX_RETRIES} retries: ${lastError?.message || 'Unknown error'}`,
           );
@@ -472,6 +475,7 @@ END OF PREVIOUS QUESTIONS
     }
 
     // This should only be reached if all retries fail but don't throw specific errors
+    console.error('Last error before final throw:', lastError);
     throw new Error(
       `Failed to generate answer: ${lastError?.message || 'Unknown error'}`,
     );
@@ -1865,12 +1869,7 @@ ${content}
 `;
 
       const result = await model.generateContent(prompt);
-      let summary = result.response.text().trim();
-
-      // // Ensure it's not too long (max 500 chars)
-      // if (summary.length > 500) {
-      //   summary = summary.substring(0, 497) + '...';
-      // }
+      const summary = result.response.text().trim();
 
       return summary;
     } catch (error) {

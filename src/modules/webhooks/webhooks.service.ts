@@ -42,7 +42,8 @@ import { RepositoryService } from '../repository/repository.service';
 import { RepositoryScanService } from '../repositoryScan/repositoryScan.service';
 import { PrismaService } from './../../prisma/prisma.service';
 
-const MAX_TOKENS = 62000;
+// Configuration: Allow override via environment variable for different deployment scenarios
+const MAX_TOKENS = parseInt(process.env.MAX_ANALYSIS_TOKENS) || 62000;
 
 /**
  * WebhooksService - Optimized for Performance
@@ -102,6 +103,22 @@ export class WebhooksService {
     private _prTrackerService: PrTrackerService,
     private _repositoryScanService: RepositoryScanService,
   ) {}
+
+  /**
+   * Normalizes content to a string format, handling objects, null, and undefined
+   * @param content Content to normalize (can be string, object, null, or undefined)
+   * @returns Normalized string content
+   */
+  private normalizeContent(content: any): string {
+    if (typeof content === 'object' && content !== null) {
+      // Convert object to formatted JSON string with line breaks
+      return JSON.stringify(content, null, 2);
+    } else if (content === null || content === undefined) {
+      return '';
+    } else {
+      return String(content);
+    }
+  }
 
   /**
    * Get current performance metrics for monitoring
@@ -1545,16 +1562,7 @@ export class WebhooksService {
       const filesContent = [];
 
       files.forEach((data) => {
-        // Handle both string and object content
-        let contentStr = data.content;
-        if (typeof contentStr === 'object' && contentStr !== null) {
-          // Convert object to formatted JSON string with line breaks
-          contentStr = JSON.stringify(contentStr, null, 2);
-        } else if (contentStr === null || contentStr === undefined) {
-          contentStr = '';
-        } else {
-          contentStr = String(contentStr);
-        }
+        const contentStr = this.normalizeContent(data.content);
 
         const lines = contentStr.split('\n');
         const withLineNumbers = lines
@@ -2486,16 +2494,7 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
       const filesContent = [];
 
       files.forEach((data) => {
-        // Handle both string and object content
-        let contentStr = data.content;
-        if (typeof contentStr === 'object' && contentStr !== null) {
-          // Convert object to formatted JSON string with line breaks
-          contentStr = JSON.stringify(contentStr, null, 2);
-        } else if (contentStr === null || contentStr === undefined) {
-          contentStr = '';
-        } else {
-          contentStr = String(contentStr);
-        }
+        const contentStr = this.normalizeContent(data.content);
 
         const lines = contentStr.split('\n');
         const withLineNumbers = lines
