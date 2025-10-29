@@ -36,14 +36,14 @@ import { CodeOverviewService } from '../codeOverview/codeOverview.service';
 import { CommentService } from '../comment/comment.service';
 import { CommitSummaryService } from '../commitSummary/commitSummary.service';
 import { ExecutiveReportService } from '../executiveReport/executiveReport.service';
+import { ImpactAnalysisService } from '../impactAnalysis/impact-analysis.service';
 import { PrTrackerService } from '../prTracker/prTracker.service';
 import { PullRequestService } from '../pullRequest/pullRequest.service';
 import { RepositoryService } from '../repository/repository.service';
 import { RepositoryScanService } from '../repositoryScan/repositoryScan.service';
 import { PrismaService } from './../../prisma/prisma.service';
 
-// Configuration: Allow override via environment variable for different deployment scenarios
-const MAX_TOKENS = parseInt(process.env.MAX_ANALYSIS_TOKENS) || 62000;
+const MAX_TOKENS = 62000;
 
 /**
  * WebhooksService - Optimized for Performance
@@ -102,6 +102,7 @@ export class WebhooksService {
     @Inject(forwardRef(() => PrTrackerService))
     private _prTrackerService: PrTrackerService,
     private _repositoryScanService: RepositoryScanService,
+    private _impactAnalysisService: ImpactAnalysisService,
   ) {}
 
   /**
@@ -1075,6 +1076,27 @@ export class WebhooksService {
             accountId,
           );
 
+        // Run enhanced impact analysis for more precise callsite detection
+        try {
+          const enhancedAnalysis =
+            await this._impactAnalysisService.analyzeImpact(
+              repository.id,
+              data.number,
+              filesForAnalysis,
+              repository.organizationId,
+            );
+
+          console.log('Enhanced impact analysis completed:', {
+            changedFunctions: enhancedAnalysis.changedFunctions.length,
+            impactedCallsites: enhancedAnalysis.impactedCallsites.length,
+            breakingChanges: enhancedAnalysis.breakingChanges.length,
+            deploymentRecommendation: enhancedAnalysis.deploymentRecommendation,
+          });
+        } catch (enhancedError) {
+          console.error('Error in enhanced impact analysis:', enhancedError);
+          // Continue with regular analysis if enhanced analysis fails
+        }
+
         if (regressionAnalysis) {
           // Send notification email about the regression test results
           await this._mailService.sendRegressionTestingNotification({
@@ -1355,6 +1377,31 @@ export class WebhooksService {
             filteredFiles,
             accountId,
           );
+
+        // Run enhanced impact analysis for more precise callsite detection
+        try {
+          const enhancedAnalysis =
+            await this._impactAnalysisService.analyzeImpact(
+              repository.id,
+              data.pullrequest.id,
+              filteredFiles,
+              repository.organizationId,
+            );
+
+          console.log('Enhanced impact analysis completed for Bitbucket PR:', {
+            prNumber: data.pullrequest.id,
+            changedFunctions: enhancedAnalysis.changedFunctions.length,
+            impactedCallsites: enhancedAnalysis.impactedCallsites.length,
+            breakingChanges: enhancedAnalysis.breakingChanges.length,
+            deploymentRecommendation: enhancedAnalysis.deploymentRecommendation,
+          });
+        } catch (enhancedError) {
+          console.error(
+            'Error in enhanced impact analysis for Bitbucket PR:',
+            enhancedError,
+          );
+          // Continue with regular analysis if enhanced analysis fails
+        }
 
         if (regressionAnalysis) {
           await this._mailService.sendRegressionTestingNotification({

@@ -6,6 +6,7 @@ import { CodeOverviewModule } from '../codeOverview/codeOverview.module';
 import { CommentModule } from '../comment/comment.module';
 import { CommitSummaryModule } from '../commitSummary/commitSummary.module';
 import { ExecutiveReportModule } from '../executiveReport/executiveReport.module';
+import { ImpactAnalysisModule } from '../impactAnalysis/impact-analysis.module';
 import { PrTrackerModule } from '../prTracker/prTracker.module';
 import { PullRequestModule } from '../pullRequest/pullRequest.module';
 import { RepositoryModule } from '../repository/repository.module';
@@ -26,6 +27,7 @@ import { WebhooksService } from './webhooks.service';
     BillingModule,
     forwardRef(() => PrTrackerModule),
     forwardRef(() => RepositoryScanModule),
+    ImpactAnalysisModule,
   ],
   providers: [WebhooksService],
   controllers: [WebhooksController],

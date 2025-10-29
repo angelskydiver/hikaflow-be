@@ -136,7 +136,7 @@ export async function queueChangedFilesScan(
   );
 
   console.log(
-    `Queued ${filteredFiles.length} changed files for scanning (skipIssueDetection: ${skipIssueDetection})`,
+    `Queued ${filteredFiles.length}   (skipIssueDetection: ${skipIssueDetection})`,
   );
   return filteredFiles.length;
 }
