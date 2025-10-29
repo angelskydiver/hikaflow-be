@@ -1217,7 +1217,10 @@ export class WebhooksService {
           ...prCommits[index],
           author: {
             ...prCommits[index].author,
-            login: prCommits[index].author.user.display_name,
+            login:
+              prCommits[index].author?.user?.display_name ||
+              prCommits[index].author?.raw ||
+              'Unknown',
           },
           html_url: prCommits[index].links.html.href,
           files: data.map((commit) => commit.filename),
