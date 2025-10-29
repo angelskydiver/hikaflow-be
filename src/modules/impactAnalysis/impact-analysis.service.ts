@@ -93,6 +93,22 @@ export interface RiskAssessment {
   deploymentReadiness: number; // 0-100
 }
 
+export interface ChangedFile {
+  filename: string;
+  status: string;
+  content?: string;
+  previousContent?: string;
+}
+
+export interface SignatureAnalysis {
+  isBreaking: boolean;
+  changeType: string;
+  addedParameters: string[];
+  removedParameters: string[];
+  modifiedParameters: string[];
+  returnTypeChanged: boolean;
+}
+
 @Injectable()
 export class ImpactAnalysisService {
   constructor(
@@ -108,7 +124,7 @@ export class ImpactAnalysisService {
   async analyzeImpact(
     repositoryId: string,
     prNumber: number,
-    changedFiles: any[],
+    changedFiles: ChangedFile[],
     organizationId: string,
   ): Promise<EnhancedImpactAnalysis> {
     const simpleLogger = SimpleLogger.getInstance();
@@ -636,23 +652,23 @@ export class ImpactAnalysisService {
         return;
       }
 
-      await this.prisma.regressionReport.create({
-        data: {
-          repositoryId,
-          prNumber,
-          status: analysis.deploymentRecommendation,
-          summary: analysis.summary,
-          impactedFlows: JSON.parse(JSON.stringify(analysis.impactedCallsites)),
-          changedBehavior: JSON.parse(
-            JSON.stringify(analysis.changedFunctions),
-          ),
-          potentialBreakages: JSON.parse(
-            JSON.stringify(analysis.breakingChanges),
-          ),
-          testCases: JSON.parse(JSON.stringify(analysis.testRecommendations)),
-          organizationId,
-        },
-      });
+      //   await this.prisma.regressionReport.create({
+      //     data: {
+      //       repositoryId,
+      //       prNumber,
+      //       status: analysis.deploymentRecommendation,
+      //       summary: analysis.summary,
+      //       impactedFlows: JSON.parse(JSON.stringify(analysis.impactedCallsites)),
+      //       changedBehavior: JSON.parse(
+      //         JSON.stringify(analysis.changedFunctions),
+      //       ),
+      //       potentialBreakages: JSON.parse(
+      //         JSON.stringify(analysis.breakingChanges),
+      //       ),
+      //       testCases: JSON.parse(JSON.stringify(analysis.testRecommendations)),
+      //       organizationId,
+      //     },
+      //   });
     } catch (error) {
       console.error('Error storing analysis in database:', error);
       // Don't throw error to prevent breaking the main flow

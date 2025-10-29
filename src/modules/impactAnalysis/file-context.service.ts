@@ -3,6 +3,20 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 
+// Constants for complexity analysis thresholds
+const COMPLEXITY_THRESHOLDS = {
+  HIGH: {
+    lines: 500,
+    functions: 20,
+    complexity: 50,
+  },
+  MEDIUM: {
+    lines: 200,
+    functions: 10,
+    complexity: 20,
+  },
+} as const;
+
 export interface FileContext {
   filePath: string;
   directory: string;
@@ -70,12 +84,30 @@ export class FileContextService {
       const directory = path.dirname(filePath);
       const files = await fs.promises.readdir(directory);
 
-      return files
-        .filter((file) => {
+      // Use Promise.all to check file stats asynchronously
+      const fileStats = await Promise.all(
+        files.map(async (file) => {
           const fullPath = path.join(directory, file);
-          return fs.statSync(fullPath).isFile() && this.isCodeFile(fullPath);
-        })
-        .map((file) => path.join(directory, file));
+          try {
+            const stats = await fs.promises.stat(fullPath);
+            return {
+              file,
+              fullPath,
+              isFile: stats.isFile(),
+              isCodeFile: this.isCodeFile(fullPath),
+            };
+          } catch (error) {
+            // Skip files that can't be accessed
+            return null;
+          }
+        }),
+      );
+
+      return fileStats
+        .filter(
+          (fileInfo) => fileInfo && fileInfo.isFile && fileInfo.isCodeFile,
+        )
+        .map((fileInfo) => fileInfo!.fullPath);
     } catch (error) {
       console.error(
         `Error getting files in same directory for ${filePath}:`,
@@ -379,11 +411,19 @@ export class FileContextService {
         content.match(/if\s*\(|for\s*\(|while\s*\(|switch\s*\(/g) || []
       ).length;
 
-      if (lines > 500 || functions > 20 || complexity > 50) {
+      if (
+        lines > COMPLEXITY_THRESHOLDS.HIGH.lines ||
+        functions > COMPLEXITY_THRESHOLDS.HIGH.functions ||
+        complexity > COMPLEXITY_THRESHOLDS.HIGH.complexity
+      ) {
         return 'HIGH';
       }
 
-      if (lines > 200 || functions > 10 || complexity > 20) {
+      if (
+        lines > COMPLEXITY_THRESHOLDS.MEDIUM.lines ||
+        functions > COMPLEXITY_THRESHOLDS.MEDIUM.functions ||
+        complexity > COMPLEXITY_THRESHOLDS.MEDIUM.complexity
+      ) {
         return 'MEDIUM';
       }
 

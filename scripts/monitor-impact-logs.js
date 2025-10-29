@@ -48,10 +48,14 @@ function readNewLogs() {
     recentLines.forEach((line) => {
       try {
         const log = JSON.parse(line);
-        const timestamp = new Date(log.timestamp).toLocaleTimeString();
-        const level = log.level.padEnd(5);
-        const scope = log.scope.padEnd(25);
-        const message = log.message;
+
+        // Add null checks and default values
+        const timestamp = log.timestamp
+          ? new Date(log.timestamp).toLocaleTimeString()
+          : 'Unknown';
+        const level = (log.level || 'UNKNOWN').padEnd(5);
+        const scope = (log.scope || 'Unknown').padEnd(25);
+        const message = log.message || 'No message';
 
         let color = '';
         switch (log.level) {
@@ -70,13 +74,19 @@ function readNewLogs() {
           case 'TRACE':
             color = '\x1b[35m';
             break; // Magenta
+          default:
+            color = '\x1b[37m'; // White for unknown levels
         }
 
         console.log(
           `${color}[${timestamp}] ${level} ${scope} ${message}\x1b[0m`,
         );
 
-        if (log.data && Object.keys(log.data).length > 0) {
+        if (
+          log.data &&
+          typeof log.data === 'object' &&
+          Object.keys(log.data).length > 0
+        ) {
           console.log(
             `    📋 Data: ${JSON.stringify(log.data, null, 2).replace(/\n/g, '\n    ')}`,
           );

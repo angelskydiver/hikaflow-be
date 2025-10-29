@@ -201,6 +201,18 @@ export class DependencyAnalyzerService {
         `Error analyzing dependencies for ${filePath}`,
         { error: String(error) },
       );
+      // Re-throw critical errors to ensure they are not silently ignored
+      if (error instanceof Error && error.message.includes('ENOENT')) {
+        // File not found - this is expected for some files, don't re-throw
+        logger.debug('analyzeFileDependencies', 'File not found, skipping', {
+          filePath,
+        });
+      } else {
+        // Re-throw other errors as they indicate real issues
+        throw new Error(
+          `Failed to analyze dependencies for ${filePath}: ${error.message}`,
+        );
+      }
     }
 
     return { imports, exports };

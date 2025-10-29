@@ -8,6 +8,9 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ImpactAnalysisLogger } from './impact-analysis.logger';
 import { SimpleLogger } from './simple-logger';
 
+// Constants for file processing
+const VALID_FILE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx'];
+
 export interface FunctionDefinition {
   name: string;
   file: string;
@@ -344,7 +347,12 @@ export class CallsiteDetectorService {
         returnType,
       };
     } catch (error) {
-      console.error('Error extracting function from TypeScript node:', error);
+      const logger = ImpactAnalysisLogger.getInstance();
+      logger.error(
+        'extractFunctionFromNode',
+        'Error extracting function from TypeScript node',
+        { error: String(error), filePath, nodeType: node.kind },
+      );
       return null;
     }
   }
@@ -795,8 +803,7 @@ export class CallsiteDetectorService {
 
       // Check if file has a valid extension
       const fileExtension = path.extname(filePath).toLowerCase();
-      const validExtensions = ['.ts', '.tsx', '.js', '.jsx'];
-      if (!validExtensions.includes(fileExtension)) {
+      if (!VALID_FILE_EXTENSIONS.includes(fileExtension)) {
         logger.debug('getFileContent', 'Skipping unsupported file type', {
           filePath,
           extension: fileExtension,

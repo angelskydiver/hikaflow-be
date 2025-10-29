@@ -1,5 +1,6 @@
 import { AccountCredentialsType, ScanStatus } from '@prisma/client';
 import { Queue } from 'bullmq';
+import * as path from 'path';
 import { DeepSeek } from 'src/config/helpers/ai/deepseek.ai.helper';
 import { Gemini } from 'src/config/helpers/ai/gemini.ai.helper';
 import { fetchFileByUrl } from 'src/config/helpers/repositories/github.helper';
@@ -57,16 +58,25 @@ function sanitizeFilePath(filePath: string): string {
     throw new Error('File path is required');
   }
 
-  // Remove any '..' sequences to prevent directory traversal
-  let sanitized = filePath.replace(/\.\.\//g, '').replace(/\.\./g, '');
-
-  // Remove leading slashes and dots
-  sanitized = sanitized.replace(/^[./]+/, '');
-
   // Ensure the path doesn't contain null bytes
-  if (sanitized.includes('\0')) {
+  if (filePath.includes('\0')) {
     throw new Error('Invalid file path: contains null bytes');
   }
+
+  // Normalize the path to resolve '..' and '.' segments
+  const normalizedPath = path.normalize(filePath);
+
+  // Resolve the path to get absolute path, then check if it's within expected bounds
+  const resolvedPath = path.resolve(normalizedPath);
+
+  // Check for directory traversal attempts by ensuring the resolved path
+  // doesn't contain parent directory references
+  if (normalizedPath.includes('..') || resolvedPath.includes('..')) {
+    throw new Error('Invalid file path: directory traversal detected');
+  }
+
+  // Remove leading slashes and dots for relative paths
+  const sanitized = normalizedPath.replace(/^[./]+/, '');
 
   return sanitized;
 }
@@ -77,7 +87,7 @@ function sanitizeFilePath(filePath: string): string {
 export const repositoryScanQueue = new Queue('repository-scan', {
   connection: {
     host: process.env.REDIS_HOST || '127.0.0.1',
-    port: parseInt(process.env.REDIS_PORT),
+    port: parseInt(process.env.REDIS_PORT) || 6379,
   },
   defaultJobOptions: {
     removeOnComplete: true,
@@ -117,28 +127,33 @@ export async function queueChangedFilesScan(
   }
 
   // Add job to the queue
-  await repositoryScanQueue.add(
-    'changed-files-scan',
-    {
-      type: 'changed-files-scan',
-      repositoryId,
-      changedFiles: filteredFiles,
-      accountId,
-      skipIssueDetection,
-    },
-    {
-      attempts: 3,
-      backoff: {
-        type: 'exponential',
-        delay: 5000,
+  try {
+    await repositoryScanQueue.add(
+      'changed-files-scan',
+      {
+        type: 'changed-files-scan',
+        repositoryId,
+        changedFiles: filteredFiles,
+        accountId,
+        skipIssueDetection,
       },
-    },
-  );
+      {
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 5000,
+        },
+      },
+    );
 
-  console.log(
-    `Queued ${filteredFiles.length}   (skipIssueDetection: ${skipIssueDetection})`,
-  );
-  return filteredFiles.length;
+    console.log(
+      `Queued ${filteredFiles.length} files for scan (skipIssueDetection: ${skipIssueDetection})`,
+    );
+    return filteredFiles.length;
+  } catch (error) {
+    console.error('Failed to queue changed files scan:', error);
+    throw new Error(`Failed to queue scan: ${error.message}`);
+  }
 }
 
 /**

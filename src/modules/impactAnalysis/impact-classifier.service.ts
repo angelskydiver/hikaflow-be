@@ -5,7 +5,16 @@ import {
   CompatibleChange,
   ImpactedCallsite,
   RiskAssessment,
+  SignatureAnalysis,
 } from './impact-analysis.service';
+
+// Constants for fix time estimation (in minutes)
+const FIX_TIME_ESTIMATES = {
+  CRITICAL: 60, // 1 hour each
+  HIGH: 30, // 30 minutes each
+  MEDIUM: 15, // 15 minutes each
+  LOW: 5, // 5 minutes each
+} as const;
 
 @Injectable()
 export class ImpactClassifierService {
@@ -236,7 +245,7 @@ export class ImpactClassifierService {
   private createBreakingChangeFromCallsite(
     changedFunction: ChangedFunction,
     callsite: ImpactedCallsite,
-    signatureAnalysis: any,
+    signatureAnalysis: SignatureAnalysis,
   ): BreakingChange {
     const severity = this.determineSeverity(
       changedFunction,
@@ -582,13 +591,17 @@ export class ImpactClassifierService {
     compatibleChanges: CompatibleChange[],
   ): string {
     const criticalTime =
-      breakingChanges.filter((c) => c.severity === 'CRITICAL').length * 60; // 1 hour each
+      breakingChanges.filter((c) => c.severity === 'CRITICAL').length *
+      FIX_TIME_ESTIMATES.CRITICAL;
     const highTime =
-      breakingChanges.filter((c) => c.severity === 'HIGH').length * 30; // 30 minutes each
+      breakingChanges.filter((c) => c.severity === 'HIGH').length *
+      FIX_TIME_ESTIMATES.HIGH;
     const mediumTime =
-      breakingChanges.filter((c) => c.severity === 'MEDIUM').length * 15; // 15 minutes each
+      breakingChanges.filter((c) => c.severity === 'MEDIUM').length *
+      FIX_TIME_ESTIMATES.MEDIUM;
     const lowTime =
-      breakingChanges.filter((c) => c.severity === 'LOW').length * 5; // 5 minutes each
+      breakingChanges.filter((c) => c.severity === 'LOW').length *
+      FIX_TIME_ESTIMATES.LOW;
 
     const totalMinutes = criticalTime + highTime + mediumTime + lowTime;
 
