@@ -26,6 +26,7 @@ import { PrTrackerModule } from './modules/prTracker/prTracker.module';
 import { PullRequestModule } from './modules/pullRequest/pullRequest.module';
 import { RepositoryModule } from './modules/repository/repository.module';
 import { RepositoryScanModule } from './modules/repositoryScan/repositoryScan.module';
+import { TeamModule } from './modules/team/team.module';
 import { UsersModule } from './modules/user/user.module';
 import { VerificationCodeModule } from './modules/verificationCode/verificationCode.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
@@ -73,6 +74,7 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
     BillingModule,
     DiscountModule,
     FeedbackModule,
+    TeamModule,
   ],
   controllers: [AppController],
   providers: [

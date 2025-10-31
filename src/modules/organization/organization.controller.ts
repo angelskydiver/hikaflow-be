@@ -69,6 +69,18 @@ export class OrganizationController {
   }
 
   @ApiBearerAuth()
+  @Get('members/:orgId')
+  async getOrganizationMembers(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+  ) {
+    return await this._organizationService.getOrganizationMembers(
+      orgId,
+      req.user.accountId,
+    );
+  }
+
+  @ApiBearerAuth()
   @Post('invite/user')
   async InviteUserToOrganization(
     @Body() data: InviteUserToOrganizationRequestDTO,

@@ -26,6 +26,8 @@ export class InviteUserToOrganizationRequestDTO {
     email: string;
     name: string;
     role: string;
+    teamId?: string;
+    organizationRoleId?: string;
   }[];
 }
 

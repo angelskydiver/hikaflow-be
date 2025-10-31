@@ -195,6 +195,7 @@ model Account {
   // AssistedQuestions   AssistedQuestions[]
   // Researcher          Researcher[]
   // ResearchAssistant   ResearchAssistant[]
+  TeamMember          TeamMember[]
 }
 
 model Organization {
@@ -214,9 +215,12 @@ model Organization {
   // Researcher             Researcher[]
   // ResearchAssistant      ResearchAssistant[]
 
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  RegressionReport RegressionReport[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  RegressionReport  RegressionReport[]
+  // Teams
+  teams             Team[]
+  organizationRoles OrganizationRole[]
 }
 
 model OrganizationAccounts {
@@ -293,6 +297,7 @@ model Repository {
   UsageLog           UsageLog[]
   collaborators      Collaborator[]
   RegressionReport   RegressionReport[]
+  teamLinks          TeamRepository[]
 }
 
 model AccountRepository {
@@ -306,6 +311,83 @@ model AccountRepository {
   evaluations RepoEvaluation[]
 
   @@id([accountId, repositoryId]) // Composite primary key
+}
+
+// ==========================
+// Team hierarchy (enterprise-defined)
+// Hierarchy is defined at organization level, shared by all teams
+// ==========================
+
+model Team {
+  id             String  @id @default(uuid())
+  organizationId String
+  name           String
+  description    String? @default("")
+
+  organization Organization             @relation(fields: [organizationId], references: [id])
+  members      TeamMember[]
+  repositories TeamRepository[]
+  invitations  OrganizationInvitation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
+}
+
+// Role definitions are owned by an Organization; shared across all teams
+model OrganizationRole {
+  id             String  @id @default(uuid())
+  organizationId String
+  name           String
+  // Lower rank value means higher in hierarchy (e.g., 1 = top level)
+  rank           Int
+  parentRoleId   String? // Optional parent role for hierarchical structure
+
+  organization Organization             @relation(fields: [organizationId], references: [id])
+  members      TeamMember[]
+  invitations  OrganizationInvitation[]
+  parent       OrganizationRole?        @relation("OrgRoleHierarchy", fields: [parentRoleId], references: [id])
+  children     OrganizationRole[]       @relation("OrgRoleHierarchy")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([organizationId, rank])
+  @@index([parentRoleId])
+}
+
+// Membership of an Account in a Team with a specific OrganizationRole
+model TeamMember {
+  id                 String @id @default(uuid())
+  teamId             String
+  accountId          String
+  organizationRoleId String
+
+  team             Team             @relation(fields: [teamId], references: [id])
+  account          Account          @relation(fields: [accountId], references: [id])
+  organizationRole OrganizationRole @relation(fields: [organizationRoleId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([teamId, accountId])
+  @@index([organizationRoleId])
+}
+
+// Many-to-many mapping of teams to repositories (projects)
+model TeamRepository {
+  teamId       String
+  repositoryId String
+
+  team       Team       @relation(fields: [teamId], references: [id])
+  repository Repository @relation(fields: [repositoryId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@id([teamId, repositoryId])
+  @@index([repositoryId])
 }
 
 model RepoEvaluation {
@@ -462,10 +544,20 @@ model OrganizationInvitation {
   inviterId      String                    @default("5058706f-b560-41bf-8bff-483514d3e9e8")
   inviter        User                      @relation(fields: [inviterId], references: [id])
 
+  // Optional team and role assignment (only if organization has teams/hierarchy)
+  teamId             String?
+  organizationRoleId String?
+
+  team             Team?             @relation(fields: [teamId], references: [id])
+  organizationRole OrganizationRole? @relation(fields: [organizationRoleId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([teamId])
+  @@index([organizationRoleId])
 }
 
 model DuplicatedCode {
