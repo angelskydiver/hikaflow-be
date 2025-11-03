@@ -196,6 +196,7 @@ model Account {
   // Researcher          Researcher[]
   // ResearchAssistant   ResearchAssistant[]
   TeamMember          TeamMember[]
+  reports             WeeklyReport[]
 }
 
 model Organization {
@@ -221,6 +222,7 @@ model Organization {
   // Teams
   teams             Team[]
   organizationRoles OrganizationRole[]
+  weeklyReports     WeeklyReport[]
 }
 
 model OrganizationAccounts {
@@ -298,6 +300,7 @@ model Repository {
   collaborators      Collaborator[]
   RegressionReport   RegressionReport[]
   teamLinks          TeamRepository[]
+  weeklyReports      WeeklyReport[]
 }
 
 model AccountRepository {
@@ -328,6 +331,7 @@ model Team {
   members      TeamMember[]
   repositories TeamRepository[]
   invitations  OrganizationInvitation[]
+  reports      WeeklyReport[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -857,7 +861,49 @@ model Collaborator {
   // Relationships
   organizations Organization[] // Many-to-many with organizations
   repositories  Repository[] // Many-to-many with repositories
+  reports       WeeklyReport[] // Weekly reports for this collaborator
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Weekly Team Reports - Store reports for historical comparison
+model WeeklyReport {
+  id          String     @id @default(uuid())
+  reportType  ReportType // CONTRIBUTOR, TEAM, PROJECT, ORGANIZATION
+  periodStart DateTime
+  periodEnd   DateTime
+
+  // Report Scope
+  organizationId String?
+  teamId         String?
+  accountId      String? // For contributor reports
+  repositoryId   String? // For project reports
+  collaboratorId String? // For contributor reports (if matched via Collaborator)
+
+  // Report Data (stored as JSON for flexibility)
+  reportData Json @default("{}")
+
+  // Relationships
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  team         Team?         @relation(fields: [teamId], references: [id])
+  account      Account?      @relation(fields: [accountId], references: [id])
+  repository   Repository?   @relation(fields: [repositoryId], references: [id])
+  collaborator Collaborator? @relation(fields: [collaboratorId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, periodStart, periodEnd])
+  @@index([teamId, periodStart, periodEnd])
+  @@index([accountId, periodStart, periodEnd])
+  @@index([repositoryId, periodStart, periodEnd])
+  @@index([reportType, periodStart])
+}
+
+enum ReportType {
+  CONTRIBUTOR  @map("CONTRIBUTOR") // Individual contributor report
+  TEAM         @map("TEAM") // Team summary report
+  PROJECT      @map("PROJECT") // Project/repository report
+  ORGANIZATION @map("ORGANIZATION") // Organization-wide report
 }

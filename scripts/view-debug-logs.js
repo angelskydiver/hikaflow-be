@@ -58,3 +58,4 @@ if (args.includes('--watch') || args.includes('-w')) {
 } else {
   viewLogs();
 }
+
