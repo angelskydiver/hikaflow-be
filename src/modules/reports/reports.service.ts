@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { CommentStatus, CommentType, Prisma } from '@prisma/client';
 import { Gemini } from '../../config/helpers/ai/gemini.ai.helper';
+import { MailService } from '../../mail/mail.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   GenerateWeeklyReportDto,
@@ -84,7 +85,10 @@ export interface TeamReport {
 export class ReportsService {
   private readonly gemini: Gemini;
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mailService: MailService,
+  ) {
     this.gemini = new Gemini();
   }
 
@@ -638,6 +642,37 @@ export class ReportsService {
         endDate,
         reportData: report as any,
       });
+
+      // Send email notification to contributor
+      try {
+        const frontendUrl =
+          process.env.FRONTEND_URL ||
+          process.env.CLIENT_URL ||
+          'http://localhost:3001';
+        const profileUrl = `${frontendUrl}/profile`;
+
+        await this.mailService.sendContributorReportEmail({
+          email: account.user.email,
+          userName: `${account.user.firstName} ${account.user.lastName}`.trim(),
+          periodStart: startDate,
+          periodEnd: endDate,
+          metrics: {
+            totalCommits: metrics.commits.total,
+            issuesFixed: metrics.issues.fixed,
+            prsMerged: metrics.pullRequests.merged,
+          },
+          profileUrl,
+        });
+
+        console.log(
+          `[ReportsService] Sent contributor report email to ${account.user.email}`,
+        );
+      } catch (error) {
+        console.error(
+          `[ReportsService] Failed to send contributor report email: ${error.message}`,
+        );
+        // Don't throw - email failure shouldn't break report generation
+      }
     }
 
     return report;
@@ -1132,6 +1167,37 @@ export class ReportsService {
           console.log(
             `[ReportsService] Saved contributor report for ${userFullName}`,
           );
+
+          // Send email notification to contributor
+          try {
+            const frontendUrl =
+              process.env.FRONTEND_URL ||
+              process.env.CLIENT_URL ||
+              'http://localhost:3001';
+            const profileUrl = `${frontendUrl}/profile`;
+
+            await this.mailService.sendContributorReportEmail({
+              email: member.account.user.email,
+              userName: userFullName,
+              periodStart: startDate,
+              periodEnd: endDate,
+              metrics: {
+                totalCommits: memberReport.metrics.commits.total,
+                issuesFixed: memberReport.metrics.issues.fixed,
+                prsMerged: memberReport.metrics.pullRequests.merged,
+              },
+              profileUrl,
+            });
+
+            console.log(
+              `[ReportsService] Sent contributor report email to ${member.account.user.email}`,
+            );
+          } catch (error) {
+            console.error(
+              `[ReportsService] Failed to send contributor report email: ${error.message}`,
+            );
+            // Don't throw - email failure shouldn't break report generation
+          }
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : String(error);
@@ -1782,6 +1848,102 @@ export class ReportsService {
       endDate,
       reportData: report as any,
     });
+
+    // Send email notifications to team managers
+    try {
+      // Get teams linked to this repository
+      const teamRepositories = await this.prisma.teamRepository.findMany({
+        where: {
+          repository: { repositoryId: repository.repositoryId },
+          team: { organizationId },
+        },
+        include: {
+          team: {
+            include: {
+              members: {
+                include: {
+                  account: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      // Get all team member account IDs from teams linked to this repository
+      const teamMemberAccountIds = new Set<string>();
+      for (const teamRepo of teamRepositories) {
+        for (const member of teamRepo.team.members) {
+          teamMemberAccountIds.add(member.accountId);
+        }
+      }
+
+      // Get organization info
+      const organization = await this.prisma.organization.findUnique({
+        where: { id: organizationId },
+      });
+
+      const frontendUrl =
+        process.env.FRONTEND_URL ||
+        process.env.CLIENT_URL ||
+        'http://localhost:3001';
+      const projectUrl = `${frontendUrl}/repository/${repositoryId}/${organizationId}`;
+
+      // Get all MANAGER role users from OrganizationAccounts who are also members of teams linked to this repository
+      const orgManagers = await this.prisma.organizationAccounts.findMany({
+        where: {
+          organizationId,
+          role: 'MANAGER',
+          accountId: {
+            in: Array.from(teamMemberAccountIds), // Only managers who are in teams linked to the repository
+          },
+        },
+        include: {
+          account: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      });
+
+      // Send emails to managers who are in teams linked to this repository
+      for (const orgManager of orgManagers) {
+        const email = orgManager.account.user.email;
+
+        await this.mailService.sendProjectReportEmail({
+          email,
+          managerName:
+            `${orgManager.account.user.firstName} ${orgManager.account.user.lastName}`.trim(),
+          repositoryName: repository.name,
+          organizationName: organization?.name || 'Your Organization',
+          periodStart: startDate,
+          periodEnd: endDate,
+          metrics: {
+            totalCommits: report.metrics.totalCommits || 0,
+            issuesFixed: report.metrics.issuesFixed || 0,
+            issuesOpened: report.metrics.issuesOpened || 0,
+            prsMerged: report.metrics.prsMerged || 0,
+          },
+          projectUrl,
+        });
+
+        console.log(
+          `[ReportsService] Sent project report email to manager ${email} (MANAGER role in OrganizationAccounts, member of team linked to repository)`,
+        );
+      }
+
+      if (orgManagers.length === 0) {
+        console.log(
+          `[ReportsService] No managers found for repository ${repository.name} - skipping email notifications`,
+        );
+      }
+    } catch (error) {
+      console.error(
+        `[ReportsService] Failed to send project report emails: ${error.message}`,
+      );
+      // Don't throw - email failure shouldn't break report generation
+    }
 
     return report;
   }

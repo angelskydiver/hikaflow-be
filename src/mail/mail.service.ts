@@ -630,4 +630,94 @@ export class MailService {
       this.logger.error(`Test email failed: ${error.message}`, error.stack);
     }
   }
+
+  async sendContributorReportEmail(data: {
+    email: string;
+    userName: string;
+    periodStart: Date;
+    periodEnd: Date;
+    metrics: {
+      totalCommits: number;
+      issuesFixed: number;
+      prsMerged: number;
+    };
+    profileUrl: string;
+  }) {
+    try {
+      await this.sendEmailWithRetry({
+        to: data.email,
+        subject: `[Hikaflow] Your Weekly Performance Report - ${new Date(data.periodStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} to ${new Date(data.periodEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+        template: 'contributor-report-notification',
+        context: {
+          userName: data.userName,
+          periodStart: new Date(data.periodStart).toLocaleDateString('en-US', {
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+          }),
+          periodEnd: new Date(data.periodEnd).toLocaleDateString('en-US', {
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+          }),
+          totalCommits: data.metrics.totalCommits,
+          issuesFixed: data.metrics.issuesFixed,
+          prsMerged: data.metrics.prsMerged,
+          profileUrl: data.profileUrl,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to send contributor report email: ${error.message}`,
+      );
+      // Don't throw to prevent disrupting the report generation workflow
+    }
+  }
+
+  async sendProjectReportEmail(data: {
+    email: string;
+    managerName: string;
+    repositoryName: string;
+    organizationName: string;
+    periodStart: Date;
+    periodEnd: Date;
+    metrics: {
+      totalCommits: number;
+      issuesFixed: number;
+      issuesOpened: number;
+      prsMerged: number;
+    };
+    projectUrl: string;
+  }) {
+    try {
+      await this.sendEmailWithRetry({
+        to: data.email,
+        subject: `[Hikaflow] Weekly Project Report: ${data.repositoryName} - ${new Date(data.periodStart).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} to ${new Date(data.periodEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+        template: 'project-report-notification',
+        context: {
+          managerName: data.managerName,
+          repositoryName: data.repositoryName,
+          organizationName: data.organizationName,
+          periodStart: new Date(data.periodStart).toLocaleDateString('en-US', {
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+          }),
+          periodEnd: new Date(data.periodEnd).toLocaleDateString('en-US', {
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+          }),
+          totalCommits: data.metrics.totalCommits,
+          issuesFixed: data.metrics.issuesFixed,
+          issuesOpened: data.metrics.issuesOpened,
+          prsMerged: data.metrics.prsMerged,
+          projectUrl: data.projectUrl,
+        },
+      });
+    } catch (error) {
+      this.logger.error(`Failed to send project report email: ${error.message}`);
+      // Don't throw to prevent disrupting the report generation workflow
+    }
+  }
 }
