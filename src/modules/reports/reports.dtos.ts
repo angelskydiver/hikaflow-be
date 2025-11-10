@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsEnum, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsDateString,
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export enum ReportType {
   CONTRIBUTOR = 'CONTRIBUTOR',
@@ -81,6 +88,8 @@ export class GetWeeklyReportDto {
     type: Number,
   })
   @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
   skip?: number;
 
   @ApiPropertyOptional({
@@ -88,5 +97,7 @@ export class GetWeeklyReportDto {
     type: Number,
   })
   @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
   take?: number;
 }

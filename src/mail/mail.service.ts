@@ -1,12 +1,16 @@
 import { MailerService } from '@nestjs-modules/mailer';
 import { HandlebarsAdapter } from '@nestjs-modules/mailer/dist/adapters/handlebars.adapter';
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { Worker } from 'bullmq';
 import { join } from 'path';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
-export class MailService {
+export class MailService implements OnModuleDestroy {
   private readonly logger = new Logger(MailService.name);
   private paymentWorker: Worker;
 
@@ -97,8 +101,8 @@ export class MailService {
       {
         concurrency: 10,
         connection: {
-          host: 'localhost',
-          port: parseInt(process.env.REDIS_PORT),
+          host: process.env.REDIS_HOST || 'localhost',
+          port: parseInt(process.env.REDIS_PORT || '6379'),
         },
       }, // Configure the message queue connection (adjust as needed)
     );
@@ -718,6 +722,13 @@ export class MailService {
     } catch (error) {
       this.logger.error(`Failed to send project report email: ${error.message}`);
       // Don't throw to prevent disrupting the report generation workflow
+    }
+  }
+
+  async onModuleDestroy() {
+    if (this.paymentWorker) {
+      await this.paymentWorker.close();
+      this.logger.log('Payment worker closed');
     }
   }
 }

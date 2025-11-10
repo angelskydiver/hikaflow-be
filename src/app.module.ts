@@ -37,7 +37,6 @@ import { JwtStrategy } from './passport/strategies/jwt.strategy';
 import { LocalStrategy } from './passport/strategies/local.strategy';
 import { PartnerProgramLocalAuthStrategy } from './passport/strategies/partner-program.local.strategy';
 import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
-// import { UsersModule } from './users/users.module'; // Your Users module
 
 @Module({
   imports: [

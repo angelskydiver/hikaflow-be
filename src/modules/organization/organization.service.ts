@@ -245,6 +245,10 @@ export class OrganizationService {
           },
         });
 
+      if (!organizationAccount) {
+        throw new NotFoundException('Organization admin not found');
+      }
+
       const accountUser = await this._prismaService.account.findFirst({
         where: {
           id: organizationAccount.accountId,

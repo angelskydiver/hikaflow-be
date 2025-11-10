@@ -17,8 +17,14 @@ export class ImpactAnalysisLogger {
   private readonly logFile: string;
 
   private constructor() {
-    this.logDir = path.resolve(process.cwd(), 'logs');
-    this.logFile = path.resolve(this.logDir, 'impact-analysis.log');
+    this.logDir = path.resolve(
+      process.cwd(),
+      process.env.IMPACT_ANALYSIS_LOG_DIR || 'logs',
+    );
+    this.logFile = path.resolve(
+      this.logDir,
+      process.env.IMPACT_ANALYSIS_LOG_FILE || 'impact-analysis.log',
+    );
     this.ensureLogDir();
   }
 
@@ -52,8 +58,9 @@ export class ImpactAnalysisLogger {
     };
     try {
       fs.appendFileSync(this.logFile, JSON.stringify(record) + '\n', 'utf8');
-    } catch (_) {
-      // As a last resort, avoid throwing from logger
+    } catch (error) {
+      // Log to console as fallback instead of swallowing errors
+      console.error('Failed to write to log file:', error);
     }
   }
 
@@ -65,11 +72,9 @@ export class ImpactAnalysisLogger {
       if (!fs.existsSync(this.logFile)) {
         fs.writeFileSync(this.logFile, '', 'utf8');
       }
-    } catch (_) {
-      // swallow
+    } catch (error) {
+      // Log to console instead of swallowing errors
+      console.error('Failed to ensure log directory exists:', error);
     }
   }
 }
-
-
-

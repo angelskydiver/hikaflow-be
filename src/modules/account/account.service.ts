@@ -10,21 +10,27 @@ export class AccountService {
     try {
       return await this._prismaService.account.create({ data });
     } catch (error) {
-      console.log(error.message);
-      throw new BadRequestException(error.message);
+      console.error('Error creating account:', error);
+      throw new BadRequestException(
+        error.message || 'Failed to create account',
+      );
     }
   }
 
   async updateAccount(id: string, data: any) {
     try {
-      const Account = await this._prismaService.account.findFirst({
+      return await this._prismaService.account.update({
         where: { id },
+        data,
       });
-      if (!Account) throw new BadRequestException('Account not found');
-      return this._prismaService.account.update({ where: { id }, data });
     } catch (error) {
-      console.log(error.message);
-      throw new BadRequestException(error.message);
+      if (error.code === 'P2025') {
+        throw new BadRequestException('Account not found');
+      }
+      console.error(error.message);
+      throw new BadRequestException(
+        error.message || 'Failed to update account',
+      );
     }
   }
 
@@ -40,8 +46,10 @@ export class AccountService {
         orderBy: { createdAt: 'desc' },
       });
     } catch (error) {
-      console.log(error.message);
-      throw new BadRequestException(error.message);
+      console.error('Error getting Git contributor names:', error);
+      throw new BadRequestException(
+        error.message || 'Failed to get Git contributor names',
+      );
     }
   }
 
@@ -58,47 +66,47 @@ export class AccountService {
       }
       // Allow spaces and any reasonable characters (Git committer names can have spaces)
 
-      // Check if name already exists for this account (case-insensitive check)
-      const allNames = await this._prismaService.gitContributorName.findMany({
-        where: { accountId },
-        select: { name: true },
-      });
-      const existing = allNames.some(
-        (n) => n.name.toLowerCase() === trimmedName.toLowerCase(),
-      );
-
-      if (existing) {
-        throw new BadRequestException('This Git contributor name already exists');
+      // Use database-level unique constraint to prevent race conditions
+      // The unique constraint on [accountId, name] will handle duplicates
+      try {
+        return await this._prismaService.gitContributorName.create({
+          data: {
+            accountId,
+            name: trimmedName,
+          },
+        });
+      } catch (createError) {
+        if (createError.code === 'P2002') {
+          // Unique constraint violation - name already exists
+          throw new BadRequestException('This Git contributor name already exists');
+        }
+        throw createError;
       }
-
-      return await this._prismaService.gitContributorName.create({
-        data: {
-          accountId,
-          name: trimmedName,
-        },
-      });
     } catch (error) {
-      console.log(error.message);
-      throw new BadRequestException(error.message);
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      console.error(error.message);
+      throw new BadRequestException(
+        error.message || 'Failed to add Git contributor name',
+      );
     }
   }
 
   async deleteGitContributorName(id: string, accountId: string) {
     try {
-      const gitName = await this._prismaService.gitContributorName.findFirst({
+      // Use combined where clause to ensure accountId matches and handle race conditions
+      return await this._prismaService.gitContributorName.delete({
         where: { id, accountId },
       });
-
-      if (!gitName) {
+    } catch (error) {
+      if (error.code === 'P2025') {
         throw new BadRequestException('Git contributor name not found');
       }
-
-      return await this._prismaService.gitContributorName.delete({
-        where: { id },
-      });
-    } catch (error) {
-      console.log(error.message);
-      throw new BadRequestException(error.message);
+      console.error(error.message);
+      throw new BadRequestException(
+        error.message || 'Failed to delete Git contributor name',
+      );
     }
   }
 }

@@ -181,7 +181,7 @@ model UserReferral {
 model Account {
   id                  String                 @id @default(uuid())
   status              String                 @default("active")
-  subscribedPlanType  Int                    @default(1)
+  subscribedPlanType  SubscriptionPlanType   @default(TRIAL)
   tokens              Int                    @default(0)
   createdAt           DateTime               @default(now())
   updatedAt           DateTime               @updatedAt
@@ -197,12 +197,12 @@ model Account {
   // ResearchAssistant   ResearchAssistant[]
   TeamMember          TeamMember[]
   reports             WeeklyReport[]
-  gitContributorNames GitContributorName[]  // Multiple Git contributor names for matching commits
+  gitContributorNames GitContributorName[] // Multiple Git contributor names for matching commits
 }
 
 model GitContributorName {
   id        String   @id @default(uuid())
-  name      String   // Git contributor name
+  name      String // Git contributor name
   accountId String
   account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
@@ -611,28 +611,6 @@ model FileDocumentation {
   createdAt        DateTime                    @default(now())
   updatedAt        DateTime                    @updatedAt
 }
-
-// model FileDocumentation {
-//   id               String         @id @default(uuid())
-//   name             String // File name
-//   fullPath         String // Full file path
-//   imports          String[]       @default([]) // List of imported files
-//   exports          String[]       @default([]) // List of exported files
-//   functions        Json           @default("{}") // Hierarchical function structure
-//   classes          Json           @default("{}") // Hierarchical class structure
-//   components       Json           @default("[]") // Hierarchical function structure
-//   fileType         String[]       @default([]) // Enum-based file classification
-//   summary          String         @default("") // AI-generated file summary
-//   repositoryId     String // Link to the repository
-//   repositoryScanId String // Link to the repository scan
-//   summaryEmbedding Json? // Store embeddings as JSON array for compatibility
-//   repositoryScan   RepositoryScan @relation(fields: [repositoryScanId], references: [id], onDelete: Cascade)
-//   repository       Repository     @relation(fields: [repositoryId], references: [id])
-//   createdAt        DateTime       @default(now())
-//   updatedAt        DateTime       @updatedAt
-
-//   @@map("FileDocumentation")
-// }
 
 model RepositoryScan {
   id                String     @id @default(uuid())

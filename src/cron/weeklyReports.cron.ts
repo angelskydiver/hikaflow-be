@@ -217,12 +217,13 @@ export class WeeklyReportsCronService {
           );
 
           // Get all accounts that have Git contributor names and are part of this organization
-          const accountsWithGitNames = await this.prisma.gitContributorName.findMany({
-            select: {
-              accountId: true,
-            },
-            distinct: ['accountId'],
-          });
+          const accountsWithGitNames =
+            await this.prisma.gitContributorName.findMany({
+              select: {
+                accountId: true,
+              },
+              distinct: ['accountId'],
+            });
 
           // Get accounts that are members of this organization
           const orgAccounts = await this.prisma.organizationAccounts.findMany({

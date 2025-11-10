@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -27,6 +28,9 @@ export class OrganizationController {
     @Body() data: CreateOrganizationRequestDto,
     @Request() req: any,
   ) {
+    if (!req.user || !req.user.accountId) {
+      throw new BadRequestException('Unauthorized');
+    }
     return await this._organizationService.createOrganization(
       data,
       req.user.accountId,
@@ -35,7 +39,7 @@ export class OrganizationController {
 
   @ApiBearerAuth()
   @Get('isExist')
-  async OrganizationExist(@Request() req: any) {
+  async organizationExist(@Request() req: any) {
     return await this._organizationService.organizationExist(
       req.user.accountId,
     );
@@ -43,13 +47,15 @@ export class OrganizationController {
 
   @Public()
   @Get('info/:id')
-  async OrganizationInfo(@Param('id') id: string) {
+  // TODO: Add rate limiting to this public endpoint using @nestjs/throttler
+  // Example: @Throttle(10, 60) // 10 requests per 60 seconds
+  async organizationInfo(@Param('id') id: string) {
     return await this._organizationService.organizationInfo(id);
   }
 
   @ApiBearerAuth()
   @Post('accept/invitation/:id')
-  async AcceptInvitation(@Param('id') id: string, @Request() req: any) {
+  async acceptInvitation(@Param('id') id: string, @Request() req: any) {
     return await this._organizationService.acceptInvitation(
       id,
       req.user.accountId,
@@ -58,7 +64,7 @@ export class OrganizationController {
 
   @ApiBearerAuth()
   @Get('/invitations/:orgId')
-  async GetOrganizationInvitations(
+  async getOrganizationInvitations(
     @Param('orgId') orgId: string,
     @Request() req: any,
   ) {
@@ -82,7 +88,7 @@ export class OrganizationController {
 
   @ApiBearerAuth()
   @Post('invite/user')
-  async InviteUserToOrganization(
+  async inviteUserToOrganization(
     @Body() data: InviteUserToOrganizationRequestDTO,
     @Request() req: any,
   ) {

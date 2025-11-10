@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -22,6 +23,8 @@ import {
   ReportType,
 } from './reports.dtos';
 import { ReportsService } from './reports.service';
+
+const DEFAULT_REPORT_LIMIT = 10;
 
 @ApiTags('Reports')
 @Controller('reports')
@@ -88,7 +91,7 @@ export class ReportsController {
     @Query('organizationId') organizationId?: string,
   ) {
     if (!organizationId) {
-      throw new Error('organizationId required');
+      throw new BadRequestException('organizationId required');
     }
     const dto: GetWeeklyReportDto = {
       reportType: ReportType.TEAM,
@@ -122,7 +125,7 @@ export class ReportsController {
     @Query('take') take?: string,
   ) {
     if (!organizationId) {
-      throw new Error('organizationId required');
+      throw new BadRequestException('organizationId required');
     }
     const dto: GetWeeklyReportDto = {
       reportType: ReportType.CONTRIBUTOR,
@@ -200,7 +203,7 @@ export class ReportsController {
 
     // Otherwise, use the existing logic
     if (!organizationId) {
-      throw new Error('organizationId required');
+      throw new BadRequestException('organizationId required');
     }
     const dto: GetWeeklyReportDto = {
       reportType: ReportType.PROJECT,
@@ -274,22 +277,25 @@ export class ReportsController {
       teamId,
       accountId,
       repositoryId,
-      limit ? parseInt(limit) : 10,
+      limit ? parseInt(limit) : DEFAULT_REPORT_LIMIT,
     );
   }
 
   /**
-   * Public route to manually trigger weekly reports cron job for testing
-   * This route is public so it can be called locally without authentication
+   * Route to manually trigger weekly reports cron job for testing
+   * Only available in development environment
    */
-  @Public()
   @Post('cron/generate-weekly-reports')
   @ApiOperation({
     summary: 'Manually trigger weekly reports generation (for testing)',
     description:
-      'Public endpoint to test the weekly reports cron job. Generates reports for all organizations for the previous week.',
+      'Endpoint to test the weekly reports cron job. Only available in development. Generates reports for all organizations for the previous week.',
   })
   async triggerWeeklyReportsCron() {
+    // Only allow in development environment
+    if (process.env.NODE_ENV !== 'development') {
+      throw new BadRequestException('This endpoint is only available in development');
+    }
     try {
       const { WeeklyReportsCronService } = await import(
         '../../cron/weeklyReports.cron'

@@ -37,6 +37,9 @@ export class AccountController {
     @Request() req: any,
   ) {
     // Verify the account belongs to the requesting user
+    if (!req.user || !req.user.accountId) {
+      throw new ForbiddenException('Unauthorized');
+    }
     const userAccountId = req.user.accountId;
     if (accountId !== userAccountId) {
       throw new ForbiddenException('Unauthorized');
@@ -67,6 +70,9 @@ export class AccountController {
     @Request() req: any,
   ) {
     // Verify the account belongs to the requesting user
+    if (!req.user || !req.user.accountId) {
+      throw new ForbiddenException('Unauthorized');
+    }
     const userAccountId = req.user.accountId;
     if (accountId !== userAccountId) {
       throw new ForbiddenException('Unauthorized');
@@ -105,6 +111,9 @@ export class AccountController {
     @Request() req: any,
   ) {
     // Verify the account belongs to the requesting user
+    if (!req.user || !req.user.accountId) {
+      throw new ForbiddenException('Unauthorized');
+    }
     const userAccountId = req.user.accountId;
     if (accountId !== userAccountId) {
       throw new ForbiddenException('Unauthorized');

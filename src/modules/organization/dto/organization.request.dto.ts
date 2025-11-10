@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsArray,
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 import { OrganizationalAccountRole } from './../../../../node_modules/.prisma/client/index.d';
 
 export class CreateOrganizationRequestDto {
@@ -14,28 +22,47 @@ export class CreateOrganizationRequestDto {
   description: string;
 }
 
+export class InviteUserDTO {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  @IsEmail()
+  email: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  role: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  teamId?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  organizationRoleId?: string;
+}
+
 export class InviteUserToOrganizationRequestDTO {
   @ApiProperty()
   @IsString()
   @IsNotEmpty()
   organizationId: string;
 
-  @ApiProperty({ type: [Object] })
+  @ApiProperty({ type: [InviteUserDTO] })
   @IsArray()
-  users: {
-    email: string;
-    name: string;
-    role: string;
-    teamId?: string;
-    organizationRoleId?: string;
-  }[];
+  @ValidateNested({ each: true })
+  @Type(() => InviteUserDTO)
+  users: InviteUserDTO[];
 }
 
-export class InviteUserDTO {
-  name: string;
-  email: string;
-  role: OrganizationalAccountRole;
-}
 
 export class OrganizationInsightsQueryDto {
   @ApiPropertyOptional()
