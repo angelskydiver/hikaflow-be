@@ -197,6 +197,19 @@ model Account {
   // ResearchAssistant   ResearchAssistant[]
   TeamMember          TeamMember[]
   reports             WeeklyReport[]
+  gitContributorNames GitContributorName[]  // Multiple Git contributor names for matching commits
+}
+
+model GitContributorName {
+  id        String   @id @default(uuid())
+  name      String   // Git contributor name
+  accountId String
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([accountId, name]) // Prevent duplicate names for same account
+  @@map("git_contributor_names")
 }
 
 model Organization {

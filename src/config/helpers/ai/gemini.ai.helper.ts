@@ -2037,6 +2037,8 @@ ${JSON.stringify(groupedChanges)}
       issues: {
         fixed: number;
         opened: number;
+        stillOpen: number;
+        closed: number;
         categories: { [category: string]: number };
         avgResolutionTime: number;
       };
@@ -2080,11 +2082,13 @@ Analyze the following contributor's weekly performance metrics and provide 3-5 k
 - Total Modules Worked On: ${metrics.modules.all.length}
 - Module Distribution: ${JSON.stringify(metrics.modules.all.slice(0, 5).map((m) => `${m.name} (${m.commits} commits, ${m.changes} changes)`))}
 
-### Issue Resolution:
-- Issues Fixed: ${metrics.issues.fixed}
-- Issues Opened: ${metrics.issues.opened}
+### Issue Management (Hikaflow Usage):
+- Issues Fixed/Closed: ${metrics.issues.fixed}
+- Issues Opened This Week: ${metrics.issues.opened}
+- Issues Still Open: ${metrics.issues.stillOpen}
 - Average Resolution Time: ${metrics.issues.avgResolutionTime.toFixed(1)} hours
 - Issue Categories: ${JSON.stringify(metrics.issues.categories)}
+- **Hikaflow Engagement:** ${metrics.issues.fixed + metrics.issues.opened > 0 ? '✅ Active' : '⚠️ Low - Consider using Hikaflow for issue tracking'}
 
 ### Pull Request Activity:
 - PRs Created: ${metrics.pullRequests.created}
@@ -2104,6 +2108,7 @@ Analyze the following contributor's weekly performance metrics and provide 3-5 k
 4. Note any concerning trends or risks
 5. Be specific with numbers when relevant
 6. Focus on what matters to engineering leadership (velocity, quality, collaboration, growth)
+7. **IMPORTANT:** If issue tracking is low (few or no issues opened/fixed), encourage active use of Hikaflow for tracking bugs, technical debt, and improvements - this is critical for team visibility and process improvement
 
 ## Output Format:
 Return a JSON array of insight strings:
@@ -2173,6 +2178,8 @@ Return a JSON array of insight strings:
       issues: {
         fixed: number;
         opened: number;
+        stillOpen: number;
+        closed: number;
         avgResolutionTime: number;
       };
       pullRequests: {
@@ -2215,11 +2222,13 @@ Analyze the contributor's metrics and provide 3-5 specific, actionable improveme
 - Primary Modules: ${metrics.modules.primary.join(', ') || 'None'}
 - Total Modules: ${metrics.modules.all.length}
 
-### Issue Management:
-- Issues Fixed: ${metrics.issues.fixed}
-- Issues Opened: ${metrics.issues.opened}
+### Issue Management (Hikaflow Platform):
+- Issues Fixed/Closed: ${metrics.issues.fixed}
+- Issues Opened This Week: ${metrics.issues.opened}
+- Issues Still Open: ${metrics.issues.stillOpen}
 - Net Impact: ${metrics.issues.fixed - metrics.issues.opened}
 - Avg Resolution Time: ${metrics.issues.avgResolutionTime.toFixed(1)} hours
+- **Hikaflow Engagement:** ${metrics.issues.fixed + metrics.issues.opened > 0 ? 'Active ✅' : 'Low ⚠️ - Encourage use of Hikaflow for tracking'}
 
 ### Collaboration:
 - PRs Created: ${metrics.pullRequests.created}
@@ -2239,6 +2248,11 @@ Analyze the contributor's metrics and provide 3-5 specific, actionable improveme
 4. Reference specific metrics when relevant
 5. Suggest concrete actions (not vague advice)
 6. Consider role-appropriate expectations
+7. **CRITICAL:** If issue tracking is low or zero (0 issues opened/fixed), STRONGLY encourage using Hikaflow to track bugs, technical debt, code improvements, and feature requests. Emphasize that issue tracking is essential for:
+   - Team visibility into problems and improvements
+   - Better project planning and prioritization
+   - Demonstrating proactive problem-solving
+   - Creating a culture of continuous improvement
 
 ## Output Format:
 Return a JSON object with suggestions array:

@@ -27,6 +27,8 @@ export interface ContributorMetrics {
   issues: {
     fixed: number;
     opened: number;
+    stillOpen: number; // Issues that remain open at the end of the period
+    closed: number; // Issues closed during the period (fixed + resolved)
     categories: { [category: string]: number };
     avgResolutionTime: number;
   };
@@ -176,10 +178,29 @@ export class ReportsService {
       throw new NotFoundException('Account not found');
     }
 
+    // Get all Git contributor names for this account
+    const gitContributorNames = await this.prisma.gitContributorName.findMany({
+      where: { accountId },
+      select: { name: true },
+    });
+
+    // Check if any gitContributorName is set - required for generating contributor reports
+    if (!gitContributorNames || gitContributorNames.length === 0) {
+      console.warn(
+        `[ReportsService] Account ${accountId} does not have any Git contributor names set. Skipping contributor report generation.`,
+      );
+      throw new BadRequestException(
+        'Git contributor name is required to generate personal contribution reports. Please add your Git contributor name in your profile settings.',
+      );
+    }
+
     // Get user full name for matching
     const userFullName =
       `${account.user.firstName} ${account.user.lastName}`.trim();
     const userEmail = account.user.email;
+    const gitContributorNameList = gitContributorNames.map((n) =>
+      n.name.trim(),
+    );
 
     console.log(
       `[ReportsService] Processing contributor: ${userFullName} (${userEmail})`,
@@ -287,6 +308,8 @@ export class ReportsService {
           issues: {
             fixed: 0,
             opened: 0,
+            stillOpen: 0,
+            closed: 0,
             categories: {},
             avgResolutionTime: 0,
           },
@@ -307,24 +330,27 @@ export class ReportsService {
       };
     }
 
-    // Track last 15 days of activity (extend startDate for better tracking)
-    const activityStartDate = new Date(startDate);
-    activityStartDate.setDate(activityStartDate.getDate() - 15);
+    // Fetch commits by this contributor strictly within the period
+    // Match by any of the gitContributorNames (primary) or user full name (fallback)
+    const committerMatchConditions = [
+      { committer: userFullName }, // Fallback: match by full name
+      { committer: { contains: account.user.firstName } }, // Fallback: partial match by first name
+      { committer: { contains: account.user.lastName } }, // Fallback: partial match by last name
+    ];
 
-    console.log(
-      `[ReportsService] Tracking commits from ${activityStartDate.toISOString()} to ${endDate.toISOString()} (15-day extended window)`,
-    );
+    // Add conditions for each Git contributor name
+    gitContributorNameList.forEach((name) => {
+      committerMatchConditions.push(
+        { committer: name }, // Exact match
+        { committer: { contains: name } }, // Partial match
+      );
+    });
 
-    // Fetch commits by this contributor (use extended window for activity tracking)
     const commits = await this.prisma.commitSummary.findMany({
       where: {
         repositoryId: { in: allRepositoryIds },
-        createdAt: { gte: activityStartDate, lte: endDate },
-        OR: [
-          { committer: userFullName },
-          { committer: { contains: account.user.firstName } },
-          { committer: { contains: account.user.lastName } },
-        ],
+        createdAt: { gte: startDate, lte: endDate },
+        OR: committerMatchConditions,
       },
       include: {
         report: {
@@ -372,58 +398,12 @@ export class ReportsService {
       .sort((a, b) => b.commits - a.commits);
     const primaryModules = modules.slice(0, 3).map((m) => m.name);
 
-    // Get issues fixed (status changed to OUTDATED)
-    console.log('comments where: ', {
-      repositoryId: { in: allRepositoryIds },
-      type: CommentType.ISSUE,
-      status: CommentStatus.OUTDATED,
-      updatedAt: { gte: startDate, lte: endDate },
-    });
-    const fixedIssues = await this.prisma.comment.findMany({
-      where: {
-        repositoryId: { in: allRepositoryIds },
-        type: CommentType.ISSUE,
-        status: CommentStatus.OUTDATED,
-        updatedAt: { gte: startDate, lte: endDate },
-      },
-    });
-
-    console.log('fixedIssues', fixedIssues);
-
-    // Get issues opened
-    const openedIssues = await this.prisma.comment.findMany({
-      where: {
-        repositoryId: { in: allRepositoryIds },
-        type: CommentType.ISSUE,
-        status: CommentStatus.OPEN,
-        createdAt: { gte: startDate, lte: endDate },
-      },
-    });
-
-    console.log('openedIssues', openedIssues);
-
-    // Categorize issues
-    const issueCategories: { [key: string]: number } = {};
-    fixedIssues.forEach((issue) => {
-      const category = issue.issueCategory || 'Other';
-      issueCategories[category] = (issueCategories[category] || 0) + 1;
-    });
-
-    // Calculate average resolution time (simplified - using updatedAt - createdAt)
-    const resolvedIssuesWithTime = fixedIssues.filter((issue) => {
-      const resolutionTime =
-        issue.updatedAt.getTime() - issue.createdAt.getTime();
-      return resolutionTime > 0;
-    });
-
-    const avgResolutionTime =
-      resolvedIssuesWithTime.length > 0
-        ? resolvedIssuesWithTime.reduce((sum, issue) => {
-            const resolutionTime =
-              issue.updatedAt.getTime() - issue.createdAt.getTime();
-            return sum + resolutionTime / (1000 * 60 * 60); // Convert to hours
-          }, 0) / resolvedIssuesWithTime.length
-        : 0;
+    // Prepare issue categorization helpers
+    let fixedIssues: Array<any> = [];
+    let openedIssues: Array<any> = [];
+    let stillOpenIssues: Array<any> = [];
+    let issueCategories: { [key: string]: number } = {};
+    let avgResolutionTime = 0;
 
     // Find PRs from commits via ExecutiveReport relationship
     const commitsWithReports = commits.filter((c) => c.reportId);
@@ -464,13 +444,79 @@ export class ReportsService {
 
     const prIds = relatedPRs.map((pr) => pr.id);
 
-    // Get PRs created (commits that have reports = PRs created)
-    const prsCreated = uniqueReportIds.length;
+    // After determining PRs touched by this contributor in period, load issues tied to these PRs
+    fixedIssues = await this.prisma.comment.findMany({
+      where: {
+        repositoryId: { in: allRepositoryIds },
+        type: CommentType.PULL_REQUEST,
+        status: CommentStatus.OUTDATED,
+        prId: { in: prIds },
+        updatedAt: { gte: startDate, lte: endDate },
+      },
+    });
 
-    // Get PRs merged (commits that are merged and have reports)
-    const prsMerged = commitsWithReports.filter((c) => c.isMerged).length;
+    openedIssues = await this.prisma.comment.findMany({
+      where: {
+        repositoryId: { in: allRepositoryIds },
+        type: CommentType.PULL_REQUEST,
+        status: CommentStatus.OPEN,
+        prId: { in: prIds },
+        createdAt: { gte: startDate, lte: endDate },
+      },
+    });
 
-    // Get PRs reviewed (PRs where contributor commented)
+    stillOpenIssues = await this.prisma.comment.findMany({
+      where: {
+        repositoryId: { in: allRepositoryIds },
+        type: CommentType.PULL_REQUEST,
+        status: CommentStatus.OPEN,
+        prId: { in: prIds },
+        createdAt: { lte: endDate },
+      },
+    });
+
+    // Categorize issues
+    issueCategories = {};
+    fixedIssues.forEach((issue) => {
+      const category = issue.issueCategory || 'Other';
+      issueCategories[category] = (issueCategories[category] || 0) + 1;
+    });
+
+    // Calculate average resolution time (simplified - using updatedAt - createdAt)
+    const resolvedIssuesWithTime = fixedIssues.filter((issue) => {
+      const resolutionTime =
+        issue.updatedAt.getTime() - issue.createdAt.getTime();
+      return resolutionTime > 0;
+    });
+
+    avgResolutionTime =
+      resolvedIssuesWithTime.length > 0
+        ? resolvedIssuesWithTime.reduce((sum, issue) => {
+            const resolutionTime =
+              issue.updatedAt.getTime() - issue.createdAt.getTime();
+            return sum + resolutionTime / (1000 * 60 * 60); // Convert to hours
+          }, 0) / resolvedIssuesWithTime.length
+        : 0;
+
+    // Get PRs created by this contributor: not tracked (no author field) -> 0 to avoid over-counting
+    const prsCreated = 0;
+
+    // Get PRs merged (PR numbers with at least one merged commit by this contributor in the period)
+    const mergedPRNumberSet = new Set<number>();
+    commitsWithReports.forEach((c) => {
+      if (c.isMerged && c.report?.prNumber) {
+        mergedPRNumberSet.add(c.report.prNumber);
+      }
+    });
+    const prsMerged = mergedPRNumberSet.size;
+    // Open PRs touched by the contributor in this period (created any time)
+    const distinctTouchedPRNumbers = new Set<number>(prNumbers);
+    const prsOpen = Math.max(
+      distinctTouchedPRNumbers.size - mergedPRNumberSet.size,
+      0,
+    );
+
+    // Get PRs reviewed (PRs where contributor commented) - limited to PRs touched by contributor
     // Comment.prId stores PullRequest.id (UUID), not prNumber
     const prsReviewed = await this.prisma.comment.findMany({
       where: {
@@ -521,6 +567,8 @@ export class ReportsService {
       issues: {
         fixed: fixedIssues.length,
         opened: openedIssues.length,
+        stillOpen: stillOpenIssues.length,
+        closed: fixedIssues.length, // Fixed issues are considered closed
         categories: issueCategories,
         avgResolutionTime: Math.round(avgResolutionTime * 10) / 10,
       },
@@ -667,6 +715,16 @@ export class ReportsService {
       },
     });
 
+    // Get issues that are still open (created before or during period, still open at end)
+    const stillOpenIssues = await this.prisma.comment.findMany({
+      where: {
+        repositoryId: { in: repositoryIds },
+        type: CommentType.ISSUE,
+        status: CommentStatus.OPEN,
+        createdAt: { lte: endDate }, // Created before or during period
+      },
+    });
+
     // Categorize issues
     const issueCategories: { [key: string]: number } = {};
     fixedIssues.forEach((issue) => {
@@ -772,6 +830,8 @@ export class ReportsService {
       issues: {
         fixed: fixedIssues.length,
         opened: openedIssues.length,
+        stillOpen: stillOpenIssues.length,
+        closed: fixedIssues.length,
         categories: issueCategories,
         avgResolutionTime,
       },
@@ -1005,13 +1065,37 @@ export class ReportsService {
       const userFullName =
         `${member.account.user.firstName} ${member.account.user.lastName}`.trim();
 
+      // Get all Git contributor names for this member
+      const memberGitNames = await this.prisma.gitContributorName.findMany({
+        where: { accountId: member.accountId },
+        select: { name: true },
+      });
+
+      // Skip members without any gitContributorName set
+      if (!memberGitNames || memberGitNames.length === 0) {
+        console.log(
+          `[ReportsService] Skipping member ${userFullName} - no Git contributor names set`,
+        );
+        continue;
+      }
+
+      const memberGitNameList = memberGitNames.map((n) => n.name.trim());
+
       // Find commits by this contributor
-      const memberCommits = allTeamCommits.filter(
-        (c) =>
+      // Primary: match by any gitContributorName, fallback to name matching
+      const memberCommits = allTeamCommits.filter((c) => {
+        // Check against all Git contributor names
+        const matchesGitName = memberGitNameList.some(
+          (name) => c.committer === name || c.committer.includes(name),
+        );
+        // Fallback to name matching
+        const matchesName =
           c.committer === userFullName ||
           c.committer.includes(member.account.user.firstName) ||
-          c.committer.includes(member.account.user.lastName),
-      );
+          c.committer.includes(member.account.user.lastName);
+
+        return matchesGitName || matchesName;
+      });
 
       if (memberCommits.length > 0) {
         console.log(
@@ -1196,7 +1280,7 @@ export class ReportsService {
     // Get issues fixed in period (only within the actual period)
     console.log('comments where: ', {
       repositoryId: repository.repositoryId,
-      type: CommentType.PULL_REQUEST,
+      type: CommentType.ISSUE,
       status: CommentStatus.OUTDATED,
       updatedAt: { gte: startDate, lte: endDate },
     });
@@ -1213,18 +1297,29 @@ export class ReportsService {
     console.log('fixedIssues: ', fixedIssues);
 
     // Get issues opened during the report period only
-    const openIssues = await this.prisma.comment.findMany({
+    const openedIssues = await this.prisma.comment.findMany({
       where: {
         repositoryId: repository.repositoryId,
-        type: CommentType.PULL_REQUEST,
+        type: CommentType.ISSUE,
         status: CommentStatus.OPEN,
         createdAt: { gte: startDate, lte: endDate },
       },
     });
-    console.log('openIssues (opened in period): ', openIssues);
+    console.log('openedIssues (opened in period): ', openedIssues);
+
+    // Get issues that are still open (created before or during period, still open at end)
+    const stillOpenIssues = await this.prisma.comment.findMany({
+      where: {
+        repositoryId: repository.repositoryId,
+        type: CommentType.ISSUE,
+        status: CommentStatus.OPEN,
+        createdAt: { lte: endDate }, // Created before or during period
+      },
+    });
+    console.log('stillOpenIssues: ', stillOpenIssues.length);
 
     console.log(
-      `[ReportsService] Found ${fixedIssues.length} fixed issues and ${openIssues.length} open issues`,
+      `[ReportsService] Found ${fixedIssues.length} fixed issues, ${openedIssues.length} opened in period, and ${stillOpenIssues.length} still open`,
     );
 
     // Get PRs created in period
@@ -1505,6 +1600,8 @@ export class ReportsService {
             issues: {
               fixed: 0, // Can't reliably attribute issues to specific committers
               opened: 0,
+              stillOpen: 0,
+              closed: 0,
               categories: {},
               avgResolutionTime: 0,
             },
@@ -1607,8 +1704,10 @@ export class ReportsService {
           deletions: commits.reduce((sum, c) => sum + c.deletions, 0),
         },
         issuesFixed: fixedIssues.length,
-        issuesOpened: openIssues.length,
-        openIssuesBacklog: openIssues.length, // Only count issues opened during the report period
+        issuesOpened: openedIssues.length,
+        issuesStillOpen: stillOpenIssues.length,
+        issuesClosed: fixedIssues.length, // Fixed issues are considered closed
+        openIssuesBacklog: stillOpenIssues.length, // Total open issues at end of period
         pullRequests: prs.length,
         prsOpen: openPRs,
         prsMerged: mergedPRs,
@@ -1628,7 +1727,7 @@ export class ReportsService {
             mergedCommits: commits.filter((c) => c.isMerged).length,
             openCommits: commits.filter((c) => !c.isMerged).length,
             issuesFixed: fixedIssues.length,
-            openIssues: openIssues.length,
+            openIssues: openedIssues.length, // Use openIssues for AI compatibility
             prsOpen: openPRs,
             prsMerged: mergedPRs,
             modules: Array.from(allModules.entries())
@@ -1643,7 +1742,7 @@ export class ReportsService {
           this.generateFallbackProjectInsights({
             commits: commits.length,
             issuesFixed: fixedIssues.length,
-            openIssues: openIssues.length,
+            openIssues: openedIssues.length, // Use openIssues for AI compatibility
             modules: Array.from(allModules.entries())
               .slice(0, 5)
               .map(([name]) => name),
@@ -1654,7 +1753,7 @@ export class ReportsService {
         .generateProjectRecommendations(
           {
             issuesFixed: fixedIssues.length,
-            openIssues: openIssues.length,
+            openIssues: openedIssues.length, // Use openIssues for AI compatibility
             commits: commits.length,
             prsOpen: openPRs,
             prsMerged: mergedPRs,
@@ -1667,7 +1766,7 @@ export class ReportsService {
         .catch(() =>
           this.generateFallbackProjectRecommendations({
             issuesFixed: fixedIssues.length,
-            openIssues: openIssues.length,
+            openIssues: openedIssues.length, // Use openIssues for AI compatibility
             modules: Array.from(allModules.entries())
               .slice(0, 5)
               .map(([name]) => name),
@@ -2581,6 +2680,7 @@ export class ReportsService {
       id: report.id,
       periodStart: report.periodStart,
       periodEnd: report.periodEnd,
+      reportType: report.reportType, // Include reportType so frontend knows what type of report this is
     };
   }
 
@@ -2633,11 +2733,14 @@ export class ReportsService {
       periodStart: Date;
       periodEnd: Date;
       duration: number; // Duration in days
+      createdAt: Date; // When the report was created
       metrics?: {
         totalCommits?: number;
         prsMerged?: number;
         issuesFixed?: number;
+        openIssues?: number;
         topModule?: string;
+        codeQualityScore?: number;
       };
     }>;
     total: number;
@@ -2679,6 +2782,7 @@ export class ReportsService {
         periodStart: true,
         periodEnd: true,
         reportData: true, // Include reportData to extract metrics
+        createdAt: true, // Include createdAt for display
       },
       orderBy: { periodStart: 'desc' },
       skip,
@@ -2698,7 +2802,9 @@ export class ReportsService {
         totalCommits?: number;
         prsMerged?: number;
         issuesFixed?: number;
+        openIssues?: number;
         topModule?: string;
+        codeQualityScore?: number;
       } = {};
 
       try {
@@ -2708,23 +2814,69 @@ export class ReportsService {
             : report.reportData;
 
         if (reportData && reportData.metrics) {
+          // Handle different report structures
+          const m = reportData.metrics;
+
+          // Extract totalCommits (different structure for contributor vs project reports)
+          const totalCommits = m.commits?.total || m.totalCommits || 0;
+
+          // Extract prsMerged (handle both object and number formats)
+          let prsMerged = 0;
+          if (typeof m.pullRequests === 'object' && m.pullRequests !== null) {
+            prsMerged = m.pullRequests.merged || 0;
+          } else if (typeof m.prsMerged === 'object' && m.prsMerged !== null) {
+            prsMerged = m.prsMerged.merged || 0;
+          } else {
+            prsMerged = m.pullRequests || m.prsMerged || 0;
+          }
+
+          // Extract issuesFixed (different structure for contributor vs project reports)
+          const issuesFixed = m.issues?.fixed || m.issuesFixed || 0;
+          const openIssues = m.issues?.opened ?? m.openIssues ?? 0;
+
+          // Extract topModule (handle both array formats)
+          let topModule: string | undefined;
+          if (
+            m.modules?.primary &&
+            Array.isArray(m.modules.primary) &&
+            m.modules.primary.length > 0
+          ) {
+            topModule = m.modules.primary[0];
+          } else if (
+            m.modules?.all &&
+            Array.isArray(m.modules.all) &&
+            m.modules.all.length > 0
+          ) {
+            topModule = m.modules.all[0].name || m.modules.all[0];
+          } else if (Array.isArray(m.modules) && m.modules.length > 0) {
+            topModule =
+              typeof m.modules[0] === 'string'
+                ? m.modules[0]
+                : m.modules[0].name;
+          }
+
+          // Simple code quality score for table view if available
+          let codeQualityScore: number | undefined;
+          if (m.codeQuality) {
+            const cq = m.codeQuality;
+            codeQualityScore =
+              (cq.commentsAddressed || 0) +
+              (cq.securityFixes || 0) +
+              (cq.codeSmellFixes || 0);
+          }
+
           metrics = {
-            totalCommits: reportData.metrics.totalCommits || 0,
-            prsMerged:
-              reportData.metrics.pullRequests ||
-              reportData.metrics.prsMerged ||
-              0,
-            issuesFixed: reportData.metrics.issuesFixed || 0,
-            topModule:
-              reportData.metrics.modules &&
-              reportData.metrics.modules.length > 0
-                ? reportData.metrics.modules[0].name
-                : undefined,
+            totalCommits,
+            prsMerged,
+            issuesFixed,
+            openIssues,
+            topModule,
+            codeQualityScore,
           };
         }
       } catch (error) {
         // If parsing fails, metrics remain empty
-        console.warn('Failed to parse reportData for report', report.id);
+        console.warn('Failed to parse reportData for report', report.id, error);
       }
 
       return {
@@ -2733,6 +2885,7 @@ export class ReportsService {
         periodEnd: report.periodEnd,
         duration,
         metrics,
+        createdAt: report.createdAt || report.periodEnd, // Use actual createdAt if available
       };
     });
 

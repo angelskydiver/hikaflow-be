@@ -22,6 +22,15 @@ export class CreateUserRequestDto {
   @IsOptional()
   @IsString()
   partnerId?: string;
+
+  @ApiProperty({
+    example: 'john-doe',
+    description: 'Git contributor name (username used in git commits). Optional - can be set later in profile.',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  gitContributorName?: string;
 }
 
 export class LoginRequestDto {

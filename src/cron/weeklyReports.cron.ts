@@ -211,6 +211,68 @@ export class WeeklyReportsCronService {
             `  📊 Project Reports: ${projectReportsSuccess}/${repositories.length} success, ${projectReportsFailed} failed`,
           );
 
+          // Generate contributor reports for all accounts with Git contributor names
+          console.log(
+            `👤 Generating contributor reports for users in ${org.name}`,
+          );
+
+          // Get all accounts that have Git contributor names and are part of this organization
+          const accountsWithGitNames = await this.prisma.gitContributorName.findMany({
+            select: {
+              accountId: true,
+            },
+            distinct: ['accountId'],
+          });
+
+          // Get accounts that are members of this organization
+          const orgAccounts = await this.prisma.organizationAccounts.findMany({
+            where: {
+              organizationId: org.id,
+            },
+            select: {
+              accountId: true,
+            },
+          });
+
+          const orgAccountIds = new Set(orgAccounts.map((oa) => oa.accountId));
+          const validAccountIds = accountsWithGitNames
+            .map((g) => g.accountId)
+            .filter((id) => orgAccountIds.has(id));
+
+          console.log(
+            `  Found ${validAccountIds.length} accounts with Git contributor names in ${org.name}`,
+          );
+
+          let contributorReportsSuccess = 0;
+          let contributorReportsFailed = 0;
+
+          for (const accountId of validAccountIds) {
+            try {
+              await this.reportsService.generateWeeklyReport(
+                {
+                  reportType: ReportType.CONTRIBUTOR,
+                  organizationId: org.id,
+                  accountId: accountId,
+                  startDate: startDate.toISOString(),
+                  endDate: endDate.toISOString(),
+                },
+                accountId, // Use the account's own ID for authorization
+              );
+              contributorReportsSuccess++;
+            } catch (error) {
+              contributorReportsFailed++;
+              const errorMessage =
+                error instanceof Error ? error.message : String(error);
+              console.warn(
+                `  ⚠️  Failed to generate contributor report for account ${accountId}: ${errorMessage}`,
+              );
+            }
+          }
+
+          console.log(
+            `  👤 Contributor Reports: ${contributorReportsSuccess}/${validAccountIds.length} success, ${contributorReportsFailed} failed`,
+          );
+
           successCount++;
           console.log(`✅ Successfully generated all reports for ${org.name}`);
         } catch (error) {

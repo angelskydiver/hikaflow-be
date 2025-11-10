@@ -101,11 +101,25 @@ export class ReportsController {
 
   @ApiBearerAuth()
   @Get('contributor/:accountId/weekly')
+  @ApiQuery({
+    name: 'skip',
+    required: false,
+    type: Number,
+    description: 'Skip number of records for pagination',
+  })
+  @ApiQuery({
+    name: 'take',
+    required: false,
+    type: Number,
+    description: 'Take number of records for pagination',
+  })
   async getContributorWeeklyReport(
     @Param('accountId') accountId: string,
     @Request() req: any,
     @Query('startDate') startDate?: string,
     @Query('organizationId') organizationId?: string,
+    @Query('skip') skip?: string,
+    @Query('take') take?: string,
   ) {
     if (!organizationId) {
       throw new Error('organizationId required');
@@ -116,6 +130,23 @@ export class ReportsController {
       organizationId,
       startDate,
     };
+
+    // Convert string query params to numbers if provided
+    if (skip) {
+      dto.skip = typeof skip === 'string' ? parseInt(skip, 10) : skip;
+    }
+    if (take) {
+      dto.take = typeof take === 'string' ? parseInt(take, 10) : take;
+    }
+
+    // If no startDate provided, return list of available reports
+    if (!startDate) {
+      return await this.reportsService.listWeeklyReports(
+        dto,
+        req.user.accountId,
+      );
+    }
+    // Otherwise, return the specific report
     return await this.reportsService.getWeeklyReport(dto, req.user.accountId);
   }
 
