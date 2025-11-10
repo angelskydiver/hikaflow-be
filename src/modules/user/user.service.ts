@@ -156,9 +156,9 @@ export class UserService {
       User.password,
     ); // Compare the hashed password
 
-    // if (!isPasswordValid) {
-    //   throw new BadRequestException('Invalid credentials');
-    // }
+    if (!isPasswordValid) {
+      throw new BadRequestException('Invalid credentials');
+    }
 
     return User;
   }
