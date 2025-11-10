@@ -1,0 +1,81 @@
+<html lang='en'>
+  <head>
+    <meta charset='UTF-8' />
+    <meta name='viewport' content='width=device-width, initial-scale=1.0' />
+    <title>Weekly Project Report</title>
+    <style>
+      body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 0;
+      background-color: #111B21; color: #e0e0e0; } .container { max-width:
+      600px; margin: 20px auto; background: #202C33; border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2); overflow: hidden; } .banner {
+      background: #222E35; padding: 24px; text-align: left; } .logo { font-size:
+      32px; font-weight: bold; color: #00A884; margin: 0; letter-spacing: 1px; }
+      .wrapper { padding: 32px; } h1 { color: #00A884; margin-bottom: 24px;
+      font-size: 24px; } h2 { color: #e0e0e0; margin-bottom: 16px; font-size:
+      20px; } p { color: #e0e0e0; line-height: 1.6; margin-bottom: 16px; }
+      .metrics-box { background: #222E35; border-radius: 8px; padding: 20px;
+      margin: 24px 0; border-left: 4px solid #00A884; } .metric-item { display:
+      flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px
+      solid #333; } .metric-item:last-child { border-bottom: none; }
+      .metric-label { color: #7C8B95; font-size: 14px; } .metric-value { color:
+      #00A884; font-weight: bold; font-size: 16px; } .button { display:
+      inline-block; padding: 12px 24px; font-size: 16px; color: #fff;
+      background: linear-gradient(135deg, #00A884, #008c6e); text-decoration:
+      none; border-radius: 25px; margin-top: 24px; transition: all 0.3s ease; }
+      .button:hover { transform: translateY(-2px); box-shadow: 0 5px 15px
+      rgba(0, 168, 132, 0.3); } .footer { margin-top: 32px; padding-top: 16px;
+      border-top: 1px solid #333; text-align: left; font-size: 12px; color:
+      #7C8B95; }
+    </style>
+  </head>
+  <body>
+    <div class='container'>
+      <div class='banner'>
+        <h1 class='logo'>Hikaflow</h1>
+      </div>
+      <div class='wrapper'>
+        <h1>Weekly Project Report</h1>
+        <p>Hi {{managerName}},</p>
+        <p>The weekly project report for
+          <strong>{{repositoryName}}</strong>
+          in
+          <strong>{{organizationName}}</strong>
+          is now available.</p>
+        <p>Report Period:
+          <strong>{{periodStart}}</strong>
+          to
+          <strong>{{periodEnd}}</strong></p>
+
+        <div class='metrics-box'>
+          <h2 style='margin-top: 0; color: #00A884;'>Project Activity Summary</h2>
+          <div class='metric-item'>
+            <span class='metric-label'>Total Commits: </span>
+            <span class='metric-value'>{{totalCommits}}</span>
+          </div>
+          <div class='metric-item'>
+            <span class='metric-label'>Issues Fixed: </span>
+            <span class='metric-value'>{{issuesFixed}}</span>
+          </div>
+          <div class='metric-item'>
+            <span class='metric-label'>Issues Opened: </span>
+            <span class='metric-value'>{{issuesOpened}}</span>
+          </div>
+          <div class='metric-item'>
+            <span class='metric-label'>Pull Requests Merged</span>
+            <span class='metric-value'>{{prsMerged}}</span>
+          </div>
+        </div>
+
+        <p>View the complete project report with detailed insights, contributor
+          activity, and recommendations:</p>
+        <a href='{{projectUrl}}' class='button'>View Project Report</a>
+
+        <div class='footer'>
+          <p>This is an automated weekly report. You'll receive these reports
+            every Saturday.</p>
+          <p>If you have any questions, feel free to reach out to your team.</p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

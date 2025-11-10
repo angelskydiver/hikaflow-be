@@ -195,6 +195,21 @@ model Account {
   // AssistedQuestions   AssistedQuestions[]
   // Researcher          Researcher[]
   // ResearchAssistant   ResearchAssistant[]
+  TeamMember          TeamMember[]
+  reports             WeeklyReport[]
+  gitContributorNames GitContributorName[] // Multiple Git contributor names for matching commits
+}
+
+model GitContributorName {
+  id        String   @id @default(uuid())
+  name      String // Git contributor name
+  accountId String
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([accountId, name]) // Prevent duplicate names for same account
+  @@map("git_contributor_names")
 }
 
 model Organization {
@@ -214,9 +229,13 @@ model Organization {
   // Researcher             Researcher[]
   // ResearchAssistant      ResearchAssistant[]
 
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  RegressionReport RegressionReport[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  RegressionReport  RegressionReport[]
+  // Teams
+  teams             Team[]
+  organizationRoles OrganizationRole[]
+  weeklyReports     WeeklyReport[]
 }
 
 model OrganizationAccounts {
@@ -293,6 +312,8 @@ model Repository {
   UsageLog           UsageLog[]
   collaborators      Collaborator[]
   RegressionReport   RegressionReport[]
+  teamLinks          TeamRepository[]
+  weeklyReports      WeeklyReport[]
 }
 
 model AccountRepository {
@@ -306,6 +327,84 @@ model AccountRepository {
   evaluations RepoEvaluation[]
 
   @@id([accountId, repositoryId]) // Composite primary key
+}
+
+// ==========================
+// Team hierarchy (enterprise-defined)
+// Hierarchy is defined at organization level, shared by all teams
+// ==========================
+
+model Team {
+  id             String  @id @default(uuid())
+  organizationId String
+  name           String
+  description    String? @default("")
+
+  organization Organization             @relation(fields: [organizationId], references: [id])
+  members      TeamMember[]
+  repositories TeamRepository[]
+  invitations  OrganizationInvitation[]
+  reports      WeeklyReport[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
+}
+
+// Role definitions are owned by an Organization; shared across all teams
+model OrganizationRole {
+  id             String  @id @default(uuid())
+  organizationId String
+  name           String
+  // Lower rank value means higher in hierarchy (e.g., 1 = top level)
+  rank           Int
+  parentRoleId   String? // Optional parent role for hierarchical structure
+
+  organization Organization             @relation(fields: [organizationId], references: [id])
+  members      TeamMember[]
+  invitations  OrganizationInvitation[]
+  parent       OrganizationRole?        @relation("OrgRoleHierarchy", fields: [parentRoleId], references: [id])
+  children     OrganizationRole[]       @relation("OrgRoleHierarchy")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([organizationId, rank])
+  @@index([parentRoleId])
+}
+
+// Membership of an Account in a Team with a specific OrganizationRole
+model TeamMember {
+  id                 String @id @default(uuid())
+  teamId             String
+  accountId          String
+  organizationRoleId String
+
+  team             Team             @relation(fields: [teamId], references: [id])
+  account          Account          @relation(fields: [accountId], references: [id])
+  organizationRole OrganizationRole @relation(fields: [organizationRoleId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([teamId, accountId])
+  @@index([organizationRoleId])
+}
+
+// Many-to-many mapping of teams to repositories (projects)
+model TeamRepository {
+  teamId       String
+  repositoryId String
+
+  team       Team       @relation(fields: [teamId], references: [id])
+  repository Repository @relation(fields: [repositoryId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@id([teamId, repositoryId])
+  @@index([repositoryId])
 }
 
 model RepoEvaluation {
@@ -462,10 +561,20 @@ model OrganizationInvitation {
   inviterId      String                    @default("5058706f-b560-41bf-8bff-483514d3e9e8")
   inviter        User                      @relation(fields: [inviterId], references: [id])
 
+  // Optional team and role assignment (only if organization has teams/hierarchy)
+  teamId             String?
+  organizationRoleId String?
+
+  team             Team?             @relation(fields: [teamId], references: [id])
+  organizationRole OrganizationRole? @relation(fields: [organizationRoleId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([teamId])
+  @@index([organizationRoleId])
 }
 
 model DuplicatedCode {
@@ -502,28 +611,6 @@ model FileDocumentation {
   createdAt        DateTime                    @default(now())
   updatedAt        DateTime                    @updatedAt
 }
-
-// model FileDocumentation {
-//   id               String         @id @default(uuid())
-//   name             String // File name
-//   fullPath         String // Full file path
-//   imports          String[]       @default([]) // List of imported files
-//   exports          String[]       @default([]) // List of exported files
-//   functions        Json           @default("{}") // Hierarchical function structure
-//   classes          Json           @default("{}") // Hierarchical class structure
-//   components       Json           @default("[]") // Hierarchical function structure
-//   fileType         String[]       @default([]) // Enum-based file classification
-//   summary          String         @default("") // AI-generated file summary
-//   repositoryId     String // Link to the repository
-//   repositoryScanId String // Link to the repository scan
-//   summaryEmbedding Json? // Store embeddings as JSON array for compatibility
-//   repositoryScan   RepositoryScan @relation(fields: [repositoryScanId], references: [id], onDelete: Cascade)
-//   repository       Repository     @relation(fields: [repositoryId], references: [id])
-//   createdAt        DateTime       @default(now())
-//   updatedAt        DateTime       @updatedAt
-
-//   @@map("FileDocumentation")
-// }
 
 model RepositoryScan {
   id                String     @id @default(uuid())
@@ -765,7 +852,49 @@ model Collaborator {
   // Relationships
   organizations Organization[] // Many-to-many with organizations
   repositories  Repository[] // Many-to-many with repositories
+  reports       WeeklyReport[] // Weekly reports for this collaborator
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Weekly Team Reports - Store reports for historical comparison
+model WeeklyReport {
+  id          String     @id @default(uuid())
+  reportType  ReportType // CONTRIBUTOR, TEAM, PROJECT, ORGANIZATION
+  periodStart DateTime
+  periodEnd   DateTime
+
+  // Report Scope
+  organizationId String?
+  teamId         String?
+  accountId      String? // For contributor reports
+  repositoryId   String? // For project reports
+  collaboratorId String? // For contributor reports (if matched via Collaborator)
+
+  // Report Data (stored as JSON for flexibility)
+  reportData Json @default("{}")
+
+  // Relationships
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  team         Team?         @relation(fields: [teamId], references: [id])
+  account      Account?      @relation(fields: [accountId], references: [id])
+  repository   Repository?   @relation(fields: [repositoryId], references: [id])
+  collaborator Collaborator? @relation(fields: [collaboratorId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, periodStart, periodEnd])
+  @@index([teamId, periodStart, periodEnd])
+  @@index([accountId, periodStart, periodEnd])
+  @@index([repositoryId, periodStart, periodEnd])
+  @@index([reportType, periodStart])
+}
+
+enum ReportType {
+  CONTRIBUTOR  @map("CONTRIBUTOR") // Individual contributor report
+  TEAM         @map("TEAM") // Team summary report
+  PROJECT      @map("PROJECT") // Project/repository report
+  ORGANIZATION @map("ORGANIZATION") // Organization-wide report
 }

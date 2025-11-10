@@ -281,7 +281,7 @@ Return ONLY the fixed JSON with no other text, explanations, or code formatting.
   async generateResponse(prompt: string): Promise<string> {
     try {
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-2.0-flash-exp',
+        model: 'gemini-2.5-flash',
       });
       const result = await model.generateContent(prompt);
       return result.response.text();
@@ -303,7 +303,7 @@ Return ONLY the fixed JSON with no other text, explanations, or code formatting.
   ): Promise<string> {
     try {
       const model = this.genAI.getGenerativeModel({
-        model: 'gemini-2.0-flash-exp',
+        model: 'gemini-2.5-flash',
       });
 
       if (streamCallback) {
@@ -2010,6 +2010,1062 @@ ${JSON.stringify(groupedChanges)}
       return Array.from(new Set(fixedIds));
     } catch (error) {
       console.error('detectFixedComments error:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Generate contributor insights using AI analysis
+   * @param metrics Contributor performance metrics
+   * @param contributor Contributor information
+   * @param period Report period
+   * @returns Array of insights
+   */
+  async generateContributorInsights(
+    metrics: {
+      commits: {
+        total: number;
+        merged: number;
+        additions: number;
+        deletions: number;
+        filesChanged: number;
+      };
+      modules: {
+        primary: string[];
+        all: { name: string; commits: number; changes: number }[];
+      };
+      issues: {
+        fixed: number;
+        opened: number;
+        stillOpen: number;
+        closed: number;
+        categories: { [category: string]: number };
+        avgResolutionTime: number;
+      };
+      pullRequests: {
+        created: number;
+        merged: number;
+        reviewed: number;
+      };
+      codeQuality: {
+        commentsAddressed: number;
+        securityFixes: number;
+        codeSmellFixes: number;
+        commentsOnPRs: number;
+      };
+    },
+    contributor: { name: string; role: string; team: string },
+    period: { start: Date; end: Date },
+  ): Promise<string[]> {
+    try {
+      const prompt = `You are an expert Engineering Manager and Data Analyst specializing in software development productivity analysis.
+
+Analyze the following contributor's weekly performance metrics and provide 3-5 key insights that would be valuable to a Team Lead, Engineering Manager, or CTO. Focus on actionable, data-driven observations.
+
+## Contributor Information:
+- Name: ${contributor.name}
+- Role: ${contributor.role}
+- Team: ${contributor.team}
+- Period: ${period.start.toISOString().split('T')[0]} to ${period.end.toISOString().split('T')[0]}
+
+## Performance Metrics:
+
+### Commit Activity:
+- Total Commits: ${metrics.commits.total}
+- Merged Commits: ${metrics.commits.merged}
+- Lines Added: ${metrics.commits.additions}
+- Lines Deleted: ${metrics.commits.deletions}
+- Files Changed: ${metrics.commits.filesChanged}
+
+### Module Focus:
+- Primary Modules (Top 3): ${metrics.modules.primary.join(', ') || 'None'}
+- Total Modules Worked On: ${metrics.modules.all.length}
+- Module Distribution: ${JSON.stringify(metrics.modules.all.slice(0, 5).map((m) => `${m.name} (${m.commits} commits, ${m.changes} changes)`))}
+
+### Issue Management (Hikaflow Usage):
+- Issues Fixed/Closed: ${metrics.issues.fixed}
+- Issues Opened This Week: ${metrics.issues.opened}
+- Issues Still Open: ${metrics.issues.stillOpen}
+- Average Resolution Time: ${metrics.issues.avgResolutionTime.toFixed(1)} hours
+- Issue Categories: ${JSON.stringify(metrics.issues.categories)}
+- **Hikaflow Engagement:** ${metrics.issues.fixed + metrics.issues.opened > 0 ? '✅ Active' : '⚠️ Low - Consider using Hikaflow for issue tracking'}
+
+### Pull Request Activity:
+- PRs Created: ${metrics.pullRequests.created}
+- PRs Merged: ${metrics.pullRequests.merged}
+- PRs Reviewed: ${metrics.pullRequests.reviewed}
+
+### Code Quality:
+- Comments Addressed: ${metrics.codeQuality.commentsAddressed}
+- Security Fixes: ${metrics.codeQuality.securityFixes}
+- Code Smell Fixes: ${metrics.codeQuality.codeSmellFixes}
+- Comments on PRs: ${metrics.codeQuality.commentsOnPRs}
+
+## Instructions:
+1. Provide 3-5 concise, impactful insights (one sentence each)
+2. Use emojis sparingly and professionally (🔥, 📈, ✅, ⚠️, 💡)
+3. Highlight strengths, patterns, and areas of excellence
+4. Note any concerning trends or risks
+5. Be specific with numbers when relevant
+6. Focus on what matters to engineering leadership (velocity, quality, collaboration, growth)
+7. **IMPORTANT:** If issue tracking is low (few or no issues opened/fixed), encourage active use of Hikaflow for tracking bugs, technical debt, and improvements - this is critical for team visibility and process improvement
+
+## Output Format:
+Return a JSON array of insight strings:
+{
+  "insights": [
+    "Insight 1...",
+    "Insight 2...",
+    ...
+  ]
+}`;
+
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash',
+      });
+
+      const result = await model.generateContent(prompt);
+      const response = result.response.text();
+
+      // Parse JSON response
+      try {
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          return parsed.insights || [];
+        }
+      } catch (e) {
+        console.warn('Failed to parse Gemini response as JSON:', e);
+      }
+
+      // Fallback: extract insights from markdown list
+      const lines = response
+        .split('\n')
+        .filter(
+          (line) =>
+            line.trim().startsWith('-') ||
+            line.trim().startsWith('*') ||
+            line.trim().match(/^\d+\./),
+        );
+      return lines
+        .map((line) => line.replace(/^[-*\d.]\s*/, '').trim())
+        .filter(Boolean);
+    } catch (error) {
+      console.error('Error generating contributor insights:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Generate contributor improvement suggestions using AI analysis
+   * @param metrics Contributor performance metrics
+   * @param contributor Contributor information
+   * @returns Array of suggestions
+   */
+  async generateContributorSuggestions(
+    metrics: {
+      commits: {
+        total: number;
+        merged: number;
+        additions: number;
+        deletions: number;
+        filesChanged: number;
+      };
+      modules: {
+        primary: string[];
+        all: { name: string; commits: number; changes: number }[];
+      };
+      issues: {
+        fixed: number;
+        opened: number;
+        stillOpen: number;
+        closed: number;
+        avgResolutionTime: number;
+      };
+      pullRequests: {
+        created: number;
+        merged: number;
+        reviewed: number;
+      };
+      codeQuality: {
+        commentsAddressed: number;
+        securityFixes: number;
+        codeSmellFixes: number;
+        commentsOnPRs: number;
+      };
+    },
+    contributor: { name: string; role: string },
+  ): Promise<string[]> {
+    try {
+      const prompt = `You are an expert Engineering Manager providing constructive feedback to improve a developer's performance.
+
+Analyze the contributor's metrics and provide 3-5 specific, actionable improvement suggestions. These should be:
+- Practical and achievable
+- Specific to the data shown
+- Focused on growth and productivity
+- Suitable for a professional development context
+
+## Contributor Context:
+- Name: ${contributor.name}
+- Role: ${contributor.role}
+
+## Current Performance Metrics:
+
+### Commit Activity:
+- Total Commits: ${metrics.commits.total}
+- Merged Commits: ${metrics.commits.merged} (${metrics.commits.merged > 0 ? ((metrics.commits.merged / metrics.commits.total) * 100).toFixed(0) : 0}% merge rate)
+- Lines Added: ${metrics.commits.additions}
+- Lines Deleted: ${metrics.commits.deletions}
+- Files Changed: ${metrics.commits.filesChanged}
+
+### Module Focus:
+- Primary Modules: ${metrics.modules.primary.join(', ') || 'None'}
+- Total Modules: ${metrics.modules.all.length}
+
+### Issue Management (Hikaflow Platform):
+- Issues Fixed/Closed: ${metrics.issues.fixed}
+- Issues Opened This Week: ${metrics.issues.opened}
+- Issues Still Open: ${metrics.issues.stillOpen}
+- Net Impact: ${metrics.issues.fixed - metrics.issues.opened}
+- Avg Resolution Time: ${metrics.issues.avgResolutionTime.toFixed(1)} hours
+- **Hikaflow Engagement:** ${metrics.issues.fixed + metrics.issues.opened > 0 ? 'Active ✅' : 'Low ⚠️ - Encourage use of Hikaflow for tracking'}
+
+### Collaboration:
+- PRs Created: ${metrics.pullRequests.created}
+- PRs Merged: ${metrics.pullRequests.merged}
+- PRs Reviewed: ${metrics.pullRequests.reviewed}
+- Comments on PRs: ${metrics.codeQuality.commentsOnPRs}
+
+### Code Quality:
+- Comments Addressed: ${metrics.codeQuality.commentsAddressed}
+- Security Fixes: ${metrics.codeQuality.securityFixes}
+- Code Smell Fixes: ${metrics.codeQuality.codeSmellFixes}
+
+## Instructions:
+1. Identify areas with room for improvement (low numbers, imbalances, gaps)
+2. Provide specific, actionable suggestions
+3. Use a supportive, constructive tone
+4. Reference specific metrics when relevant
+5. Suggest concrete actions (not vague advice)
+6. Consider role-appropriate expectations
+7. **CRITICAL:** If issue tracking is low or zero (0 issues opened/fixed), STRONGLY encourage using Hikaflow to track bugs, technical debt, code improvements, and feature requests. Emphasize that issue tracking is essential for:
+   - Team visibility into problems and improvements
+   - Better project planning and prioritization
+   - Demonstrating proactive problem-solving
+   - Creating a culture of continuous improvement
+
+## Output Format:
+Return a JSON object with suggestions array:
+{
+  "suggestions": [
+    "Specific actionable suggestion 1...",
+    "Specific actionable suggestion 2...",
+    ...
+  ]
+}`;
+
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash',
+      });
+
+      const result = await model.generateContent(prompt);
+      const response = result.response.text();
+
+      try {
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          return parsed.suggestions || [];
+        }
+      } catch (e) {
+        console.warn('Failed to parse Gemini suggestions as JSON:', e);
+      }
+
+      // Fallback
+      const lines = response
+        .split('\n')
+        .filter(
+          (line) =>
+            line.trim().startsWith('-') ||
+            line.trim().startsWith('*') ||
+            line.trim().match(/^\d+\./),
+        );
+      return lines
+        .map((line) => line.replace(/^[-*\d.]\s*/, '').trim())
+        .filter(Boolean);
+    } catch (error) {
+      console.error('Error generating contributor suggestions:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Generate team insights using AI analysis
+   * @param data Team performance data
+   * @param teamName Team name
+   * @param period Report period
+   * @returns Array of insights
+   */
+  async generateTeamInsights(
+    data: {
+      totalCommits: number;
+      totalIssuesFixed: number;
+      velocity: number;
+      backlog: number;
+      contributors: number;
+    },
+    teamName: string,
+    period: { start: Date; end: Date },
+  ): Promise<string[]> {
+    try {
+      const prompt = `You are an expert Engineering Director analyzing team performance for weekly reporting to CTO and upper management.
+
+Analyze the team's metrics and provide 4-6 strategic insights that would be valuable to engineering leadership. Focus on team health, productivity trends, and business impact.
+
+## Team Information:
+- Team Name: ${teamName}
+- Period: ${period.start.toISOString().split('T')[0]} to ${period.end.toISOString().split('T')[0]}
+
+## Team Performance Metrics:
+
+### Productivity:
+- Total Commits: ${data.totalCommits}
+- Team Velocity: ${data.velocity} commits/week
+- Active Contributors: ${data.contributors}
+- Average Commits per Contributor: ${data.contributors > 0 ? (data.totalCommits / data.contributors).toFixed(1) : 0}
+
+### Issue Management:
+- Issues Fixed: ${data.totalIssuesFixed}
+- Open Issue Backlog: ${data.backlog}
+- Backlog Trend: ${data.backlog < 10 ? 'Healthy' : data.backlog > 30 ? 'Concerning' : 'Moderate'}
+
+## Context for Analysis:
+- Velocity of ${data.velocity} commits indicates ${data.velocity > 50 ? 'high' : data.velocity > 20 ? 'moderate' : 'low'} productivity
+- Backlog of ${data.backlog} issues is ${data.backlog < 10 ? 'well-managed' : data.backlog > 30 ? 'needs attention' : 'manageable'}
+- ${data.contributors} active contributors this week
+
+## Instructions:
+1. Provide 4-6 strategic insights (one sentence each)
+2. Use professional tone suitable for CTO/VP level reporting
+3. Highlight team strengths and achievements
+4. Identify risks or areas needing attention
+5. Reference specific numbers
+6. Consider team size and context in analysis
+7. Focus on actionable observations for leadership
+
+## Output Format:
+{
+  "insights": [
+    "Strategic insight 1...",
+    "Strategic insight 2...",
+    ...
+  ]
+}`;
+
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash',
+      });
+
+      const result = await model.generateContent(prompt);
+      const response = result.response.text();
+
+      try {
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          return parsed.insights || [];
+        }
+      } catch (e) {
+        console.warn('Failed to parse Gemini team insights:', e);
+      }
+
+      return [];
+    } catch (error) {
+      console.error('Error generating team insights:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Generate team recommendations using AI analysis
+   * @param data Team performance data
+   * @param teamName Team name
+   * @param contributors Individual contributor reports
+   * @returns Array of recommendations
+   */
+  async generateTeamRecommendations(
+    data: {
+      quality: string;
+      velocity: number;
+      backlog: number;
+      contributors: Array<{
+        contributor: { name: string };
+        metrics: { commits: { total: number }; issues: { fixed: number } };
+      }>;
+    },
+    teamName: string,
+  ): Promise<string[]> {
+    try {
+      const avgCommits =
+        data.contributors.length > 0
+          ? data.contributors.reduce(
+              (sum, c) => sum + c.metrics.commits.total,
+              0,
+            ) / data.contributors.length
+          : 0;
+
+      const prompt = `You are an expert Engineering Director providing strategic recommendations to improve team performance.
+
+Analyze the team's current state and provide 3-5 actionable recommendations for the Team Lead or Engineering Manager. These should be strategic, practical, and based on the data.
+
+## Team Context:
+- Team Name: ${teamName}
+- Team Health Status: ${data.quality}
+- Team Velocity: ${data.velocity} commits/week
+- Open Issue Backlog: ${data.backlog}
+- Active Contributors: ${data.contributors.length}
+- Average Commits per Contributor: ${avgCommits.toFixed(1)}
+
+## Performance Breakdown:
+${data.contributors.map((c, i) => `Contributor ${i + 1}: ${c.contributor.name} - ${c.metrics.commits.total} commits, ${c.metrics.issues.fixed} issues fixed`).join('\n')}
+
+## Current State Analysis:
+- Quality Status: ${data.quality} (${data.quality === 'excellent' ? 'performing well' : data.quality === 'good' ? 'solid performance' : 'needs improvement'})
+- Velocity: ${data.velocity} commits is ${data.velocity > 50 ? 'strong' : data.velocity > 20 ? 'moderate' : 'below expectations'}
+- Backlog Management: ${data.backlog} open issues (${data.backlog < 10 ? 'well-controlled' : data.backlog > 30 ? 'requires immediate action' : 'manageable'})
+- Team Engagement: ${data.contributors.length} active contributors
+
+## Instructions:
+1. Provide 3-5 strategic recommendations
+2. Be specific and actionable (what to do, not vague advice)
+3. Prioritize by impact and urgency
+4. Consider team context and current state
+5. Reference specific metrics when relevant
+6. Focus on improvements that will move the needle
+
+## Output Format:
+{
+  "recommendations": [
+    "Specific strategic recommendation 1...",
+    "Specific strategic recommendation 2...",
+    ...
+  ]
+}`;
+
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash',
+      });
+
+      const result = await model.generateContent(prompt);
+      const response = result.response.text();
+
+      try {
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          return parsed.recommendations || [];
+        }
+      } catch (e) {
+        console.warn('Failed to parse Gemini recommendations:', e);
+      }
+
+      return [];
+    } catch (error) {
+      console.error('Error generating team recommendations:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Generate project insights using AI analysis
+   * @param data Project performance data
+   * @param repositoryName Repository name
+   * @param period Report period
+   * @returns Array of insights
+   */
+  async generateProjectInsights(
+    data: {
+      commits: number;
+      mergedCommits?: number;
+      openCommits?: number;
+      issuesFixed: number;
+      openIssues: number;
+      prsOpen?: number;
+      prsMerged?: number;
+      modules?: string[];
+      commitAnalysis?: {
+        features: Array<{
+          description: string;
+          module?: string;
+          committer: string;
+          commitCount: number;
+        }>;
+        fixes: Array<{
+          description: string;
+          module?: string;
+          committer: string;
+          commitCount: number;
+        }>;
+        improvements: Array<{
+          description: string;
+          module?: string;
+          committer: string;
+          commitCount: number;
+        }>;
+        otherTasks: Array<{
+          description: string;
+          module?: string;
+          committer: string;
+          commitCount: number;
+        }>;
+        summary: {
+          totalFeatures: number;
+          totalFixes: number;
+          totalImprovements: number;
+          totalOtherTasks: number;
+        };
+      };
+    },
+    repositoryName: string,
+    period: { start: Date; end: Date },
+  ): Promise<string[]> {
+    try {
+      const modulesText =
+        data.modules && data.modules.length > 0
+          ? `\n### Modules/Features Focus:\n- Top modules worked on: ${data.modules.slice(0, 5).join(', ')}`
+          : '';
+
+      // Build detailed commit analysis text
+      let commitAnalysisText = '';
+      if (data.commitAnalysis) {
+        const ca = data.commitAnalysis;
+
+        commitAnalysisText = `\n\n### 🎯 ACTUAL WORK COMPLETED - Commit Analysis:\n`;
+
+        if (ca.features.length > 0) {
+          commitAnalysisText += `\n**Features Implemented (${ca.summary.totalFeatures} total):**\n`;
+          ca.features.slice(0, 5).forEach((feature, idx) => {
+            commitAnalysisText += `${idx + 1}. ${feature.description}${feature.module ? ` (Module: ${feature.module})` : ''} - ${feature.committer} (${feature.commitCount} commits)\n`;
+          });
+        }
+
+        if (ca.fixes.length > 0) {
+          commitAnalysisText += `\n**Bugs Fixed (${ca.summary.totalFixes} total):**\n`;
+          ca.fixes.slice(0, 5).forEach((fix, idx) => {
+            commitAnalysisText += `${idx + 1}. ${fix.description}${fix.module ? ` (Module: ${fix.module})` : ''} - ${fix.committer} (${fix.commitCount} commits)\n`;
+          });
+        }
+
+        if (ca.improvements.length > 0) {
+          commitAnalysisText += `\n**Improvements Made (${ca.summary.totalImprovements} total):**\n`;
+          ca.improvements.slice(0, 5).forEach((improvement, idx) => {
+            commitAnalysisText += `${idx + 1}. ${improvement.description}${improvement.module ? ` (Module: ${improvement.module})` : ''} - ${improvement.committer} (${improvement.commitCount} commits)\n`;
+          });
+        }
+
+        if (ca.otherTasks.length > 0 && ca.otherTasks.length <= 3) {
+          commitAnalysisText += `\n**Other Tasks:**\n`;
+          ca.otherTasks.slice(0, 3).forEach((task, idx) => {
+            commitAnalysisText += `${idx + 1}. ${task.description}${task.module ? ` (Module: ${task.module})` : ''} - ${task.committer}\n`;
+          });
+        }
+      }
+
+      const prompt = `You are an expert Engineering Manager and Technical Analyst using Gemini 2.5 Pro for project/repository performance analysis.
+
+Analyze the repository's weekly metrics and provide 3-5 key insights about project health, development velocity, code quality trends, and most importantly - WHAT THE TEAM ACTUALLY WORKED ON.
+
+## Project Information:
+- Repository: ${repositoryName}
+- Period: ${period.start.toISOString().split('T')[0]} to ${period.end.toISOString().split('T')[0]}
+
+## Project Performance Metrics:
+
+### Development Activity:
+- Total Commits: ${data.commits}
+- Merged Commits: ${data.mergedCommits || 0}
+- Open Commits: ${data.openCommits || 0}
+- Activity Level: ${data.commits > 30 ? 'High' : data.commits > 15 ? 'Moderate' : 'Low'}
+
+### Pull Request Status:
+- Total PRs: ${(data.prsOpen || 0) + (data.prsMerged || 0)}
+- Open PRs: ${data.prsOpen || 0}
+- Merged PRs: ${data.prsMerged || 0}
+- Merge Rate: ${data.prsMerged && data.prsOpen ? ((data.prsMerged / ((data.prsMerged || 0) + (data.prsOpen || 0))) * 100).toFixed(1) : 'N/A'}%
+
+### Issue Management:
+- Issues Fixed: ${data.issuesFixed}
+- Open Issues: ${data.openIssues}
+- Net Impact: ${data.issuesFixed - data.openIssues} (${data.issuesFixed > data.openIssues ? 'Positive - reducing debt' : data.issuesFixed < data.openIssues ? 'Negative - debt increasing' : 'Neutral'})${modulesText}${commitAnalysisText}
+
+## Context:
+- ${data.commits} commits this week (${data.mergedCommits || 0} merged, ${data.openCommits || 0} open) indicates ${data.commits > 30 ? 'active ongoing development' : data.commits > 15 ? 'steady progress' : 'minimal activity'}
+${data.modules && data.modules.length > 0 ? `- **PRIMARY FOCUS**: The team focused primarily on these modules/features: ${data.modules.slice(0, 5).join(', ')}` : ''}
+- These modules represent the core work completed during this period
+${data.modules && data.modules.length > 0 ? `- Module distribution: ${data.modules.length} different modules/features were actively developed` : ''}
+- Issue resolution ratio: ${data.openIssues > 0 ? (data.issuesFixed / data.openIssues).toFixed(2) : 'N/A'} (fixed/opened)
+
+## Instructions:
+1. **CRITICAL - LEAD WITH ACTUAL WORK**: Your FIRST insight MUST describe what the team actually built, fixed, or improved this week based on the commit analysis above
+2. **FEATURES/FIXES/IMPROVEMENTS FOCUS**: Mention specific features implemented, bugs fixed, and improvements made from the commit analysis
+3. **WHAT WAS DELIVERED**: Engineering managers care about deliverables - mention what was shipped, not just commit counts
+4. Reference specific modules/features worked on (from modules list)
+5. Mention key contributors and their contributions where relevant
+6. Highlight development momentum and commit merge trends (secondary)
+7. Note issue management effectiveness (tertiary)
+8. Use professional, technical tone without markdown formatting
+9. Be specific and concrete - mention actual features, fixes, or improvements by name when provided in commit analysis
+10. Structure insights as:
+    - Insight 1: WHAT was delivered (features/fixes/improvements)
+    - Insight 2: Modules/areas focused on
+    - Insight 3: Development velocity/momentum
+    - Insight 4: Code quality/PRs (if relevant)
+    - Insight 5: Issues/backlog (if relevant)
+11. If commit analysis shows specific features/fixes, reference them directly (e.g., "Team implemented feature X and fixed bug Y")
+
+## Output Format:
+Return a JSON object with an "insights" array containing plain text strings (no markdown):
+{
+  "insights": [
+    "Insight 1 about modules and activity...",
+    "Insight 2 about PRs and commits...",
+    "Insight 3 about issues and quality...",
+    ...
+  ]
+}`;
+
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-2.5-pro',
+        generationConfig: {
+          temperature: 0.7,
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 8192,
+        },
+      });
+
+      const result = await model.generateContent(prompt);
+      const response = result.response.text();
+
+      try {
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          return parsed.insights || [];
+        }
+      } catch (e) {
+        console.warn('Failed to parse Gemini project insights:', e);
+      }
+
+      return [];
+    } catch (error) {
+      console.error('Error generating project insights:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Generate project recommendations using AI analysis
+   * @param data Project performance data
+   * @param repositoryName Repository name
+   * @returns Array of recommendations
+   */
+  async generateProjectRecommendations(
+    data: {
+      issuesFixed: number;
+      openIssues: number;
+      commits: number;
+      prsOpen?: number;
+      prsMerged?: number;
+      modules?: string[];
+    },
+    repositoryName: string,
+  ): Promise<string[]> {
+    try {
+      const modulesText =
+        data.modules && data.modules.length > 0
+          ? `\n- Top Modules Worked On: ${data.modules.slice(0, 5).join(', ')}`
+          : '';
+
+      const prompt = `You are an expert Engineering Manager and Technical Advisor using Gemini 2.5 Pro to analyze project performance for the last 7 days and provide strategic, actionable recommendations.
+
+Analyze the project metrics thoroughly and provide 3-5 specific, data-driven recommendations for the Project Manager or Tech Lead to improve repository health, development velocity, and code quality.
+
+## Project Context:
+- Repository: ${repositoryName}
+- Period: Last 7 days (weekly report)
+- Open Issues Backlog: ${data.openIssues}
+- Issues Fixed This Week: ${data.issuesFixed}
+- Total Commits: ${data.commits}
+- Open PRs: ${data.prsOpen || 0}
+- Merged PRs: ${data.prsMerged || 0}${modulesText}
+
+## Current State Analysis:
+- Issue Backlog Status: ${data.openIssues < 10 ? 'Healthy - well managed' : data.openIssues > 30 ? 'Critical - requires immediate attention' : 'Moderate - needs monitoring'}
+- Fix Rate: ${data.issuesFixed} issues resolved this week (${data.issuesFixed > data.openIssues ? 'Positive - backlog reducing' : data.issuesFixed < data.openIssues ? 'Concerning - backlog growing' : 'Balanced - status quo'})
+- Development Activity: ${data.commits} commits indicates ${data.commits > 30 ? 'high' : data.commits > 15 ? 'moderate' : 'low'} activity level
+- PR Merge Status: ${data.prsMerged || 0} merged, ${data.prsOpen || 0} open (Merge rate: ${data.prsMerged && (data.prsOpen || data.prsMerged) ? ((data.prsMerged / ((data.prsMerged || 0) + (data.prsOpen || 0))) * 100).toFixed(1) : 'N/A'}%)
+${modulesText ? `- Module Focus: ${modulesText.split('\n- Top Modules Worked On: ')[1] || 'Multiple modules'}` : ''}
+
+## Analysis Instructions:
+1. **Data-Driven Recommendations**: Base recommendations on actual metrics - identify specific problems or opportunities
+2. **Prioritize by Impact**: Address critical issues first (backlog growth, low merge rates, etc.)
+3. **Module-Specific Suggestions**: If modules are provided, suggest improvements specific to those areas
+4. **PR Process Optimization**: If PRs are piling up, suggest review process improvements
+5. **Issue Management Strategies**: If backlog is growing, provide concrete backlog management strategies
+6. **Velocity Improvement**: Suggest ways to improve development velocity without sacrificing quality
+7. **Technical Debt**: Identify areas of technical debt and suggest remediation approaches
+8. **Actionable Steps**: Each recommendation should be implementable and specific
+9. **Use Plain Text**: No markdown formatting, just clear recommendations
+
+## Output Format:
+Return a JSON object with a "recommendations" array containing plain text strings (no markdown):
+{
+  "recommendations": [
+    "Specific, actionable recommendation 1 based on metrics...",
+    "Detailed recommendation 2 addressing specific issue...",
+    "Strategic recommendation 3 for improvement...",
+    ...
+  ]
+}`;
+
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-2.5-pro',
+        generationConfig: {
+          temperature: 0.7,
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 8192,
+        },
+      });
+
+      const result = await model.generateContent(prompt);
+      const response = result.response.text();
+
+      try {
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          return parsed.recommendations || [];
+        }
+      } catch (e) {
+        console.warn('Failed to parse Gemini project recommendations:', e);
+      }
+
+      return [];
+    } catch (error) {
+      console.error('Error generating project recommendations:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Generate organization highlights using AI analysis
+   * @param teams Array of team performance data
+   * @param organizationName Organization name
+   * @param period Report period
+   * @returns Array of highlights
+   */
+  async generateProjectStatus(
+    commits: Array<{
+      commitMessage: string;
+      committer: string;
+      summary: any;
+      module?: string;
+      additions: number;
+      deletions: number;
+      totalFiles: number;
+      isMerged: boolean;
+    }>,
+    repositoryName: string,
+    period: { start: Date; end: Date },
+  ): Promise<{
+    status: string;
+    mainFeatures: string[];
+    modules: string[];
+    summary: string;
+  }> {
+    try {
+      // Extract commit summaries for analysis
+      const commitSummaries = commits
+        .slice(0, 50) // Limit to first 50 commits for token efficiency
+        .map((commit) => {
+          let summaryText = commit.commitMessage || '';
+          if (commit.summary && typeof commit.summary === 'object') {
+            try {
+              const summary =
+                typeof commit.summary === 'string'
+                  ? JSON.parse(commit.summary)
+                  : commit.summary;
+              summaryText =
+                summary.summary ||
+                summary.description ||
+                summary.changes ||
+                commit.commitMessage ||
+                '';
+            } catch (e) {
+              summaryText = commit.commitMessage || '';
+            }
+          }
+          return {
+            message: summaryText,
+            committer: commit.committer,
+            module: commit.module,
+            additions: commit.additions,
+            deletions: commit.deletions,
+            files: commit.totalFiles,
+          };
+        });
+
+      const prompt = `You are an expert Engineering Manager analyzing a software project's weekly development activity.
+
+Analyze the commit summaries below and provide a comprehensive project status assessment.
+
+## Project Information:
+- Repository: ${repositoryName}
+- Period: ${period.start.toISOString().split('T')[0]} to ${period.end.toISOString().split('T')[0]}
+- Total Commits Analyzed: ${commits.length}
+
+## Commit Summaries:
+${commitSummaries
+  .map(
+    (c, idx) => `${idx + 1}. Committer: ${c.committer}
+   Module: ${c.module || 'N/A'}
+   Summary: ${c.message.substring(0, 200)}
+   Changes: +${c.additions}/-${c.deletions} lines, ${c.files} files`,
+  )
+  .join('\n\n')}
+
+## Instructions:
+1. Determine overall project status (e.g., "Active Development", "Stable", "High Activity", "Maintenance Mode")
+2. Extract the main features/functionalities worked on during this period (3-5 key features)
+3. List all modules/components that received significant work (5-8 modules)
+4. Provide a concise summary (2-3 sentences) of the project's current state and focus areas
+
+## Output Format:
+Return a JSON object:
+{
+  "status": "Active Development",
+  "mainFeatures": ["Feature 1", "Feature 2", ...],
+  "modules": ["Module 1", "Module 2", ...],
+  "summary": "Brief summary of project status and focus..."
+}`;
+
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-2.5-pro',
+        generationConfig: {
+          temperature: 0.7,
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 8192,
+        },
+      });
+
+      const result = await model.generateContent(prompt);
+      const response = result.response.text();
+
+      // Try to parse JSON from response
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          status: parsed.status || 'Active',
+          mainFeatures: Array.isArray(parsed.mainFeatures)
+            ? parsed.mainFeatures
+            : [],
+          modules: Array.isArray(parsed.modules) ? parsed.modules : [],
+          summary: parsed.summary || 'Project is in active development.',
+        };
+      }
+
+      return {
+        status: 'Active',
+        mainFeatures: [],
+        modules: [],
+        summary: 'Project is in active development.',
+      };
+    } catch (error) {
+      console.error('Error generating project status:', error);
+      return {
+        status: 'Active',
+        mainFeatures: [],
+        modules: [],
+        summary: 'Project is in active development.',
+      };
+    }
+  }
+
+  async generateOrganizationHighlights(
+    teams: Array<{
+      teamName: string;
+      performance: string;
+      keyMetrics: {
+        commits: number;
+        issuesFixed: number;
+        velocity: number;
+      };
+    }>,
+    organizationName: string,
+    period: { start: Date; end: Date },
+  ): Promise<string[]> {
+    try {
+      const prompt = `You are a CTO analyzing organization-wide engineering performance for executive reporting.
+
+Analyze the performance across all teams and provide 4-6 strategic highlights that showcase organizational health, achievements, and notable patterns. This will be shared with executive leadership.
+
+## Organization Context:
+- Organization: ${organizationName}
+- Period: ${period.start.toISOString().split('T')[0]} to ${period.end.toISOString().split('T')[0]}
+- Total Teams: ${teams.length}
+
+## Team Performance Summary:
+${teams
+  .map(
+    (t, i) => `
+Team ${i + 1}: ${t.teamName}
+- Performance Rating: ${t.performance}
+- Commits: ${t.keyMetrics.commits}
+- Issues Fixed: ${t.keyMetrics.issuesFixed}
+- Velocity: ${t.keyMetrics.velocity} commits/week
+`,
+  )
+  .join('\n')}
+
+## Aggregate Metrics:
+- Total Teams: ${teams.length}
+- Total Commits Across All Teams: ${teams.reduce((sum, t) => sum + t.keyMetrics.commits, 0)}
+- Total Issues Fixed: ${teams.reduce((sum, t) => sum + t.keyMetrics.issuesFixed, 0)}
+- Teams Performing Excellently: ${teams.filter((t) => t.performance === 'excellent').length}
+- Teams Needing Attention: ${teams.filter((t) => t.performance === 'needs_attention').length}
+
+## Instructions:
+1. Provide 4-6 executive-level highlights
+2. Celebrate achievements and top performers
+3. Identify organizational patterns and trends
+4. Note any strategic concerns
+5. Use professional, C-suite appropriate language
+6. Focus on business impact and engineering excellence
+7. Be concise and impactful
+
+## Output Format:
+{
+  "highlights": [
+    "Executive highlight 1...",
+    "Executive highlight 2...",
+    ...
+  ]
+}`;
+
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash',
+      });
+
+      const result = await model.generateContent(prompt);
+      const response = result.response.text();
+
+      try {
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          return parsed.highlights || [];
+        }
+      } catch (e) {
+        console.warn('Failed to parse Gemini highlights:', e);
+      }
+
+      return [];
+    } catch (error) {
+      console.error('Error generating organization highlights:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Generate organization recommendations using AI analysis
+   * @param teams Array of team performance data
+   * @param organizationName Organization name
+   * @returns Array of recommendations
+   */
+  async generateOrganizationRecommendations(
+    teams: Array<{
+      teamName: string;
+      performance: string;
+      keyMetrics: {
+        commits: number;
+        issuesFixed: number;
+        velocity: number;
+      };
+    }>,
+    organizationName?: string,
+  ): Promise<string[]> {
+    try {
+      const needsAttention = teams.filter(
+        (t) => t.performance === 'needs_attention',
+      );
+      const excellent = teams.filter((t) => t.performance === 'excellent');
+      const average = teams.filter((t) => t.performance === 'average');
+
+      const prompt = `You are a CTO providing strategic recommendations for organization-wide engineering improvements.
+
+Analyze the performance distribution across teams and provide 3-5 strategic recommendations for executive leadership. Focus on organizational-level improvements and resource allocation.
+
+## Organization Performance Distribution:
+- Total Teams: ${teams.length}
+- Teams Performing Excellently: ${excellent.length}
+- Teams Performing Well: ${average.length}
+- Teams Needing Attention: ${needsAttention.length}
+
+## Team Performance Details:
+${teams
+  .map(
+    (t) => `
+- ${t.teamName}: ${t.performance} (${t.keyMetrics.commits} commits, ${t.keyMetrics.issuesFixed} issues fixed, velocity: ${t.keyMetrics.velocity})
+`,
+  )
+  .join('')}
+
+## Current State Analysis:
+- ${((excellent.length / teams.length) * 100).toFixed(0)}% of teams performing excellently
+- ${((needsAttention.length / teams.length) * 100).toFixed(0)}% of teams need attention
+- Average team velocity: ${(teams.reduce((sum, t) => sum + t.keyMetrics.velocity, 0) / teams.length).toFixed(1)} commits/week
+
+## Instructions:
+1. Provide 3-5 strategic, organization-level recommendations
+2. Focus on cross-team improvements and resource allocation
+3. Consider scaling successful patterns from top teams
+4. Address systemic issues affecting multiple teams
+5. Be specific and actionable for C-suite decision making
+6. Reference team data when relevant
+
+## Output Format:
+{
+  "recommendations": [
+    "Strategic organizational recommendation 1...",
+    "Strategic organizational recommendation 2...",
+    ...
+  ]
+}`;
+
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash',
+      });
+
+      const result = await model.generateContent(prompt);
+      const response = result.response.text();
+
+      try {
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          return parsed.recommendations || [];
+        }
+      } catch (e) {
+        console.warn('Failed to parse Gemini org recommendations:', e);
+      }
+
+      return [];
+    } catch (error) {
+      console.error('Error generating AI org recommendations:', error);
       return [];
     }
   }

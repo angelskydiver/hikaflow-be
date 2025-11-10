@@ -59,7 +59,19 @@ export class UserService {
         },
       });
 
-      await this._accountService.createAccount({ userId: User.id });
+      const account = await this._accountService.createAccount({
+        userId: User.id,
+      });
+
+      // If gitContributorName provided during signup, create it
+      if (data.gitContributorName?.trim()) {
+        await this._prismaService.gitContributorName.create({
+          data: {
+            accountId: account.id,
+            name: data.gitContributorName.trim(),
+          },
+        });
+      }
 
       // Create referral relationship if partnerId provided
       if (partnerId) {

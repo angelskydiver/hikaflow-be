@@ -97,14 +97,13 @@ export class OrganizationService {
       });
       if (!account) throw new NotFoundException('Account not found');
 
-      let invitationAlreadyExist =
+      const invitationAlreadyExist =
         await this._prismaService.organizationInvitation.findMany({
           where: {
             organizationId: data.organizationId,
             email: { in: data.users.map((user) => user.email) },
           },
         });
-      console.log(invitationAlreadyExist);
 
       const newUsers = data.users.filter(
         (user) =>
@@ -120,6 +119,10 @@ export class OrganizationService {
           email: user.email,
           name: user.name,
           inviter: { connect: { id: account.user.id } },
+          ...(user.teamId && { team: { connect: { id: user.teamId } } }),
+          ...(user.organizationRoleId && {
+            organizationRole: { connect: { id: user.organizationRoleId } },
+          }),
         };
 
         return this._prismaService.organizationInvitation.create({
@@ -168,9 +171,37 @@ export class OrganizationService {
           include: {
             organization: true,
             inviter: true,
+            team: { select: { id: true, name: true } },
+            organizationRole: { select: { id: true, name: true, rank: true } },
           },
         });
       return invitations;
+    } catch (error) {
+      console.log(error);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  async getOrganizationMembers(organizationId: string, accountId: string) {
+    try {
+      // Verify caller is part of organization
+      const isValidAccount =
+        await this._prismaService.organizationAccounts.findFirst({
+          where: { organizationId, accountId },
+        });
+      if (!isValidAccount) throw new NotFoundException('Invalid account');
+
+      // Members are accounts that accepted invitation (i.e., exist in OrganizationAccounts)
+      const members = await this._prismaService.organizationAccounts.findMany({
+        where: { organizationId },
+        include: { account: { include: { user: true } } },
+      });
+      // Return simplified member list
+      return members.map((m) => ({
+        accountId: m.accountId,
+        role: m.role,
+        user: m.account?.user,
+      }));
     } catch (error) {
       console.log(error);
       throw new BadRequestException(error.message);
@@ -213,6 +244,10 @@ export class OrganizationService {
             organization: true,
           },
         });
+
+      if (!organizationAccount) {
+        throw new NotFoundException('Organization admin not found');
+      }
 
       const accountUser = await this._prismaService.account.findFirst({
         where: {
@@ -279,6 +314,12 @@ export class OrganizationService {
             organizationId: organizationId,
             email: account.user.email,
           },
+          select: {
+            id: true,
+            role: true,
+            teamId: true,
+            organizationRoleId: true,
+          },
         });
 
       if (!invitation) {
@@ -294,6 +335,22 @@ export class OrganizationService {
           role: invitation.role,
         },
       });
+
+      // If invitation has team and role, automatically add user to that team
+      if (invitation.teamId && invitation.organizationRoleId) {
+        try {
+          await this._prismaService.teamMember.create({
+            data: {
+              teamId: invitation.teamId,
+              accountId: accountId,
+              organizationRoleId: invitation.organizationRoleId,
+            },
+          });
+        } catch (error) {
+          // If team member creation fails (e.g., duplicate), log but don't fail invitation acceptance
+          console.error('Failed to auto-assign team/role:', error);
+        }
+      }
 
       await this._prismaService.organizationInvitation.update({
         where: {

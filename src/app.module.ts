@@ -10,6 +10,7 @@ import { BillingCronService } from './cron/billing.cron';
 import { FeedbackAnalysisCronService } from './cron/feedbackAnalysis.cron';
 import { PrTrackerCronService } from './cron/prTracker.cron';
 import { RepositoryScanCronService } from './cron/repositoryScan.cron';
+import { WeeklyReportsCronService } from './cron/weeklyReports.cron';
 import { MailModule } from './mail/mail.module';
 import { AccountModule } from './modules/account/account.module';
 import { AccountCredentialModule } from './modules/accountCredentials/accountCredentials.module';
@@ -24,8 +25,10 @@ import { FeedbackModule } from './modules/feedback/feedback.module';
 import { OrganizationModule } from './modules/organization/organization.module';
 import { PrTrackerModule } from './modules/prTracker/prTracker.module';
 import { PullRequestModule } from './modules/pullRequest/pullRequest.module';
+import { ReportsModule } from './modules/reports/reports.module';
 import { RepositoryModule } from './modules/repository/repository.module';
 import { RepositoryScanModule } from './modules/repositoryScan/repositoryScan.module';
+import { TeamModule } from './modules/team/team.module';
 import { UsersModule } from './modules/user/user.module';
 import { VerificationCodeModule } from './modules/verificationCode/verificationCode.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
@@ -34,7 +37,6 @@ import { JwtStrategy } from './passport/strategies/jwt.strategy';
 import { LocalStrategy } from './passport/strategies/local.strategy';
 import { PartnerProgramLocalAuthStrategy } from './passport/strategies/partner-program.local.strategy';
 import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
-// import { UsersModule } from './users/users.module'; // Your Users module
 
 @Module({
   imports: [
@@ -73,6 +75,8 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
     BillingModule,
     DiscountModule,
     FeedbackModule,
+    TeamModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [
@@ -84,6 +88,7 @@ import { PrismaModule } from './prisma/prisma.module'; // Import PrismaModule
     BillingCronService,
     RepositoryScanCronService,
     FeedbackAnalysisCronService,
+    WeeklyReportsCronService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
   ],
 })
