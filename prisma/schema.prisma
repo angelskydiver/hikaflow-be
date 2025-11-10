@@ -181,7 +181,7 @@ model UserReferral {
 model Account {
   id                  String                 @id @default(uuid())
   status              String                 @default("active")
-  subscribedPlanType  SubscriptionPlanType   @default(TRIAL)
+  subscribedPlanType  Int                    @default(1)
   tokens              Int                    @default(0)
   createdAt           DateTime               @default(now())
   updatedAt           DateTime               @updatedAt

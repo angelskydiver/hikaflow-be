@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Get,
@@ -7,6 +6,7 @@ import {
   Post,
   Query,
   Request,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Public } from 'src/decorators/public';
@@ -28,8 +28,8 @@ export class OrganizationController {
     @Body() data: CreateOrganizationRequestDto,
     @Request() req: any,
   ) {
-    if (!req.user || !req.user.accountId) {
-      throw new BadRequestException('Unauthorized');
+    if (!req.user) {
+      throw new UnauthorizedException('User not authenticated');
     }
     return await this._organizationService.createOrganization(
       data,
