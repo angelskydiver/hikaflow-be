@@ -16,7 +16,7 @@ export class CreatePricingPlanDto {
   planType: SubscriptionPlanType;
 
   @IsNumber()
-  basePrice: number; // Base price per project
+  basePrice: number; // Base price per active user
 
   @IsNumber()
   evaluationPrice: number; // Price per evaluation
@@ -76,6 +76,10 @@ export class UpdateSubscriptionDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  immediate?: boolean; // For cancellation: true = immediate, false = end of period
 
   @IsNumber()
   @IsOptional()

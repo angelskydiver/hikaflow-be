@@ -207,11 +207,56 @@ export class BillingController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('payment-methods/organization/:organizationId')
+  async getOrganizationPaymentMethod(
+    @Param('organizationId') organizationId: string,
+  ) {
+    return this._billingService.getOrganizationPaymentMethod(organizationId);
+  }
+
+  // Subscription queue endpoints
+  @UseGuards(JwtAuthGuard)
+  @Get('subscription-queues/organization/:organizationId')
+  async getQueuedSubscriptions(
+    @Param('organizationId') organizationId: string,
+  ) {
+    return this._billingService.getQueuedSubscriptions(organizationId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('subscription-queues/process/:organizationId')
+  async processQueuedSubscriptions(
+    @Param('organizationId') organizationId: string,
+  ) {
+    return this._billingService.processQueuedSubscriptions(organizationId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('subscription-queues/:subscriptionId')
+  async cancelQueuedSubscription(@Param('subscriptionId') subscriptionId: string) {
+    return this._billingService.cancelQueuedSubscription(subscriptionId);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Delete('payment-methods/organization/:organizationId')
   async removeOrganizationPaymentMethod(
     @Param('organizationId') organizationId: string,
+    @Query('cancelSubscription') cancelSubscription?: string,
   ) {
-    return this._billingService.removeOrganizationPaymentMethod(organizationId);
+    return this._billingService.removeOrganizationPaymentMethod(organizationId, {
+      cancelSubscription: cancelSubscription === 'true',
+    });
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('subscriptions/:subscriptionId/cancel')
+  async cancelSubscription(
+    @Param('subscriptionId') subscriptionId: string,
+    @Body() body: { immediate?: boolean },
+  ) {
+    return this._billingService.cancelSubscription(subscriptionId, {
+      immediate: body.immediate || false,
+    });
   }
 
   @Get('monthly-usage/:organizationId')

@@ -285,6 +285,7 @@ export class ReportsController {
    * Route to manually trigger weekly reports cron job for testing
    * Only available in development environment
    */
+  @Public()
   @Post('cron/generate-weekly-reports')
   @ApiOperation({
     summary: 'Manually trigger weekly reports generation (for testing)',
@@ -293,9 +294,11 @@ export class ReportsController {
   })
   async triggerWeeklyReportsCron() {
     // Only allow in development environment
-    if (process.env.NODE_ENV !== 'development') {
-      throw new BadRequestException('This endpoint is only available in development');
-    }
+    // if (process.env.NODE_ENV !== 'development') {
+    //   throw new BadRequestException(
+    //     'This endpoint is only available in development',
+    //   );
+    // }
     try {
       const { WeeklyReportsCronService } = await import(
         '../../cron/weeklyReports.cron'

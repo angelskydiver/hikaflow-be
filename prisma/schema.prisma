@@ -86,9 +86,9 @@ enum ScanStatus {
 
 enum SubscriptionPlanType {
   TRIAL    @map("TRIAL") // Free trial: 2 repos max, 5 questions daily, expires in 15 days
-  BASIC    @map("BASIC") // $20/project + 50 cents per evaluation
-  STANDARD @map("STANDARD") // $30/project + 25 cents per evaluation
-  PREMIUM  @map("PREMIUM") // $50/project + 10 cents per evaluation
+  BASIC    @map("BASIC") // $15/user + 50 cents per evaluation
+  STANDARD @map("STANDARD") // $13/user (50-150 members) + 25 cents per evaluation
+  PREMIUM  @map("PREMIUM") // $10/user (151+ members) + 10 cents per evaluation
   CUSTOM   @map("CUSTOM") // Custom pricing
 }
 
@@ -687,7 +687,7 @@ model PricingPlan {
   id              String               @id @default(uuid())
   name            String
   planType        SubscriptionPlanType
-  basePrice       Float // Base price per project
+  basePrice       Float // Base price per user
   evaluationPrice Float // Price per evaluation
   prAnalysisQuota Int                  @default(20)
   assistantQuota  Int                  @default(50)
@@ -697,7 +697,8 @@ model PricingPlan {
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
 
-  subscriptions Subscription[]
+  subscriptions     Subscription[] @relation("CurrentPlan")
+  nextSubscriptions Subscription[] @relation("NextPlan")
 }
 
 model Subscription {
@@ -705,7 +706,9 @@ model Subscription {
   organizationId       String
   organization         Organization @relation(fields: [organizationId], references: [id])
   pricingPlanId        String
-  pricingPlan          PricingPlan  @relation(fields: [pricingPlanId], references: [id])
+  pricingPlan          PricingPlan  @relation("CurrentPlan", fields: [pricingPlanId], references: [id])
+  nextPricingPlanId    String? // Future plan to activate when current subscription ends
+  nextPricingPlan      PricingPlan? @relation("NextPlan", fields: [nextPricingPlanId], references: [id])
   stripeCustomerId     String? // Keep as is, don't change to a relation yet
   stripeSubscriptionId String? // Stripe subscription ID
   startDate            DateTime     @default(now())
@@ -713,6 +716,7 @@ model Subscription {
   isActive             Boolean      @default(true)
   customBasePrice      Float? // Only for custom plans
   customEvalPrice      Float? // Only for custom plans
+  cancelledAt          DateTime? // When the subscription was cancelled
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
 

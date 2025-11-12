@@ -7,7 +7,7 @@ export interface IPricingPlan {
   id: string;
   name: string;
   planType: SubscriptionPlanType; // Use the proper enum type
-  basePrice: number;
+  basePrice: number; // Base price charged per active user
   evaluationPrice: number;
   prAnalysisQuota: number; // Number of PR analyses included in plan
   assistantQuota: number; // Number of assistant questions included in plan
@@ -60,7 +60,7 @@ export interface IInvoiceItem {
   quantity: number;
   unitPrice: number;
   amount: number;
-  type: string; // PROJECT or EVALUATION
+  type: string; // USER, PROJECT, or EVALUATION
   createdAt: Date;
   updatedAt: Date;
 }
@@ -105,13 +105,31 @@ export interface IOrganization {
 
 export interface IMonthlyUsageReport {
   subscription: {
+    id?: string;
     planType: SubscriptionPlanType;
     startDate: Date;
     endDate: Date;
+    status?: string;
+    pricingPlan?: {
+      id: string;
+      name: string;
+      planType: SubscriptionPlanType;
+      basePrice: number;
+    };
   };
   currentMonthUsage: {
     startDate: Date;
     endDate: Date;
+    members: {
+      total: number;
+      list: Array<{
+        id: string;
+        name: string;
+        role: string;
+        activeDays: number;
+        proratedCost: number;
+      }>;
+    };
     repositories: {
       total: number;
       list: Array<{
@@ -123,15 +141,31 @@ export interface IMonthlyUsageReport {
           count: number;
         }>;
         connectedDays: number;
-        proratedCost: number;
+        usageBreakdown?: {
+          prAnalyses: number;
+          assistantQuestions: number;
+          otherEvaluations: number;
+        };
       }>;
     };
     totalEvaluations: number;
     totalCost: number;
     costBreakdown: {
-      repositoryCost: number;
+      memberCost: number;
       evaluationCost: number;
     };
   };
   invoices: IInvoice[];
+  queuedSubscriptions?: Array<{
+    id: string;
+    pricingPlan: {
+      id: string;
+      name: string;
+      planType: SubscriptionPlanType;
+      basePrice: number;
+    };
+    scheduledStartDate: Date | null;
+    status: string;
+    createdAt: Date;
+  }>;
 }
