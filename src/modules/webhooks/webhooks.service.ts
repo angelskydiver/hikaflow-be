@@ -31,6 +31,7 @@ import { filterFiles } from 'src/config/helpers/unnecessary.files.helper';
 import { MailService } from 'src/mail/mail.service';
 import { queueChangedFilesScan } from 'src/queue/repository.scan.queue';
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
+import { UsageLogType } from '../billing/dto/billing.request.dto';
 import { BillingService } from '../billing/billing.service';
 import { CodeOverviewService } from '../codeOverview/codeOverview.service';
 import { CommentService } from '../comment/comment.service';
@@ -44,40 +45,6 @@ import { RepositoryScanService } from '../repositoryScan/repositoryScan.service'
 import { PrismaService } from './../../prisma/prisma.service';
 
 const MAX_TOKENS = 62000;
-
-/**
- * WebhooksService - Optimized for Performance
- *
- * Performance Improvements Implemented:
- * =====================================
- *
- * 1. **Parallel AI Analysis**:
- *    - Files are processed in batches of 3 concurrently instead of sequentially
- *    - Reduces AI analysis time by ~70%
- *
- * 2. **Database Query Optimization**:
- *    - Repository settings and duplicate code analysis run in parallel
- *    - PR tracker, credentials, and repository fetch operations parallelized
- *
- * 3. **Duplicate Code Analysis Optimization**:
- *    - Chunks processed in parallel batches of 2
- *    - Reduces duplicate code detection time by ~60%
- *
- * 4. **Pipeline Optimization**:
- *    - Reliability analysis runs while preparing other operations
- *    - Comment posting and PR updates executed in parallel
- *    - Final operations (notifications, status updates, billing) parallelized
- *
- * 5. **Rate Limiting & Error Handling**:
- *    - Smart delays between batches to respect API limits
- *    - Graceful error handling with fallbacks
- *    - Individual file error isolation
- *
- * Expected Performance Improvement:
- * - Execution time reduced from 10-12 minutes to 2-6 minutes
- * - ~60-70% faster processing while maintaining analysis quality
- * - Better resource utilization and throughput
- */
 
 @Injectable()
 export class WebhooksService {
@@ -433,7 +400,7 @@ export class WebhooksService {
         await this._billingService.trackUsageWithQuota({
           organizationId: repository.organizationId,
           repositoryId: repository.id,
-          type: 'PR_ANALYSIS',
+          type: UsageLogType.PR_ANALYSIS,
           description: `PR Analysis: #${data.number} in ${data.repository.name}`,
         });
       }
@@ -676,7 +643,7 @@ export class WebhooksService {
         await this._billingService.trackUsageWithQuota({
           organizationId: isBaseBranchMatch.organizationId,
           repositoryId: isBaseBranchMatch.id,
-          type: 'PR_ANALYSIS',
+          type: UsageLogType.PR_ANALYSIS,
           description: `PR Report: #${data.pullrequest.id} in ${data.repository.name}`,
         });
       } catch (logError) {
@@ -1106,7 +1073,7 @@ export class WebhooksService {
         await this._billingService.trackUsageWithQuota({
           organizationId: isBaseBranchMatch.organizationId,
           repositoryId: isBaseBranchMatch.id,
-          type: 'PR_ANALYSIS',
+          type: UsageLogType.PR_ANALYSIS,
           description: `PR Report: #${data.number} in ${data.repository.name}`,
         });
       } catch (logError) {
@@ -1398,7 +1365,7 @@ export class WebhooksService {
         await this._billingService.trackUsageWithQuota({
           organizationId: isBaseBranchMatch.organizationId,
           repositoryId: isBaseBranchMatch.id,
-          type: 'PR_ANALYSIS',
+          type: UsageLogType.PR_ANALYSIS,
           description: `PR Report: #${data.pullrequest.id} in ${data.repository.name}`,
         });
       } catch (logError) {
@@ -1855,7 +1822,7 @@ export class WebhooksService {
           .trackUsageWithQuota({
             organizationId: prInfo.organizationId,
             repositoryId: prInfo.repositoryId,
-            type: 'PR_ANALYSIS',
+            type: UsageLogType.PR_ANALYSIS,
             description: `PR Analysis: #${prInfo.prNumber} in ${prInfo.repo}`,
           })
           .catch((logError) => {
@@ -2770,7 +2737,7 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
           .trackUsageWithQuota({
             organizationId: prInfo.organizationId,
             repositoryId: prInfo.repositoryId,
-            type: 'PR_ANALYSIS',
+            type: UsageLogType.PR_ANALYSIS,
             description: `PR Analysis: #${prInfo.prNumber} in ${prInfo.repo}`,
           })
           .catch((logError) => {
@@ -3115,7 +3082,7 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
       await this._billingService.trackUsageWithQuota({
         organizationId: repository.organizationId,
         repositoryId: repository.id,
-        type: 'ISSUE_ANALYSIS',
+        type: UsageLogType.ISSUE_ANALYSIS,
         description: `Issue Analysis: #${data.issue.number} in ${data.repository.name}`,
       });
 
@@ -3321,7 +3288,7 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
       await this._billingService.trackUsageWithQuota({
         organizationId: repository.organizationId,
         repositoryId: repository.id,
-        type: 'ISSUE_ANALYSIS',
+        type: UsageLogType.ISSUE_ANALYSIS,
         description: `Bitbucket Issue Analysis: #${data.data.issue.id} in ${data.data.repository.name}`,
       });
 

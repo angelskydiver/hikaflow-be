@@ -1,12 +1,23 @@
 import { SubscriptionPlanType } from '@prisma/client';
+import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsDate,
+  IsDateString,
   IsEnum,
   IsNumber,
   IsOptional,
   IsString,
   IsUUID,
 } from 'class-validator';
+
+export enum UsageLogType {
+  PR_ANALYSIS = 'PR_ANALYSIS',
+  ASSISTANT_QUESTION = 'ASSISTANT_QUESTION',
+  EVALUATION = 'EVALUATION',
+  REPOSITORY_REGISTRATION = 'REPOSITORY_REGISTRATION',
+  ISSUE_ANALYSIS = 'ISSUE_ANALYSIS',
+}
 
 export class CreatePricingPlanDto {
   @IsString()
@@ -23,11 +34,11 @@ export class CreatePricingPlanDto {
 
   @IsNumber()
   @IsOptional()
-  prAnalysisQuota?: number = 20; // Number of PR analyses included in plan
+  prAnalysisQuota?: number; // Number of PR analyses included in plan
 
   @IsNumber()
   @IsOptional()
-  assistantQuota?: number = 50; // Number of assistant questions included in plan
+  assistantQuota?: number; // Number of assistant questions included in plan
 
   @IsBoolean()
   @IsOptional()
@@ -90,9 +101,13 @@ export class UpdateSubscriptionDto {
   customEvalPrice?: number;
 
   @IsOptional()
+  @IsDate()
+  @Type(() => Date)
   startDate?: Date;
 
   @IsOptional()
+  @IsDate()
+  @Type(() => Date)
   endDate?: Date;
 }
 
@@ -120,8 +135,8 @@ export class CreateUsageLogDto {
   @IsOptional()
   repositoryId?: string;
 
-  @IsString()
-  type: string; // PR_ANALYSIS, ASSISTANT_QUESTION, etc.
+  @IsEnum(UsageLogType)
+  type: UsageLogType;
 
   @IsString()
   description: string;
@@ -137,11 +152,11 @@ export class GenerateInvoiceDto {
   @IsUUID()
   organizationId: string;
 
-  @IsString()
+  @IsDateString()
   @IsOptional()
   fromDate?: string;
 
-  @IsString()
+  @IsDateString()
   @IsOptional()
   toDate?: string;
 

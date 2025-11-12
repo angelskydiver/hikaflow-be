@@ -40,6 +40,10 @@ const USER_PRICING_TIERS: Record<
   [SubscriptionPlanType.CUSTOM]: { min: 0, max: Infinity, price: 0 },
 };
 
+// Default quota constants
+const DEFAULT_PR_ANALYSIS_QUOTA = 20;
+const DEFAULT_ASSISTANT_QUOTA = 50;
+
 type OrganizationMemberWithAccount = Prisma.OrganizationAccountsGetPayload<{
   include: {
     account: {
@@ -71,7 +75,8 @@ export class BillingService {
     this.stripe = new Stripe(
       this._configService.get<string>('STRIPE_SECRET_KEY'),
       {
-        apiVersion: '2023-10-16', // Use the latest API version
+        apiVersion: (this._configService.get<string>('STRIPE_API_VERSION') ||
+          '2023-10-16') as '2023-10-16',
       },
     );
     console.log(
@@ -82,7 +87,7 @@ export class BillingService {
     this.discountService = new DiscountService(this._prismaService);
     this.paymentQueue = new Queue('payment-events', {
       connection: {
-        host: '127.0.0.1',
+        host: this._configService.get<string>('REDIS_HOST') || '127.0.0.1',
         port: Number(this._configService.get<number>('REDIS_PORT')),
       },
       defaultJobOptions: {
@@ -165,27 +170,10 @@ export class BillingService {
         planType,
         basePrice,
         evaluationPrice,
-        prAnalysisQuota = 20, // Default to 20 if not provided
-        assistantQuota = 50, // Default to 50 if not provided
+        prAnalysisQuota = DEFAULT_PR_ANALYSIS_QUOTA,
+        assistantQuota = DEFAULT_ASSISTANT_QUOTA,
         active = true,
       } = data;
-
-      // Create a product in Stripe
-      // const stripeProduct = await this.stripe.products.create({
-      //   name,
-      //   description: `${name} Plan - $${basePrice}/project + $${evaluationPrice}/evaluation`,
-      //   active,
-      // });
-
-      // // Create a price in Stripe (base price is per project)
-      // const stripePrice = await this.stripe.prices.create({
-      //   unit_amount: Math.round(basePrice * 100), // Convert to cents
-      //   currency: 'usd',
-      //   product: stripeProduct.id,
-      //   recurring: {
-      //     interval: 'month',
-      //   },
-      // });
 
       // Save to database
       return this._prismaService.pricingPlan.create({
@@ -515,13 +503,14 @@ export class BillingService {
         );
 
         const today = new Date();
-        const subscriptionEndDate = subscription.endDate
+        // Handle null/undefined endDate with explicit check
+        const subscriptionEndDate: Date | null = subscription.endDate
           ? new Date(subscription.endDate)
           : null;
+        // If subscription has no end date, consider it active if isActive is true
         const isSubscriptionActive =
           subscription.isActive &&
-          subscriptionEndDate &&
-          subscriptionEndDate > today;
+          (subscriptionEndDate === null || subscriptionEndDate > today);
         const isTrialSubscription =
           subscription.pricingPlan.planType === SubscriptionPlanType.TRIAL;
 
@@ -635,7 +624,8 @@ export class BillingService {
       }
 
       const today = new Date();
-      const subscriptionEndDate = subscription.endDate
+      // Handle null/undefined endDate with explicit check
+      const subscriptionEndDate: Date | null = subscription.endDate
         ? new Date(subscription.endDate)
         : null;
 
@@ -747,16 +737,17 @@ export class BillingService {
       }
 
       // Create the usage log
-      return this._prismaService.usageLog.create({
+      const usageLog = await this._prismaService.usageLog.create({
         data: {
           subscriptionId: activeSubscriptionId,
           organizationId,
           repositoryId,
-          type,
+          type: type as any,
           description,
           counted: false,
         },
       });
+      return usageLog as IUsageLog;
     } catch (error) {
       console.error('Error creating usage log:', error);
       throw new BadRequestException(error.message);
@@ -778,11 +769,12 @@ export class BillingService {
       }
     }
 
-    return this._prismaService.usageLog.findMany({
+    const usageLogs = await this._prismaService.usageLog.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       include: { repository: true },
     });
+    return usageLogs as IUsageLog[];
   }
 
   // ================== INVOICE METHODS ==================
@@ -1331,8 +1323,8 @@ export class BillingService {
           planType: SubscriptionPlanType.TRIAL,
           basePrice: 0, // Free
           evaluationPrice: 0, // Free
-          prAnalysisQuota: 20, // Free PR analyses quota
-          assistantQuota: 50, // Free assistant questions quota
+          prAnalysisQuota: DEFAULT_PR_ANALYSIS_QUOTA,
+          assistantQuota: DEFAULT_ASSISTANT_QUOTA,
         },
         {
           name: 'Basic',
@@ -2789,7 +2781,8 @@ export class BillingService {
       for (const subscription of subscriptionsWithNextPlan) {
         if (!subscription.nextPricingPlanId) continue;
 
-        const subscriptionEndDate = subscription.endDate
+        // Handle null/undefined endDate with explicit check
+        const subscriptionEndDate: Date | null = subscription.endDate
           ? new Date(subscription.endDate)
           : null;
 
@@ -2998,11 +2991,11 @@ export class BillingService {
 
       // Get the quotas from the pricing plan (per user) and scale by active members
       const basePrAnalysisQuota = subscription
-        ? subscription.pricingPlan.prAnalysisQuota || 20
-        : 20; // Default to 20 if not set
+        ? subscription.pricingPlan.prAnalysisQuota || DEFAULT_PR_ANALYSIS_QUOTA
+        : DEFAULT_PR_ANALYSIS_QUOTA;
       const baseAssistantQuota = subscription
-        ? subscription.pricingPlan.assistantQuota || 50
-        : 50; // Default to 50 if not set
+        ? subscription.pricingPlan.assistantQuota || DEFAULT_ASSISTANT_QUOTA
+        : DEFAULT_ASSISTANT_QUOTA;
 
       const totalPrAnalysisQuota =
         basePrAnalysisQuota * organizationMembers.length;

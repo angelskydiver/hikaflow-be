@@ -19,6 +19,8 @@ import { Public } from '../../decorators/public';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   GenerateWeeklyReportDto,
+  GetContributorWeeklyReportDto,
+  GetReportHistoryDto,
   GetWeeklyReportDto,
   ReportType,
 } from './reports.dtos';
@@ -119,31 +121,22 @@ export class ReportsController {
   async getContributorWeeklyReport(
     @Param('accountId') accountId: string,
     @Request() req: any,
-    @Query('startDate') startDate?: string,
-    @Query('organizationId') organizationId?: string,
-    @Query('skip') skip?: string,
-    @Query('take') take?: string,
+    @Query() query: GetContributorWeeklyReportDto,
   ) {
-    if (!organizationId) {
+    if (!query.organizationId) {
       throw new BadRequestException('organizationId required');
     }
     const dto: GetWeeklyReportDto = {
       reportType: ReportType.CONTRIBUTOR,
       accountId,
-      organizationId,
-      startDate,
+      organizationId: query.organizationId,
+      startDate: query.startDate,
+      skip: query.skip,
+      take: query.take,
     };
 
-    // Convert string query params to numbers if provided
-    if (skip) {
-      dto.skip = typeof skip === 'string' ? parseInt(skip, 10) : skip;
-    }
-    if (take) {
-      dto.take = typeof take === 'string' ? parseInt(take, 10) : take;
-    }
-
     // If no startDate provided, return list of available reports
-    if (!startDate) {
+    if (!query.startDate) {
       return await this.reportsService.listWeeklyReports(
         dto,
         req.user.accountId,
@@ -263,21 +256,16 @@ export class ReportsController {
   @ApiBearerAuth()
   @Get('history')
   async getReportHistory(
-    @Query('organizationId') organizationId: string,
-    @Query('reportType') reportType: ReportType,
+    @Query() query: GetReportHistoryDto,
     @Request() req: any,
-    @Query('teamId') teamId?: string,
-    @Query('accountId') accountId?: string,
-    @Query('repositoryId') repositoryId?: string,
-    @Query('limit') limit?: string,
   ) {
     return await this.reportsService.getReportHistory(
-      organizationId,
-      reportType,
-      teamId,
-      accountId,
-      repositoryId,
-      limit ? parseInt(limit) : DEFAULT_REPORT_LIMIT,
+      query.organizationId,
+      query.reportType,
+      query.teamId,
+      query.accountId,
+      query.repositoryId,
+      query.limit || DEFAULT_REPORT_LIMIT,
     );
   }
 
@@ -293,12 +281,6 @@ export class ReportsController {
       'Endpoint to test the weekly reports cron job. Only available in development. Generates reports for all organizations for the previous week.',
   })
   async triggerWeeklyReportsCron() {
-    // Only allow in development environment
-    // if (process.env.NODE_ENV !== 'development') {
-    //   throw new BadRequestException(
-    //     'This endpoint is only available in development',
-    //   );
-    // }
     try {
       const { WeeklyReportsCronService } = await import(
         '../../cron/weeklyReports.cron'
@@ -317,12 +299,11 @@ export class ReportsController {
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
-      console.error('Error triggering weekly reports cron:', error);
-      return {
-        success: false,
-        message: error instanceof Error ? error.message : 'Unknown error',
-        timestamp: new Date().toISOString(),
-      };
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error occurred';
+      throw new BadRequestException(
+        `Failed to trigger weekly reports generation: ${errorMessage}`,
+      );
     }
   }
 }

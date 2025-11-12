@@ -1,7 +1,7 @@
 import { InvoiceStatus, SubscriptionPlanType } from '@prisma/client';
+import { UsageLogType } from '../dto/billing.request.dto';
 
-// No longer needed as TRIAL is now part of the enum in Prisma
-// type ExtendedSubscriptionPlanType = SubscriptionPlanType | 'TRIAL';
+export type InvoiceItemType = 'USER' | 'PROJECT' | 'EVALUATION';
 
 export interface IPricingPlan {
   id: string;
@@ -60,7 +60,7 @@ export interface IInvoiceItem {
   quantity: number;
   unitPrice: number;
   amount: number;
-  type: string; // USER, PROJECT, or EVALUATION
+  type: InvoiceItemType;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -70,7 +70,7 @@ export interface IUsageLog {
   subscriptionId: string;
   organizationId: string;
   repositoryId?: string;
-  type: string;
+  type: UsageLogType;
   description: string;
   counted: boolean;
   invoiceId?: string;
