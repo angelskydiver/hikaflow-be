@@ -101,3 +101,66 @@ export class GetWeeklyReportDto {
   @Type(() => Number)
   take?: number;
 }
+
+export class GetContributorWeeklyReportDto {
+  @ApiProperty({ description: 'Organization ID' })
+  @IsString()
+  organizationId: string;
+
+  @ApiPropertyOptional({ description: 'Start date (ISO format)' })
+  @IsDateString()
+  @IsOptional()
+  startDate?: string;
+
+  @ApiPropertyOptional({
+    description: 'Skip number of records for pagination',
+    type: Number,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  skip?: number;
+
+  @ApiPropertyOptional({
+    description: 'Take number of records for pagination',
+    type: Number,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  take?: number;
+}
+
+export class GetReportHistoryDto {
+  @ApiProperty({ description: 'Organization ID' })
+  @IsString()
+  organizationId: string;
+
+  @ApiProperty({ enum: ReportType })
+  @IsEnum(ReportType)
+  reportType: ReportType;
+
+  @ApiPropertyOptional({ description: 'Team ID' })
+  @IsString()
+  @IsOptional()
+  teamId?: string;
+
+  @ApiPropertyOptional({ description: 'Account ID' })
+  @IsString()
+  @IsOptional()
+  accountId?: string;
+
+  @ApiPropertyOptional({ description: 'Repository ID' })
+  @IsString()
+  @IsOptional()
+  repositoryId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Limit number of records',
+    type: Number,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  limit?: number;
+}

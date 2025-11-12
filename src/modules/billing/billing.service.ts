@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InvoiceStatus, SubscriptionPlanType } from '@prisma/client';
+import { InvoiceStatus, Prisma, SubscriptionPlanType } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { MailService } from 'src/mail/mail.service';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -29,6 +29,37 @@ import {
   IUsageLog,
 } from './interfaces/billing.interface';
 
+const USER_PRICING_TIERS: Record<
+  SubscriptionPlanType,
+  { min: number; max: number; price: number }
+> = {
+  [SubscriptionPlanType.TRIAL]: { min: 0, max: Infinity, price: 0 },
+  [SubscriptionPlanType.BASIC]: { min: 1, max: 49, price: 15 },
+  [SubscriptionPlanType.STANDARD]: { min: 50, max: 150, price: 13 },
+  [SubscriptionPlanType.PREMIUM]: { min: 151, max: Infinity, price: 10 },
+  [SubscriptionPlanType.CUSTOM]: { min: 0, max: Infinity, price: 0 },
+};
+
+// Default quota constants
+const DEFAULT_PR_ANALYSIS_QUOTA = 20;
+const DEFAULT_ASSISTANT_QUOTA = 50;
+
+type OrganizationMemberWithAccount = Prisma.OrganizationAccountsGetPayload<{
+  include: {
+    account: {
+      select: {
+        user: {
+          select: {
+            firstName: true;
+            lastName: true;
+            email: true;
+          };
+        };
+      };
+    };
+  };
+}>;
+
 @Injectable()
 export class BillingService {
   private stripe: Stripe;
@@ -44,7 +75,8 @@ export class BillingService {
     this.stripe = new Stripe(
       this._configService.get<string>('STRIPE_SECRET_KEY'),
       {
-        apiVersion: '2023-10-16', // Use the latest API version
+        apiVersion: (this._configService.get<string>('STRIPE_API_VERSION') ||
+          '2023-10-16') as '2023-10-16',
       },
     );
     console.log(
@@ -55,7 +87,7 @@ export class BillingService {
     this.discountService = new DiscountService(this._prismaService);
     this.paymentQueue = new Queue('payment-events', {
       connection: {
-        host: '127.0.0.1',
+        host: this._configService.get<string>('REDIS_HOST') || '127.0.0.1',
         port: Number(this._configService.get<number>('REDIS_PORT')),
       },
       defaultJobOptions: {
@@ -63,6 +95,70 @@ export class BillingService {
         removeOnFail: 100,
       },
     });
+  }
+
+  private getPricingTier(planType: SubscriptionPlanType) {
+    return (
+      USER_PRICING_TIERS[planType] ||
+      USER_PRICING_TIERS[SubscriptionPlanType.CUSTOM]
+    );
+  }
+
+  private validatePlanForMemberCount(
+    planType: SubscriptionPlanType,
+    memberCount: number,
+  ) {
+    const tier = this.getPricingTier(planType);
+
+    if (!tier || tier.price === 0) {
+      return;
+    }
+
+    if (memberCount < tier.min) {
+      throw new BadRequestException(
+        `The selected plan requires at least ${tier.min} active members. Currently detected: ${memberCount}.`,
+      );
+    }
+
+    if (memberCount > tier.max) {
+      throw new BadRequestException(
+        `The selected plan supports up to ${tier.max} active members. Currently detected: ${memberCount}.`,
+      );
+    }
+  }
+
+  private async getOrganizationMembers(
+    organizationId: string,
+  ): Promise<OrganizationMemberWithAccount[]> {
+    return this._prismaService.organizationAccounts.findMany({
+      where: { organizationId },
+      include: {
+        account: {
+          select: {
+            user: {
+              select: {
+                firstName: true,
+                lastName: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  private getMemberDisplayName(member: OrganizationMemberWithAccount) {
+    const firstName = member.account?.user?.firstName?.trim();
+    const lastName = member.account?.user?.lastName?.trim();
+    const email = member.account?.user?.email;
+
+    if (firstName || lastName) {
+      return `${firstName || ''} ${lastName || ''}`.trim();
+    }
+
+    return email || 'Member';
   }
 
   // ================== PRICING PLAN METHODS ==================
@@ -74,27 +170,10 @@ export class BillingService {
         planType,
         basePrice,
         evaluationPrice,
-        prAnalysisQuota = 20, // Default to 20 if not provided
-        assistantQuota = 50, // Default to 50 if not provided
+        prAnalysisQuota = DEFAULT_PR_ANALYSIS_QUOTA,
+        assistantQuota = DEFAULT_ASSISTANT_QUOTA,
         active = true,
       } = data;
-
-      // Create a product in Stripe
-      // const stripeProduct = await this.stripe.products.create({
-      //   name,
-      //   description: `${name} Plan - $${basePrice}/project + $${evaluationPrice}/evaluation`,
-      //   active,
-      // });
-
-      // // Create a price in Stripe (base price is per project)
-      // const stripePrice = await this.stripe.prices.create({
-      //   unit_amount: Math.round(basePrice * 100), // Convert to cents
-      //   currency: 'usd',
-      //   product: stripeProduct.id,
-      //   recurring: {
-      //     interval: 'month',
-      //   },
-      // });
 
       // Save to database
       return this._prismaService.pricingPlan.create({
@@ -265,6 +344,18 @@ export class BillingService {
         }
       }
 
+      const organizationMembers =
+        await this.getOrganizationMembers(organizationId);
+      const activeMemberCount = organizationMembers.length;
+
+      if (activeMemberCount === 0) {
+        throw new BadRequestException(
+          'At least one active member is required to create a subscription.',
+        );
+      }
+
+      this.validatePlanForMemberCount(pricingPlan.planType, activeMemberCount);
+
       // Create or get Stripe customer
       let stripeCustomerId: string;
       const organizationsCustomerId = (
@@ -397,86 +488,100 @@ export class BillingService {
         throw new NotFoundException('Subscription not found');
       }
 
-      // Handle plan changes - reset subscription period for any plan change
+      // Handle plan changes
       if (
         data.pricingPlanId &&
         data.pricingPlanId !== subscription.pricingPlanId
       ) {
-        try {
-          // Only generate final invoice for non-TRIAL plans (trials don't get invoiced)
-          if (
-            subscription.pricingPlan.planType !== SubscriptionPlanType.TRIAL
-          ) {
-            // Generate a final invoice for the current subscription period
-            console.log(
-              `Generating final invoice for subscription ${subscriptionId} before plan change`,
-            );
+        const newPlan = await this.getPricingPlanById(data.pricingPlanId);
+        const organizationMembers = await this.getOrganizationMembers(
+          subscription.organizationId,
+        );
+        this.validatePlanForMemberCount(
+          newPlan.planType,
+          organizationMembers.length,
+        );
 
-            // Calculate the exact number of days the current subscription has been active
-            const today = new Date();
-            const startDate = subscription.startDate;
-            const daysActive = Math.ceil(
-              (today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24),
-            );
+        const today = new Date();
+        // Handle null/undefined endDate with explicit check
+        const subscriptionEndDate: Date | null = subscription.endDate
+          ? new Date(subscription.endDate)
+          : null;
+        // If subscription has no end date, consider it active if isActive is true
+        const isSubscriptionActive =
+          subscription.isActive &&
+          (subscriptionEndDate === null || subscriptionEndDate > today);
+        const isTrialSubscription =
+          subscription.pricingPlan.planType === SubscriptionPlanType.TRIAL;
 
-            console.log(
-              `Subscription was active for ${daysActive} days before change`,
-            );
-
-            await this.generateInvoice({
-              organizationId: subscription.organizationId,
-              fromDate: subscription.startDate.toISOString(),
-              toDate: today.toISOString(), // Invoice up to current date
-              isForSubscriptionUpdate: true,
+        // If subscription is active (not trial) and hasn't ended, queue the change
+        if (isSubscriptionActive && !isTrialSubscription) {
+          // Store the next plan ID in the subscription itself
+          const updatedSubscription =
+            await this._prismaService.subscription.update({
+              where: { id: subscriptionId },
+              data: {
+                nextPricingPlanId: data.pricingPlanId,
+              },
+              include: {
+                pricingPlan: true,
+                nextPricingPlan: true,
+              },
             });
-          }
 
-          // Reset subscription period for ANY plan change (including from TRIAL to paid)
-          const newStartDate = new Date();
-          const newEndDate = new Date();
-          newEndDate.setDate(newStartDate.getDate() + 30); // 30 days from now
+          return {
+            ...updatedSubscription,
+            message:
+              'Subscription change queued. It will activate when your current subscription ends.',
+          } as any;
+        }
 
+        // If trial subscription or subscription has ended, allow immediate change
+        // PREPAID MODEL: Charge immediately for full new period, no proration
+        // Reset subscription period for plan change
+        const newStartDate = new Date();
+        const newEndDate = new Date();
+        newEndDate.setDate(newStartDate.getDate() + 30); // 30 days from now
+
+        console.log(
+          `Resetting subscription period: ${newStartDate.toISOString()} to ${newEndDate.toISOString()}`,
+        );
+
+        // Add new dates to the update data
+        data = {
+          ...data,
+          startDate: newStartDate,
+          endDate: newEndDate,
+        };
+
+        // PREPAID: Generate and pay invoice immediately for the NEW full period
+        // No need to invoice for old period - prepaid model means they've already paid
+        // Generate invoice for both trial upgrades and paid plan changes
+        try {
+          // Generate invoice for the NEW subscription period (full 30 days)
+          await this.generateInvoice({
+            organizationId: subscription.organizationId,
+            fromDate: newStartDate.toISOString(),
+            toDate: newEndDate.toISOString(),
+            isForSubscriptionUpdate: false, // This is a new prepaid period
+          });
           console.log(
-            `Resetting subscription period: ${newStartDate.toISOString()} to ${newEndDate.toISOString()}`,
+            `Prepaid invoice generated for ${isTrialSubscription ? 'trial upgrade' : 'plan change'}`,
           );
-
-          // Add new dates to the update data
-          data = {
-            ...data,
-            startDate: newStartDate,
-            endDate: newEndDate,
-          };
         } catch (invoiceError) {
           console.error(
-            'Error generating final invoice for old subscription:',
+            'Error generating prepaid invoice for new subscription:',
             invoiceError.message,
           );
           // Continue with subscription update even if invoicing fails
-
-          // Still reset the subscription period even if invoicing fails
-          const newStartDate = new Date();
-          const newEndDate = new Date();
-          newEndDate.setDate(newStartDate.getDate() + 30);
-
-          data = {
-            ...data,
-            startDate: newStartDate,
-            endDate: newEndDate,
-          };
         }
       }
 
       // Handle subscription cancellation
       if (data.isActive === false && subscription.isActive) {
-        // Add endDate to the data object
-        const updateData = {
-          ...data,
-          endDate: new Date(),
-        };
-
-        return this._prismaService.subscription.update({
-          where: { id: subscriptionId },
-          data: updateData,
+        // Use dedicated cancellation method
+        return this.cancelSubscription(subscriptionId, {
+          immediate: data.immediate || false, // Default to end of period
         });
       }
 
@@ -488,6 +593,96 @@ export class BillingService {
       });
     } catch (error) {
       console.error('Error updating subscription:', error);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  /**
+   * Cancels a subscription
+   * @param subscriptionId - The subscription to cancel
+   * @param options - Cancellation options
+   * @param options.immediate - If true, cancel immediately. If false, cancel at end of period.
+   */
+  async cancelSubscription(
+    subscriptionId: string,
+    options: { immediate?: boolean } = {},
+  ): Promise<ISubscription> {
+    try {
+      const { immediate = false } = options;
+
+      const subscription = await this._prismaService.subscription.findUnique({
+        where: { id: subscriptionId },
+        include: { pricingPlan: true },
+      });
+
+      if (!subscription) {
+        throw new NotFoundException('Subscription not found');
+      }
+
+      if (!subscription.isActive) {
+        throw new BadRequestException('Subscription is already cancelled');
+      }
+
+      const today = new Date();
+      // Handle null/undefined endDate with explicit check
+      const subscriptionEndDate: Date | null = subscription.endDate
+        ? new Date(subscription.endDate)
+        : null;
+
+      // Clear any queued subscription changes
+      if (subscription.nextPricingPlanId) {
+        await this._prismaService.subscription.update({
+          where: { id: subscriptionId },
+          data: { nextPricingPlanId: null },
+        });
+        console.log(`Cleared queued subscription change for ${subscriptionId}`);
+      }
+
+      // Handle immediate cancellation
+      if (immediate) {
+        // PREPAID MODEL: No refund or final invoice needed
+        // User has already paid for the period, cancellation just stops access
+        // No need to generate invoice - they keep what they paid for
+
+        // Cancel Stripe subscription if exists
+        if (subscription.stripeSubscriptionId) {
+          try {
+            await this.stripe.subscriptions.cancel(
+              subscription.stripeSubscriptionId,
+            );
+          } catch (stripeError) {
+            console.error('Error cancelling Stripe subscription:', stripeError);
+            // Continue with database cancellation even if Stripe fails
+          }
+        }
+
+        // Deactivate subscription immediately
+        return this._prismaService.subscription.update({
+          where: { id: subscriptionId },
+          data: {
+            isActive: false,
+            endDate: today,
+          },
+        });
+      }
+
+      // Handle end-of-period cancellation
+      // Set endDate to current endDate (or today if null) - no renewal
+      const cancellationDate = subscriptionEndDate || today;
+
+      // Update subscription to not renew (keep active until endDate)
+      // Mark as cancelled so cron knows not to renew
+      return this._prismaService.subscription.update({
+        where: { id: subscriptionId },
+        data: {
+          endDate: cancellationDate,
+          cancelledAt: today, // Mark as cancelled - prevents renewal
+          // Keep isActive = true until endDate arrives
+          // Daily cron will handle deactivation when endDate arrives
+        },
+      });
+    } catch (error) {
+      console.error('Error cancelling subscription:', error);
       throw new BadRequestException(error.message);
     }
   }
@@ -542,16 +737,17 @@ export class BillingService {
       }
 
       // Create the usage log
-      return this._prismaService.usageLog.create({
+      const usageLog = await this._prismaService.usageLog.create({
         data: {
           subscriptionId: activeSubscriptionId,
           organizationId,
           repositoryId,
-          type,
+          type: type as any,
           description,
           counted: false,
         },
       });
+      return usageLog as IUsageLog;
     } catch (error) {
       console.error('Error creating usage log:', error);
       throw new BadRequestException(error.message);
@@ -573,11 +769,12 @@ export class BillingService {
       }
     }
 
-    return this._prismaService.usageLog.findMany({
+    const usageLogs = await this._prismaService.usageLog.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       include: { repository: true },
     });
+    return usageLogs as IUsageLog[];
   }
 
   // ================== INVOICE METHODS ==================
@@ -641,7 +838,7 @@ export class BillingService {
 
       console.log('check post 03');
 
-      // Get uncounted usage logs
+      // Get uncounted usage logs (for record keeping)
       const usageLogs = await this._prismaService.usageLog.findMany({
         where: {
           organizationId: data.organizationId,
@@ -652,229 +849,72 @@ export class BillingService {
         },
       });
 
-      // Separate usage logs by type
-      const prAnalysisLogs = usageLogs.filter(
-        (log) => log.type === 'PR_ANALYSIS',
-      );
-      const assistantQuestionLogs = usageLogs.filter(
-        (log) => log.type === 'ASSISTANT_QUESTION',
-      );
-      const otherLogs = usageLogs.filter(
-        (log) =>
-          log.type !== 'PR_ANALYSIS' && log.type !== 'ASSISTANT_QUESTION',
+      const organizationMembers = await this.getOrganizationMembers(
+        data.organizationId,
       );
 
-      // Get all repositories for this organization with their creation dates
-      const organizationRepositories =
-        await this._prismaService.repository.findMany({
-          where: {
-            organizationId: data.organizationId,
-          },
-          select: {
-            id: true,
-            name: true,
-            createdAt: true,
-          },
-        });
-
-      console.log('check post 04');
-
-      // Skip invoicing if there are no repositories and no usage logs
-      if (organizationRepositories.length === 0 && usageLogs.length === 0) {
+      // Skip invoicing if there are no members and no usage logs
+      if (organizationMembers.length === 0 && usageLogs.length === 0) {
         return {
-          message: 'No repositories or usage logs to generate invoice',
+          message: 'No active members or usage logs to generate invoice',
           success: false,
         };
       }
 
-      // Calculate prorated amounts for each repository - AT INVOICE CREATION TIME
-      let totalRepositoryAmount = 0;
-      const repositoryLineItems = [];
+      // Calculate prorated amounts for each member - AT INVOICE CREATION TIME
+      let totalMemberAmount = 0;
+      const memberLineItems = [];
 
       // Calculate amounts based on pricing plan - use CURRENT pricing
       const planType = subscription.pricingPlan.planType;
-      let basePrice: number, evalPrice: number;
+      this.validatePlanForMemberCount(planType, organizationMembers.length);
 
-      if (planType === SubscriptionPlanType.CUSTOM) {
-        basePrice = subscription.customBasePrice;
-        evalPrice = subscription.customEvalPrice;
-      } else {
-        basePrice = subscription.pricingPlan.basePrice;
-        evalPrice = subscription.pricingPlan.evaluationPrice;
-      }
+      let basePrice =
+        planType === SubscriptionPlanType.CUSTOM
+          ? subscription.customBasePrice
+          : subscription.pricingPlan.basePrice;
 
-      // Get the quotas from the pricing plan
-      const prAnalysisQuota = subscription.pricingPlan.prAnalysisQuota || 20; // Default to 20 if not set
-      const assistantQuota = subscription.pricingPlan.assistantQuota || 50; // Default to 50 if not set
+      basePrice = basePrice ?? 0;
 
-      console.log('check post 05');
+      const memberDailyRate = basePrice / totalDaysInPeriod;
 
-      // Initialize evaluation line items array and total
-      const evaluationLineItems = [];
-      let totalEvaluationsAmount = 0;
-
-      // Process each repository to calculate prorated costs
-      for (const repo of organizationRepositories) {
-        // When we're called from updateSubscription, we're explicitly calculating
-        // for the exact period from subscription start to today
-
-        // For normal billing, determine when the repository was connected during the billing period
-        const repoStartDate = new Date(
-          Math.max(repo.createdAt.getTime(), options.fromDate.getTime()),
+      for (const member of organizationMembers) {
+        const memberStartDate = new Date(
+          Math.max(member.createdAt.getTime(), options.fromDate.getTime()),
         );
 
-        // Calculate how many days the repository was connected in this period
-        let daysConnected;
+        let daysActive;
         if (isForSubscriptionUpdate) {
-          daysConnected = Math.ceil(
+          daysActive = Math.ceil(
             (options.toDate.getTime() - options.fromDate.getTime()) /
               (1000 * 60 * 60 * 24),
           );
         } else {
-          daysConnected = Math.ceil(
-            (options.toDate.getTime() - repoStartDate.getTime()) /
+          daysActive = Math.ceil(
+            (options.toDate.getTime() - memberStartDate.getTime()) /
               (1000 * 60 * 60 * 24),
           );
         }
 
-        // Ensure we don't have negative days or zero days (minimum 1 day)
-        const effectiveDaysConnected = Math.max(
+        const effectiveDaysActive = Math.max(
           1,
-          Math.min(daysConnected, totalDaysInPeriod),
+          Math.min(daysActive, totalDaysInPeriod),
         );
 
-        console.log(
-          `Repository ${repo.name} connected for ${effectiveDaysConnected}/${totalDaysInPeriod} days`,
-        );
+        const proratedAmount = memberDailyRate * effectiveDaysActive;
+        totalMemberAmount += proratedAmount;
 
-        // Calculate prorated amount - if connected for full period, charge full amount
-        const proratedFactor = effectiveDaysConnected / totalDaysInPeriod;
-        const dailyBasePrice = basePrice / totalDaysInPeriod;
-        const proratedAmount = dailyBasePrice * effectiveDaysConnected;
-
-        console.log(
-          `Repository ${repo.name} prorated amount: $${proratedAmount.toFixed(2)}`,
-        );
-
-        // Add to total and create line item
-        totalRepositoryAmount += proratedAmount;
-
-        repositoryLineItems.push({
-          description: `Repository: ${repo.name} (${effectiveDaysConnected}/${totalDaysInPeriod} days)`,
+        memberLineItems.push({
+          description: `Member: ${this.getMemberDisplayName(member)} (${effectiveDaysActive}/${totalDaysInPeriod} days)`,
           quantity: 1,
-          unitPrice: proratedAmount,
+          unitPrice: basePrice,
           amount: proratedAmount,
-          type: 'PROJECT',
-        });
-
-        // Get PR analysis logs for this repository
-        const repoAnalysisLogs = prAnalysisLogs.filter(
-          (log) => log.repositoryId === repo.id,
-        );
-
-        // Process PR analysis logs with quota
-        if (repoAnalysisLogs.length > 0) {
-          // Within quota (free)
-          const withinQuotaCount = Math.min(
-            repoAnalysisLogs.length,
-            prAnalysisQuota,
-          );
-
-          if (withinQuotaCount > 0) {
-            evaluationLineItems.push({
-              description: `PR Analyses for ${repo.name} (within quota)`,
-              quantity: withinQuotaCount,
-              unitPrice: 0,
-              amount: 0,
-              type: 'PR_ANALYSIS',
-            });
-          }
-
-          // Beyond quota (billable)
-          const beyondQuotaCount = Math.max(
-            0,
-            repoAnalysisLogs.length - prAnalysisQuota,
-          );
-
-          if (beyondQuotaCount > 0) {
-            const amount = beyondQuotaCount * evalPrice;
-            totalEvaluationsAmount += amount;
-
-            evaluationLineItems.push({
-              description: `PR Analyses for ${repo.name} (beyond quota)`,
-              quantity: beyondQuotaCount,
-              unitPrice: evalPrice,
-              amount,
-              type: 'PR_ANALYSIS',
-            });
-          }
-        }
-
-        // Get assistant question logs for this repository
-        const repoAssistantLogs = assistantQuestionLogs.filter(
-          (log) => log.repositoryId === repo.id,
-        );
-
-        // Process assistant question logs with quota
-        if (repoAssistantLogs.length > 0) {
-          // Within quota (free)
-          const withinQuotaCount = Math.min(
-            repoAssistantLogs.length,
-            assistantQuota,
-          );
-
-          if (withinQuotaCount > 0) {
-            evaluationLineItems.push({
-              description: `Assistant Questions for ${repo.name} (within quota)`,
-              quantity: withinQuotaCount,
-              unitPrice: 0,
-              amount: 0,
-              type: 'ASSISTANT_QUESTION',
-            });
-          }
-
-          // Beyond quota (billable at 1/3 the evaluation price)
-          const beyondQuotaCount = Math.max(
-            0,
-            repoAssistantLogs.length - assistantQuota,
-          );
-
-          if (beyondQuotaCount > 0) {
-            const amount = beyondQuotaCount * (evalPrice / 3);
-            totalEvaluationsAmount += amount;
-
-            evaluationLineItems.push({
-              description: `Assistant Questions for ${repo.name} (beyond quota)`,
-              quantity: beyondQuotaCount,
-              unitPrice: evalPrice / 3,
-              amount,
-              type: 'ASSISTANT_QUESTION',
-            });
-          }
-        }
-      }
-
-      // Process other evaluation logs (not repository-specific)
-      const otherEvaluationLogs = usageLogs.filter(
-        (log) =>
-          log.type !== 'PR_ANALYSIS' && log.type !== 'ASSISTANT_QUESTION',
-      );
-
-      if (otherEvaluationLogs.length > 0) {
-        const amount = otherEvaluationLogs.length * evalPrice;
-        totalEvaluationsAmount += amount;
-
-        evaluationLineItems.push({
-          description: `Other Evaluations`,
-          quantity: otherEvaluationLogs.length,
-          unitPrice: evalPrice,
-          amount,
-          type: 'OTHER_EVALUATION',
+          type: 'USER',
         });
       }
 
-      // Calculate final amounts AT INVOICE TIME
-      const subtotal = totalRepositoryAmount + totalEvaluationsAmount;
+      // Usage-based charges are not billed under the per-seat model
+      const subtotal = totalMemberAmount;
 
       console.log('check post 06: ', subtotal);
 
@@ -915,9 +955,9 @@ export class BillingService {
           status: InvoiceStatus.PENDING, // Initially PENDING until payment is processed
           dueDate: new Date(), // Due same day as creation
           stripeInvoiceId: '', // No Stripe invoice involved
-          description: `Invoice for ${organizationRepositories.length} repositories and various evaluations`,
+          description: `Invoice for ${organizationMembers.length} active members and usage`,
           invoiceItems: {
-            create: [...repositoryLineItems, ...evaluationLineItems],
+            create: memberLineItems,
           },
         },
       });
@@ -1283,13 +1323,13 @@ export class BillingService {
           planType: SubscriptionPlanType.TRIAL,
           basePrice: 0, // Free
           evaluationPrice: 0, // Free
-          prAnalysisQuota: 20, // Free PR analyses quota
-          assistantQuota: 50, // Free assistant questions quota
+          prAnalysisQuota: DEFAULT_PR_ANALYSIS_QUOTA,
+          assistantQuota: DEFAULT_ASSISTANT_QUOTA,
         },
         {
           name: 'Basic',
           planType: SubscriptionPlanType.BASIC,
-          basePrice: 20, // $20 per project
+          basePrice: USER_PRICING_TIERS[SubscriptionPlanType.BASIC].price, // $15 per user
           evaluationPrice: 0.5, // 50 cents per evaluation
           prAnalysisQuota: 20, // PR analyses quota
           assistantQuota: 50, // Assistant questions quota
@@ -1297,7 +1337,7 @@ export class BillingService {
         {
           name: 'Standard',
           planType: SubscriptionPlanType.STANDARD,
-          basePrice: 30, // $30 per project
+          basePrice: USER_PRICING_TIERS[SubscriptionPlanType.STANDARD].price, // $13 per user for 50-150 members
           evaluationPrice: 0.25, // 25 cents per evaluation
           prAnalysisQuota: 20, // PR analyses quota
           assistantQuota: 50, // Assistant questions quota
@@ -1305,7 +1345,7 @@ export class BillingService {
         {
           name: 'Premium',
           planType: SubscriptionPlanType.PREMIUM,
-          basePrice: 50, // $50 per project
+          basePrice: USER_PRICING_TIERS[SubscriptionPlanType.PREMIUM].price, // $10 per user for 151+ members
           evaluationPrice: 0.1, // 10 cents per evaluation
           prAnalysisQuota: 20, // PR analyses quota
           assistantQuota: 50, // Assistant questions quota
@@ -1729,6 +1769,7 @@ export class BillingService {
     processed: number;
     invoicesGenerated: number;
     subscriptionsRenewed: number;
+    queuesProcessed: number;
   }> {
     try {
       console.log('Starting daily subscription check and invoice generation');
@@ -1753,6 +1794,7 @@ export class BillingService {
           include: {
             organization: true,
             pricingPlan: true,
+            nextPricingPlan: true,
           },
         });
 
@@ -1762,6 +1804,7 @@ export class BillingService {
 
       let invoicesGenerated = 0;
       let subscriptionsRenewed = 0;
+      let queuesProcessed = 0;
 
       // Process each expiring subscription
       for (const subscription of expiredSubscriptions) {
@@ -1780,15 +1823,118 @@ export class BillingService {
             continue;
           }
 
-          // Generate invoice - this will already attempt payment if payment method exists
-          console.log(`Generating invoice for subscription ${subscription.id}`);
+          // PRIORITY: Check if there's a queued subscription change
+          if (subscription.nextPricingPlanId) {
+            console.log(
+              `Processing queued subscription change for ${subscription.id} (switching to plan ${subscription.nextPricingPlanId})`,
+            );
+
+            try {
+              // PREPAID MODEL: No final invoice for old subscription - they've already paid
+              // Deactivate old subscription
+              await this._prismaService.subscription.update({
+                where: { id: subscription.id },
+                data: { isActive: false, nextPricingPlanId: null },
+              });
+
+              // Create new subscription with queued plan
+              const newStartDate = subscription.endDate || new Date();
+              const newEndDate = new Date(newStartDate);
+              newEndDate.setDate(newEndDate.getDate() + 30);
+
+              const newSubscription =
+                await this._prismaService.subscription.create({
+                  data: {
+                    organizationId: subscription.organizationId,
+                    pricingPlanId: subscription.nextPricingPlanId,
+                    stripeCustomerId: subscription.stripeCustomerId,
+                    startDate: newStartDate,
+                    endDate: newEndDate,
+                    isActive: true,
+                  },
+                });
+
+              // PREPAID: Generate and pay invoice immediately for the NEW subscription period
+              try {
+                const newInvoiceResult = await this.generateInvoice({
+                  organizationId: subscription.organizationId,
+                  fromDate: newStartDate.toISOString(),
+                  toDate: newEndDate.toISOString(),
+                });
+
+                if ('id' in newInvoiceResult) {
+                  invoicesGenerated++;
+                }
+              } catch (invoiceError) {
+                console.error(
+                  `Error generating prepaid invoice for queued subscription:`,
+                  invoiceError,
+                );
+                // Continue even if invoice generation fails
+              }
+
+              queuesProcessed++;
+              subscriptionsRenewed++; // Count as renewal since new subscription created
+              console.log(
+                `Queued subscription change processed successfully for ${subscription.id} -> ${newSubscription.id}`,
+              );
+            } catch (queueError) {
+              console.error(
+                `Error processing queued subscription ${subscription.id}:`,
+                queueError.message,
+              );
+              // Fall through to normal renewal if queue processing fails
+            }
+            continue; // Skip normal renewal since queue was processed
+          }
+
+          // Normal renewal flow (no queue)
+          // Check if subscription was cancelled (end-of-period cancellation)
+          if (subscription.cancelledAt) {
+            // Subscription was cancelled at end of period - don't renew
+            await this._prismaService.subscription.update({
+              where: { id: subscription.id },
+              data: { isActive: false },
+            });
+            console.log(
+              `Subscription ${subscription.id} deactivated - was cancelled at end of period`,
+            );
+            continue;
+          }
+
+          // Check if organization has payment method - if not, subscription was likely cancelled
+          const organization =
+            await this._prismaService.organization.findUnique({
+              where: { id: subscription.organizationId },
+              select: { defaultPaymentMethodId: true },
+            });
+
+          if (!organization?.defaultPaymentMethodId) {
+            // No payment method = subscription cancelled, don't renew
+            await this._prismaService.subscription.update({
+              where: { id: subscription.id },
+              data: { isActive: false },
+            });
+            console.log(
+              `Subscription ${subscription.id} deactivated - no payment method (cancelled)`,
+            );
+            continue;
+          }
+
+          // PREPAID RENEWAL: Generate invoice for NEXT period (30 days from now)
+          // Charge upfront for the renewal period
+          console.log(
+            `Generating prepaid renewal invoice for subscription ${subscription.id}`,
+          );
+          const newStartDate = new Date();
+          const newEndDate = new Date();
+          newEndDate.setDate(newEndDate.getDate() + 30); // 30 days from now
+
           const invoiceResult = await this.generateInvoice({
             organizationId: subscription.organizationId,
-            fromDate: subscription.startDate.toISOString(),
-            toDate: subscription.endDate
-              ? subscription.endDate.toISOString()
-              : new Date().toISOString(),
-            isForSubscriptionUpdate: false,
+            fromDate: newStartDate.toISOString(),
+            toDate: newEndDate.toISOString(),
+            isForSubscriptionUpdate: false, // This is a prepaid renewal
           });
 
           // If invoice was successfully generated
@@ -1802,14 +1948,11 @@ export class BillingService {
 
             if (invoice.status === InvoiceStatus.PAID) {
               // Payment was successful, create new subscription period
-              const newEndDate = new Date();
-              newEndDate.setDate(newEndDate.getDate() + 30); // 30 days from now
-
               await this._prismaService.subscription.update({
                 where: { id: subscription.id },
                 data: {
                   isActive: true,
-                  startDate: new Date(), // Today
+                  startDate: newStartDate, // Today
                   endDate: newEndDate,
                 },
               });
@@ -1841,6 +1984,7 @@ export class BillingService {
         processed: expiredSubscriptions.length,
         invoicesGenerated,
         subscriptionsRenewed,
+        queuesProcessed,
       };
     } catch (error) {
       console.error('Error running daily subscription check:', error);
@@ -1961,6 +2105,10 @@ export class BillingService {
     paymentMethodId: string,
   ): Promise<any> {
     try {
+      console.log(`\n========== SAVE PAYMENT METHOD START ==========`);
+      console.log(`Organization ID: ${organizationId}`);
+      console.log(`Payment Method ID: ${paymentMethodId}`);
+
       // Get the organization
       const organization = await this._prismaService.organization.findUnique({
         where: { id: organizationId },
@@ -1976,26 +2124,340 @@ export class BillingService {
         throw new NotFoundException('Organization not found');
       }
 
-      // Get the Stripe customer ID from the active subscription
-      let stripeCustomerId: string;
+      console.log(
+        `Stored Payment Method ID: ${organization.defaultPaymentMethodId}`,
+      );
+      console.log(
+        `IDs Match: ${organization.defaultPaymentMethodId === paymentMethodId}`,
+      );
 
-      if (organization.subscriptions && organization.subscriptions.length > 0) {
-        stripeCustomerId = organization.subscriptions[0].stripeCustomerId;
-      } else {
-        // If no active subscription, create a customer in Stripe
-        const customer = await this.stripe.customers.create({
-          name: organization.name,
-          metadata: {
-            organizationId,
-          },
-        });
-        stripeCustomerId = customer.id;
+      // OPTIMAL SOLUTION: Check if organization already has a valid payment method
+      // If yes and it's the same one, just return success (no need to reattach)
+      if (
+        organization.defaultPaymentMethodId &&
+        organization.defaultPaymentMethodId === paymentMethodId
+      ) {
+        console.log(`\n--- Checking existing payment method ---`);
+
+        try {
+          // Verify the payment method is still valid and attached
+          const existingPaymentMethod =
+            await this.stripe.paymentMethods.retrieve(paymentMethodId);
+          console.log(
+            `Existing PM customer: ${existingPaymentMethod.customer || 'null (DETACHED)'}`,
+          );
+
+          if (existingPaymentMethod.customer) {
+            // Payment method is already attached and valid - no need to do anything
+            console.log(`✓ Payment method is valid and attached`);
+            console.log(
+              `========== SAVE PAYMENT METHOD END (SUCCESS) ==========\n`,
+            );
+            return {
+              success: true,
+              organizationId,
+              paymentMethodId,
+              message: 'Payment method already saved',
+            };
+          } else {
+            // Payment method exists but was detached
+            // AGGRESSIVE SOLUTION: Create NEW Stripe customer
+            console.log(
+              `✗ Payment method was DETACHED - creating NEW Stripe customer...`,
+            );
+
+            // Step 1: Create new Stripe customer
+            const newCustomer = await this.stripe.customers.create({
+              name: organization.name,
+              metadata: {
+                organizationId,
+                reason: 'Recreated due to detached payment method',
+              },
+            });
+            console.log(`✓ Created new Stripe customer: ${newCustomer.id}`);
+
+            // Step 2: Update subscriptions
+            if (
+              organization.subscriptions &&
+              organization.subscriptions.length > 0
+            ) {
+              await this._prismaService.subscription.update({
+                where: { id: organization.subscriptions[0].id },
+                data: { stripeCustomerId: newCustomer.id },
+              });
+              console.log(`✓ Updated subscription to new customer`);
+            }
+
+            // Step 3: Clear from database
+            await this._prismaService.organization.update({
+              where: { id: organizationId },
+              data: {
+                defaultPaymentMethodId: null,
+              } as any,
+            });
+            console.log(`✓ Cleared from database`);
+
+            // Ask user to refresh and retry with new customer
+            console.log(
+              `\n✓ New customer created. Refresh page and enter card again.`,
+            );
+            console.log(
+              `========== SAVE PAYMENT METHOD END (NEW CUSTOMER CREATED) ==========\n`,
+            );
+            throw new BadRequestException({
+              message:
+                'System reset complete. Page will refresh - please enter your card again.',
+              code: 'PAYMENT_METHOD_DELETED_RETRY',
+              statusCode: 400,
+            });
+          }
+        } catch (checkError: any) {
+          // If it's our custom error, re-throw it
+          if (checkError instanceof BadRequestException) {
+            throw checkError;
+          }
+
+          // Payment method doesn't exist - clear from database
+          if (checkError.code === 'resource_missing') {
+            console.log(
+              `Existing payment method ${paymentMethodId} doesn't exist in Stripe, clearing from database`,
+            );
+            await this._prismaService.organization.update({
+              where: { id: organizationId },
+              data: {
+                defaultPaymentMethodId: null,
+              } as any,
+            });
+
+            // Continue to attach - this will fail with proper error if PM was detached
+            console.log('Will continue to try attaching new payment method');
+          }
+        }
       }
 
-      // Attach the payment method to the Stripe customer
-      await this.stripe.paymentMethods.attach(paymentMethodId, {
-        customer: stripeCustomerId,
-      });
+      // Get the Stripe customer ID from the active subscription or any subscription
+      let stripeCustomerId: string;
+
+      // First, determine the Stripe customer ID (get or create)
+      if (organization.subscriptions && organization.subscriptions.length > 0) {
+        // Use existing customer from subscription
+        stripeCustomerId = organization.subscriptions[0].stripeCustomerId;
+
+        // If no customer ID in subscription, create one
+        if (!stripeCustomerId) {
+          const customer = await this.stripe.customers.create({
+            name: organization.name,
+            metadata: {
+              organizationId,
+            },
+          });
+          stripeCustomerId = customer.id;
+
+          // Update subscription with customer ID
+          await this._prismaService.subscription.update({
+            where: { id: organization.subscriptions[0].id },
+            data: { stripeCustomerId: customer.id },
+          });
+        }
+      } else {
+        // If no active subscription, check for any subscription with customer ID
+        const anySubscription =
+          await this._prismaService.subscription.findFirst({
+            where: { organizationId },
+            orderBy: { createdAt: 'desc' },
+          });
+
+        if (anySubscription?.stripeCustomerId) {
+          stripeCustomerId = anySubscription.stripeCustomerId;
+        } else {
+          // Create a new customer in Stripe
+          const customer = await this.stripe.customers.create({
+            name: organization.name,
+            metadata: {
+              organizationId,
+            },
+          });
+          stripeCustomerId = customer.id;
+        }
+      }
+
+      // Clean up old payment method if exists AND it's different from the new one
+      // IMPORTANT: Don't detach if it's the same payment method we're trying to attach
+      if (
+        organization.defaultPaymentMethodId &&
+        organization.defaultPaymentMethodId !== paymentMethodId
+      ) {
+        try {
+          // Try to retrieve the old payment method
+          const oldPaymentMethod = await this.stripe.paymentMethods.retrieve(
+            organization.defaultPaymentMethodId,
+          );
+
+          // If it exists and is attached to a customer, detach it first
+          if (oldPaymentMethod.customer) {
+            try {
+              await this.stripe.paymentMethods.detach(
+                organization.defaultPaymentMethodId,
+              );
+              console.log(
+                `Detached old payment method ${organization.defaultPaymentMethodId} from customer ${oldPaymentMethod.customer}`,
+              );
+            } catch (detachError) {
+              console.error('Error detaching old payment method:', detachError);
+              // Continue - might already be detached
+            }
+          }
+        } catch (retrieveError) {
+          // Old payment method doesn't exist or was already detached - that's fine
+          console.log('Old payment method not found or already detached');
+        }
+      }
+
+      // Check if new payment method is already attached or was previously detached
+      console.log(`\n--- Checking payment method attachment status ---`);
+      let needsAttachment = true;
+
+      try {
+        const paymentMethod =
+          await this.stripe.paymentMethods.retrieve(paymentMethodId);
+
+        console.log(`Payment Method Retrieved:`);
+        console.log(`  - ID: ${paymentMethod.id}`);
+        console.log(`  - Type: ${paymentMethod.type}`);
+        console.log(
+          `  - Customer: ${paymentMethod.customer || 'null (DETACHED)'}`,
+        );
+        console.log(`  - Card Last4: ${paymentMethod.card?.last4 || 'N/A'}`);
+
+        // Check if payment method has no customer (was detached)
+        if (!paymentMethod.customer) {
+          // Payment method was previously detached
+          // AGGRESSIVE SOLUTION: Create a NEW Stripe customer to break the link
+          console.log(`\n✗ Payment method was DETACHED`);
+          console.log(`→ Creating NEW Stripe customer to bypass this issue...`);
+
+          // Step 1: Create a completely NEW Stripe customer
+          const newCustomer = await this.stripe.customers.create({
+            name: organization.name,
+            metadata: {
+              organizationId,
+              reason: 'Recreated due to detached payment method',
+              oldCustomer: stripeCustomerId,
+            },
+          });
+          console.log(`✓ Created new Stripe customer: ${newCustomer.id}`);
+
+          // Step 2: Update ALL subscriptions to use new customer ID
+          await this._prismaService.subscription.updateMany({
+            where: { organizationId },
+            data: { stripeCustomerId: newCustomer.id },
+          });
+          console.log(`✓ Updated subscriptions to new customer`);
+
+          // Step 3: Update stripeCustomerId variable for this request
+          stripeCustomerId = newCustomer.id;
+
+          // Step 4: Clear detached payment method from database
+          await this._prismaService.organization.update({
+            where: { id: organizationId },
+            data: {
+              defaultPaymentMethodId: null,
+            } as any,
+          });
+          console.log(`✓ Cleared detached payment method from database`);
+
+          console.log(
+            `\n✓ NEW Stripe customer created. The payment method will now attach to the NEW customer.`,
+          );
+          console.log(
+            `This completely bypasses the detached payment method issue.`,
+          );
+          console.log(`Proceeding with attachment...\n`);
+
+          // DON'T throw error - continue with the flow using the NEW customer
+          // The payment method will be attached to the new customer below
+          needsAttachment = true;
+        }
+
+        if (paymentMethod.customer === stripeCustomerId) {
+          // Already attached to the correct customer - no need to attach again
+          console.log(
+            `✓ Payment method is already attached to correct customer`,
+          );
+          console.log(`  Customer ID: ${stripeCustomerId}`);
+          needsAttachment = false; // Skip attachment
+        } else if (paymentMethod.customer !== stripeCustomerId) {
+          // Payment method is attached to a different customer
+          // This shouldn't happen in normal flow, but handle it gracefully
+          console.log(`⚠ Payment method attached to DIFFERENT customer`);
+          console.log(`  Current Customer: ${paymentMethod.customer}`);
+          console.log(`  Expected Customer: ${stripeCustomerId}`);
+          console.log(`  Will attempt to attach to correct customer`);
+          // Don't detach - let Stripe handle the error if needed
+          needsAttachment = true;
+        }
+      } catch (retrieveError: any) {
+        // Check if it's the detached payment method error we threw
+        if (retrieveError instanceof BadRequestException) {
+          throw retrieveError; // Re-throw our custom error
+        }
+
+        // Payment method doesn't exist - this means it was never created or was deleted
+        // This is fine - we'll create/attach it
+        if (retrieveError.code === 'resource_missing') {
+          console.log(
+            `Payment method ${paymentMethodId} doesn't exist in Stripe, will be created on attach`,
+          );
+          needsAttachment = true;
+        } else {
+          console.error('Error checking payment method:', retrieveError);
+          // If we can't check, try to attach anyway
+          needsAttachment = true;
+        }
+      }
+
+      // Attach the payment method to the Stripe customer (only if needed)
+      console.log(`\n--- Attachment Decision ---`);
+      console.log(`Needs Attachment: ${needsAttachment}`);
+
+      if (needsAttachment) {
+        console.log(
+          `Attaching payment method to customer ${stripeCustomerId}...`,
+        );
+        try {
+          await this.stripe.paymentMethods.attach(paymentMethodId, {
+            customer: stripeCustomerId,
+          });
+          console.log(`✓ Successfully attached payment method`);
+        } catch (attachError: any) {
+          console.log(`\n✗ ATTACHMENT FAILED`);
+          console.log(`Error Type: ${attachError.type}`);
+          console.log(`Error Code: ${attachError.code}`);
+          console.log(`Error Message: ${attachError.message}`);
+
+          // Handle the specific error about detached payment methods
+          if (
+            attachError.message &&
+            attachError.message.includes(
+              'previously used without being attached',
+            )
+          ) {
+            console.log(`\nThis is a DETACHED payment method error`);
+            console.log(
+              `========== SAVE PAYMENT METHOD END (ERROR: STRIPE ATTACH) ==========\n`,
+            );
+            throw new BadRequestException(
+              'This card was previously removed and cannot be reused. Please use a DIFFERENT card or hard refresh your browser (Ctrl+Shift+R).',
+            );
+          }
+          console.log(
+            `========== SAVE PAYMENT METHOD END (ERROR: UNKNOWN) ==========\n`,
+          );
+          throw attachError;
+        }
+      } else {
+        console.log(`Skipping attachment - already attached`);
+      }
 
       // Validate card has minimum $5 USD
       try {
@@ -2029,29 +2491,50 @@ export class BillingService {
       });
 
       // Save payment method ID to organization
+      console.log(`\n--- Saving to database ---`);
       await this._prismaService.organization.update({
         where: { id: organizationId },
         data: {
           defaultPaymentMethodId: paymentMethodId,
         } as any, // Using any to avoid TypeScript issues with missing schema field
       });
+      console.log(`✓ Saved payment method ID to organization`);
 
+      console.log(
+        `\n========== SAVE PAYMENT METHOD END (SUCCESS) ==========\n`,
+      );
       return {
         success: true,
         organizationId,
         paymentMethodId,
       };
     } catch (error) {
-      console.error('Error saving payment method to organization:', error);
+      console.error(
+        '\n========== SAVE PAYMENT METHOD END (EXCEPTION) ==========',
+      );
+      console.error('Error Type:', error.constructor.name);
+      console.error('Error Message:', error.message);
+      console.error('Full Error:', error);
+      console.error(
+        '========================================================\n',
+      );
       throw new BadRequestException(error.message);
     }
   }
 
   /**
    * Removes a payment method from an organization
+   * @param organizationId - The organization ID
+   * @param options - Options for removal
+   * @param options.cancelSubscription - If true, cancel subscription when removing payment method
    */
-  async removeOrganizationPaymentMethod(organizationId: string): Promise<any> {
+  async removeOrganizationPaymentMethod(
+    organizationId: string,
+    options: { cancelSubscription?: boolean } = {},
+  ): Promise<any> {
     try {
+      const { cancelSubscription = false } = options;
+
       // Get the organization with current payment method
       const organization =
         await this.getOrganizationWithPaymentMethod(organizationId);
@@ -2060,16 +2543,48 @@ export class BillingService {
         throw new NotFoundException('Organization not found');
       }
 
+      // Check for active subscriptions
+      const activeSubscription =
+        await this._prismaService.subscription.findFirst({
+          where: {
+            organizationId,
+            isActive: true,
+          },
+          include: { pricingPlan: true },
+        });
+
+      // If active subscription exists and cancelSubscription is false, warn user but allow removal
+      if (activeSubscription && !cancelSubscription) {
+        const isTrial =
+          activeSubscription.pricingPlan.planType ===
+          SubscriptionPlanType.TRIAL;
+
+        if (!isTrial) {
+          // Allow removal but warn that renewal will fail
+          // Payment method will be removed, subscription will fail to renew when it ends
+          console.log(
+            `Warning: Removing payment method for organization ${organizationId} with active subscription. Renewal will fail.`,
+          );
+        }
+      }
+
+      // If cancelSubscription is true, cancel the subscription
+      if (activeSubscription && cancelSubscription) {
+        await this.cancelSubscription(activeSubscription.id, {
+          immediate: false, // Cancel at end of period
+        });
+      }
+
       // If organization has a payment method
       if (organization.defaultPaymentMethodId) {
         try {
-          // Find active subscription to get customer ID
+          // Find subscription to get customer ID (even if inactive)
           const subscription = await this._prismaService.subscription.findFirst(
             {
               where: {
                 organizationId,
-                isActive: true,
               },
+              orderBy: { createdAt: 'desc' },
             },
           );
 
@@ -2104,9 +2619,271 @@ export class BillingService {
       return {
         success: true,
         organizationId,
+        subscriptionCancelled: activeSubscription && cancelSubscription,
       };
     } catch (error) {
       console.error('Error removing payment method from organization:', error);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  /**
+   * Gets the saved payment method details for an organization
+   */
+  async getOrganizationPaymentMethod(organizationId: string): Promise<any> {
+    try {
+      const organization =
+        await this.getOrganizationWithPaymentMethod(organizationId);
+
+      if (!organization) {
+        throw new NotFoundException('Organization not found');
+      }
+
+      if (!organization.defaultPaymentMethodId) {
+        return {
+          hasPaymentMethod: false,
+          paymentMethod: null,
+        };
+      }
+
+      // Retrieve payment method details from Stripe
+      try {
+        const paymentMethod = await this.stripe.paymentMethods.retrieve(
+          organization.defaultPaymentMethodId,
+        );
+
+        // Check if payment method was detached (customer is null)
+        if (!paymentMethod.customer) {
+          // Payment method was detached, clear it from database
+          await this._prismaService.organization.update({
+            where: { id: organizationId },
+            data: {
+              defaultPaymentMethodId: null,
+            } as any,
+          });
+          return {
+            hasPaymentMethod: false,
+            paymentMethod: null,
+          };
+        }
+
+        // Format card details for display
+        const card = paymentMethod.card;
+        const maskedCardNumber = `**** **** **** ${card?.last4 || '****'}`;
+        const cardBrand = card?.brand || 'card';
+        const expiryMonth = card?.exp_month || 0;
+        const expiryYear = card?.exp_year || 0;
+
+        return {
+          hasPaymentMethod: true,
+          paymentMethod: {
+            id: paymentMethod.id,
+            type: paymentMethod.type,
+            card: {
+              brand: cardBrand,
+              last4: card?.last4,
+              maskedNumber: maskedCardNumber,
+              expMonth: expiryMonth,
+              expYear: expiryYear,
+              expiryDate: `${String(expiryMonth).padStart(2, '0')}/${String(expiryYear).slice(-2)}`,
+            },
+          },
+        };
+      } catch (stripeError: any) {
+        // If payment method doesn't exist in Stripe (detached or deleted), clear it from database
+        if (
+          stripeError.type === 'StripeInvalidRequestError' ||
+          stripeError.code === 'resource_missing'
+        ) {
+          console.log(
+            `Payment method ${organization.defaultPaymentMethodId} not found in Stripe, clearing from database`,
+          );
+          await this._prismaService.organization.update({
+            where: { id: organizationId },
+            data: {
+              defaultPaymentMethodId: null,
+            } as any,
+          });
+          return {
+            hasPaymentMethod: false,
+            paymentMethod: null,
+          };
+        }
+        // Re-throw other Stripe errors
+        throw stripeError;
+      }
+    } catch (error) {
+      console.error('Error getting organization payment method:', error);
+      // Don't throw error - return no payment method instead to prevent blocking pricing page
+      return {
+        hasPaymentMethod: false,
+        paymentMethod: null,
+      };
+    }
+  }
+
+  /**
+   * Gets queued subscriptions for an organization
+   */
+  async getQueuedSubscriptions(organizationId: string): Promise<any[]> {
+    try {
+      const subscriptionsWithNextPlan =
+        await this._prismaService.subscription.findMany({
+          where: {
+            organizationId,
+            nextPricingPlanId: { not: null },
+            isActive: true,
+          },
+          include: {
+            pricingPlan: true,
+            nextPricingPlan: true,
+          },
+          orderBy: { updatedAt: 'desc' },
+        });
+
+      return subscriptionsWithNextPlan.map((sub) => ({
+        id: sub.id,
+        currentPlan: sub.pricingPlan,
+        nextPlan: sub.nextPricingPlan,
+        scheduledStartDate: sub.endDate,
+        status: 'PENDING',
+        createdAt: sub.updatedAt,
+      }));
+    } catch (error) {
+      console.error('Error getting queued subscriptions:', error);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  /**
+   * Processes queued subscriptions when current subscription ends
+   */
+  async processQueuedSubscriptions(organizationId: string): Promise<any> {
+    try {
+      const today = new Date();
+
+      // Find all subscriptions with nextPricingPlanId set
+      const subscriptionsWithNextPlan =
+        await this._prismaService.subscription.findMany({
+          where: {
+            organizationId,
+            nextPricingPlanId: { not: null },
+            isActive: true,
+          },
+          include: {
+            pricingPlan: true,
+            nextPricingPlan: true,
+          },
+        });
+
+      const processed = [];
+
+      for (const subscription of subscriptionsWithNextPlan) {
+        if (!subscription.nextPricingPlanId) continue;
+
+        // Handle null/undefined endDate with explicit check
+        const subscriptionEndDate: Date | null = subscription.endDate
+          ? new Date(subscription.endDate)
+          : null;
+
+        // If subscription has ended or is inactive, process the next plan
+        if (
+          !subscription.isActive ||
+          (subscriptionEndDate && subscriptionEndDate <= today)
+        ) {
+          try {
+            // Deactivate old subscription
+            await this._prismaService.subscription.update({
+              where: { id: subscription.id },
+              data: { isActive: false },
+            });
+
+            // Create new subscription with the next plan
+            const newStartDate = subscriptionEndDate || new Date();
+            const newEndDate = new Date(newStartDate);
+            newEndDate.setDate(newEndDate.getDate() + 30);
+
+            const newSubscription =
+              await this._prismaService.subscription.create({
+                data: {
+                  organizationId: subscription.organizationId,
+                  pricingPlanId: subscription.nextPricingPlanId,
+                  stripeCustomerId: subscription.stripeCustomerId,
+                  startDate: newStartDate,
+                  endDate: newEndDate,
+                  isActive: true,
+                },
+              });
+
+            // Generate invoice for the new subscription
+            try {
+              await this.generateInvoice({
+                organizationId: subscription.organizationId,
+                fromDate: newStartDate.toISOString(),
+                toDate: newEndDate.toISOString(),
+              });
+            } catch (invoiceError) {
+              console.error(
+                'Error generating invoice for queued subscription:',
+                invoiceError,
+              );
+              // Continue even if invoice generation fails
+            }
+
+            // Clear nextPricingPlanId from old subscription
+            await this._prismaService.subscription.update({
+              where: { id: subscription.id },
+              data: { nextPricingPlanId: null },
+            });
+
+            processed.push(newSubscription);
+          } catch (error) {
+            console.error(
+              `Error processing queued subscription ${subscription.id}:`,
+              error,
+            );
+          }
+        }
+      }
+
+      return {
+        processed: processed.length,
+        subscriptions: processed,
+      };
+    } catch (error) {
+      console.error('Error processing queued subscriptions:', error);
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  /**
+   * Cancels a queued subscription by clearing nextPricingPlanId
+   */
+  async cancelQueuedSubscription(subscriptionId: string): Promise<any> {
+    try {
+      const subscription = await this._prismaService.subscription.findUnique({
+        where: { id: subscriptionId },
+      });
+
+      if (!subscription) {
+        throw new NotFoundException('Subscription not found');
+      }
+
+      if (!subscription.nextPricingPlanId) {
+        throw new BadRequestException('No queued subscription to cancel');
+      }
+
+      await this._prismaService.subscription.update({
+        where: { id: subscriptionId },
+        data: { nextPricingPlanId: null },
+      });
+
+      return {
+        success: true,
+        message: 'Queued subscription cancelled successfully',
+      };
+    } catch (error) {
+      console.error('Error cancelling queued subscription:', error);
       throw new BadRequestException(error.message);
     }
   }
@@ -2128,12 +2905,12 @@ export class BillingService {
 
       // Calculate current month's date range
       const now = new Date();
-      const startDate =
-        subscription.startDate ||
-        new Date(now.getFullYear(), now.getMonth(), 1);
-      const endDate =
-        subscription.endDate ||
-        new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      const startDate = subscription?.startDate
+        ? subscription.startDate
+        : new Date(now.getFullYear(), now.getMonth(), 1);
+      const endDate = subscription?.endDate
+        ? subscription.endDate
+        : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
 
       // Get all repositories for this organization with their creation dates
       const repositories = await this._prismaService.repository.findMany({
@@ -2144,6 +2921,9 @@ export class BillingService {
           createdAt: true,
         },
       });
+
+      const organizationMembers =
+        await this.getOrganizationMembers(organizationId);
 
       // Get usage logs for the current month
       const usageLogs = await this._prismaService.usageLog.findMany({
@@ -2163,95 +2943,97 @@ export class BillingService {
       // For monthly plans, use 30 days as the total period
       const totalDaysInPeriod = 30;
 
-      // Get the quotas from the pricing plan
-      const prAnalysisQuota = subscription
-        ? subscription.pricingPlan.prAnalysisQuota || 20
-        : 20; // Default to 20 if not set
-      const assistantQuota = subscription
-        ? subscription.pricingPlan.assistantQuota || 50
-        : 50; // Default to 50 if not set
+      // Handle case when there's no active subscription
+      const planType = subscription?.pricingPlan?.planType || null;
 
-      // Calculate prorated repository costs
-      let totalRepositoryCost = 0;
+      // Only validate plan if subscription exists
+      if (planType) {
+        this.validatePlanForMemberCount(planType, organizationMembers.length);
+      }
+
+      let basePrice = 0;
+      if (subscription) {
+        if (planType === SubscriptionPlanType.CUSTOM) {
+          basePrice = subscription.customBasePrice ?? 0;
+        } else {
+          basePrice = subscription.pricingPlan?.basePrice ?? 0;
+        }
+      }
+
+      const memberDailyRate = basePrice / totalDaysInPeriod;
+
+      let totalMemberCost = 0;
+      const memberUsage = organizationMembers.map((member) => {
+        const memberStartDate = new Date(
+          Math.max(member.createdAt.getTime(), startDate.getTime()),
+        );
+
+        const rawDaysActive = Math.ceil(
+          (now.getTime() - memberStartDate.getTime()) / (1000 * 60 * 60 * 24),
+        );
+
+        const effectiveDaysActive = Math.max(
+          1,
+          Math.min(rawDaysActive, totalDaysInPeriod),
+        );
+
+        const proratedCost = memberDailyRate * effectiveDaysActive;
+        totalMemberCost += proratedCost;
+
+        return {
+          id: member.id,
+          name: this.getMemberDisplayName(member),
+          role: member.role,
+          activeDays: effectiveDaysActive,
+          proratedCost,
+        };
+      });
+
+      // Get the quotas from the pricing plan (per user) and scale by active members
+      const basePrAnalysisQuota = subscription
+        ? subscription.pricingPlan.prAnalysisQuota || DEFAULT_PR_ANALYSIS_QUOTA
+        : DEFAULT_PR_ANALYSIS_QUOTA;
+      const baseAssistantQuota = subscription
+        ? subscription.pricingPlan.assistantQuota || DEFAULT_ASSISTANT_QUOTA
+        : DEFAULT_ASSISTANT_QUOTA;
+
+      const totalPrAnalysisQuota =
+        basePrAnalysisQuota * organizationMembers.length;
+      const totalAssistantQuota =
+        baseAssistantQuota * organizationMembers.length;
+
+      let remainingPrQuota = totalPrAnalysisQuota;
+      let remainingAssistantQuota = totalAssistantQuota;
+
+      // Process each repository to gather usage insights (informational only)
       const repositoryUsage = repositories.map((repo) => {
-        // Calculate when the repository was connected during the current month
         const repoStartDate = new Date(
           Math.max(repo.createdAt.getTime(), startDate.getTime()),
         );
-        console.log('repoStartDate', repo.createdAt, startDate, repoStartDate);
 
-        // Calculate how many days the repository was connected in this period
         const daysConnected = Math.ceil(
           (now.getTime() - repoStartDate.getTime()) / (1000 * 60 * 60 * 24),
         );
 
-        console.log('daysConnected', daysConnected);
-
-        // Ensure we don't have negative days or zero days (minimum 1 day)
         const effectiveDaysConnected = Math.max(
           1,
           Math.min(daysConnected, totalDaysInPeriod),
         );
 
-        console.log('effectiveDaysConnected', effectiveDaysConnected);
-
-        // Calculate prorated amount - if connected for full period, charge full amount
-        const proratedFactor = effectiveDaysConnected / totalDaysInPeriod;
-        const repoBasePrice = subscription
-          ? subscription.customBasePrice || subscription.pricingPlan.basePrice
-          : 0;
-        const dailyBasePrice = repoBasePrice / totalDaysInPeriod;
-        const proratedAmount = dailyBasePrice * effectiveDaysConnected;
-
-        console.log(
-          `Repository ${repo.name} prorated amount: $${proratedAmount.toFixed(2)}`,
-        );
-
-        // Add to total and create line item
-        totalRepositoryCost += proratedAmount;
-
-        // Get PR analysis logs for this repository
-        const prAnalysisLogs = usageLogs.filter(
-          (log) => log.repositoryId === repo.id && log.type === 'PR_ANALYSIS',
-        );
-
-        // Get assistant question logs for this repository
-        const assistantLogs = usageLogs.filter(
-          (log) =>
-            log.repositoryId === repo.id && log.type === 'ASSISTANT_QUESTION',
-        );
-
-        // Calculate within and beyond quota counts for PR analyses
-        const prWithinQuota = Math.min(prAnalysisLogs.length, prAnalysisQuota);
-        const prBeyondQuota = Math.max(
-          0,
-          prAnalysisLogs.length - prAnalysisQuota,
-        );
-
-        // Calculate within and beyond quota counts for assistant questions
-        const assistantWithinQuota = Math.min(
-          assistantLogs.length,
-          assistantQuota,
-        );
-        const assistantBeyondQuota = Math.max(
-          0,
-          assistantLogs.length - assistantQuota,
-        );
-
-        // Calculate costs for evaluations beyond quota
-        const evaluationPrice = subscription
-          ? subscription.customEvalPrice ||
-            subscription.pricingPlan.evaluationPrice
-          : 0;
-
-        const prAnalysisOverageCost = prBeyondQuota * evaluationPrice;
-        const assistantOverageCost =
-          assistantBeyondQuota * (evaluationPrice / 3); // Assistant questions at 1/3 the price
-
-        // Get all types of evaluations for this repository
         const repoLogs = usageLogs.filter(
           (log) => log.repositoryId === repo.id,
         );
+        const prAnalysisLogs = repoLogs.filter(
+          (log) => log.type === 'PR_ANALYSIS',
+        );
+        const assistantLogs = repoLogs.filter(
+          (log) => log.type === 'ASSISTANT_QUESTION',
+        );
+        const otherEvaluationLogs = repoLogs.filter(
+          (log) =>
+            log.type !== 'PR_ANALYSIS' && log.type !== 'ASSISTANT_QUESTION',
+        );
+
         const typeCounts = repoLogs.reduce((acc, log) => {
           acc[log.type] = (acc[log.type] || 0) + 1;
           return acc;
@@ -2265,43 +3047,22 @@ export class BillingService {
             type,
             count: count as number,
           })),
-          quotaUsage: {
-            prAnalysis: {
-              total: prAnalysisLogs.length,
-              withinQuota: prWithinQuota,
-              beyondQuota: prBeyondQuota,
-              quota: prAnalysisQuota,
-              overageCost: prAnalysisOverageCost,
-            },
-            assistantQuestions: {
-              total: assistantLogs.length,
-              withinQuota: assistantWithinQuota,
-              beyondQuota: assistantBeyondQuota,
-              quota: assistantQuota,
-              overageCost: assistantOverageCost,
-            },
+          usageBreakdown: {
+            prAnalyses: prAnalysisLogs.length,
+            assistantQuestions: assistantLogs.length,
+            otherEvaluations: otherEvaluationLogs.length,
           },
           connectedDays: effectiveDaysConnected,
-          proratedCost: proratedAmount,
-          totalCost:
-            proratedAmount + prAnalysisOverageCost + assistantOverageCost,
         };
       });
 
-      // Calculate evaluation overage costs
-      const totalEvaluationOverageCost = repositoryUsage.reduce(
-        (total, repo) =>
-          total +
-          repo.quotaUsage.prAnalysis.overageCost +
-          repo.quotaUsage.assistantQuestions.overageCost,
-        0,
-      );
-
-      // Calculate total evaluations
       const totalEvaluations = usageLogs.length;
 
-      // Calculate total cost
-      const totalCost = totalRepositoryCost + totalEvaluationOverageCost;
+      // No evaluation overage costs under unlimited usage
+      const totalEvaluationOverageCost = 0;
+
+      // Calculate total cost based solely on members
+      const totalCost = totalMemberCost;
 
       // Get all invoices for this organization
       const invoices = await this._prismaService.invoice.findMany({
@@ -2326,17 +3087,35 @@ export class BillingService {
         orderBy: { createdAt: 'desc' },
       });
 
+      // Get queued subscriptions
+      const queuedSubscriptions =
+        await this.getQueuedSubscriptions(organizationId);
+
       return {
         subscription: subscription
           ? {
-              planType: subscription.pricingPlan.planType,
+              id: subscription.id,
+              planType: subscription.pricingPlan?.planType || null,
               startDate: subscription.startDate,
               endDate: subscription.endDate,
+              status: subscription.isActive ? 'ACTIVE' : 'INACTIVE',
+              pricingPlan: subscription.pricingPlan
+                ? {
+                    id: subscription.pricingPlan.id,
+                    name: subscription.pricingPlan.name,
+                    planType: subscription.pricingPlan.planType,
+                    basePrice: subscription.pricingPlan.basePrice,
+                  }
+                : null,
             }
           : null,
         currentMonthUsage: {
-          startDate: subscription.startDate,
-          endDate: subscription.endDate,
+          startDate: subscription?.startDate || startDate,
+          endDate: subscription?.endDate || endDate,
+          members: {
+            total: memberUsage.length,
+            list: memberUsage,
+          },
           repositories: {
             total: repositories.length,
             list: repositoryUsage,
@@ -2344,11 +3123,23 @@ export class BillingService {
           totalEvaluations,
           totalCost,
           costBreakdown: {
-            repositoryCost: totalRepositoryCost,
+            memberCost: totalMemberCost,
             evaluationCost: totalEvaluationOverageCost,
           },
         },
         invoices,
+        queuedSubscriptions: queuedSubscriptions.map((queue) => ({
+          id: queue.id,
+          pricingPlan: {
+            id: queue.nextPlan.id,
+            name: queue.nextPlan.name,
+            planType: queue.nextPlan.planType,
+            basePrice: queue.nextPlan.basePrice,
+          },
+          scheduledStartDate: queue.scheduledStartDate,
+          status: queue.status,
+          createdAt: queue.createdAt,
+        })),
       };
     } catch (error) {
       console.error('Error getting monthly usage report:', error);
@@ -2444,8 +3235,32 @@ export class BillingService {
       // Get the pricing plan
       const pricingPlan = await this.getPricingPlanById(data.pricingPlanId);
 
+      const organizationMembers = await this.getOrganizationMembers(
+        data.organizationId,
+      );
+      const activeMemberCount = organizationMembers.length;
+
+      if (activeMemberCount === 0) {
+        throw new BadRequestException(
+          'At least one active member is required to start a subscription.',
+        );
+      }
+
+      this.validatePlanForMemberCount(pricingPlan.planType, activeMemberCount);
+
+      const effectivePerUserPrice =
+        pricingPlan.planType === SubscriptionPlanType.CUSTOM
+          ? (data.customBasePrice ?? pricingPlan.basePrice)
+          : pricingPlan.basePrice;
+
+      const flatAddOn =
+        pricingPlan.planType !== SubscriptionPlanType.CUSTOM
+          ? (data.customBasePrice ?? 0)
+          : 0;
+
       // Calculate initial amount (first month's payment)
-      const initialAmount = pricingPlan.basePrice + (data.customBasePrice || 0);
+      const initialAmount =
+        (effectivePerUserPrice ?? 0) * activeMemberCount + flatAddOn;
 
       // Validate payment method
       const validation = await this.validatePaymentMethod(
@@ -2492,24 +3307,62 @@ export class BillingService {
       }
 
       const newPlan = await this.getPricingPlanById(newPlanId);
+      const organizationMembers = await this.getOrganizationMembers(
+        subscription.organizationId,
+      );
+      const activeMemberCount = organizationMembers.length;
+
+      if (activeMemberCount === 0) {
+        throw new BadRequestException(
+          'At least one active member is required to change the subscription plan.',
+        );
+      }
+
+      this.validatePlanForMemberCount(newPlan.planType, activeMemberCount);
+
+      const currentPerUserPrice =
+        subscription.pricingPlan.planType === SubscriptionPlanType.CUSTOM
+          ? (subscription.customBasePrice ??
+            subscription.pricingPlan.basePrice ??
+            0)
+          : (subscription.pricingPlan.basePrice ?? 0);
+      const newPerUserPrice =
+        newPlan.planType === SubscriptionPlanType.CUSTOM
+          ? (newPlan.basePrice ?? 0)
+          : (newPlan.basePrice ?? 0);
 
       // Calculate prorated amount for the remaining period
-      const daysRemaining = Math.ceil(
-        (subscription.endDate.getTime() - new Date().getTime()) /
-          (1000 * 60 * 60 * 24),
+      const now = new Date();
+      const subscriptionEndDate =
+        subscription.endDate ??
+        new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const daysRemaining = Math.max(
+        0,
+        Math.ceil(
+          (subscriptionEndDate.getTime() - now.getTime()) /
+            (1000 * 60 * 60 * 24),
+        ),
       );
-      const proratedAmount = (newPlan.basePrice / 30) * daysRemaining;
+      const billingCycleLength = 30;
+      const perUserDifference = newPerUserPrice - currentPerUserPrice;
+      const proratedAmount =
+        perUserDifference > 0 && daysRemaining > 0
+          ? (perUserDifference * activeMemberCount * daysRemaining) /
+            billingCycleLength
+          : 0;
 
-      // Validate payment method
-      const validation = await this.validatePaymentMethod(
-        paymentMethodId,
-        proratedAmount,
-      );
-
-      if (!validation.isValid) {
-        throw new BadRequestException(
-          validation.message || 'Payment method validation failed',
+      if (proratedAmount > 0) {
+        // Validate payment method
+        const validation = await this.validatePaymentMethod(
+          paymentMethodId,
+          proratedAmount,
         );
+
+        if (!validation.isValid) {
+          throw new BadRequestException(
+            validation.message || 'Payment method validation failed',
+          );
+        }
       }
 
       // Save payment method to organization

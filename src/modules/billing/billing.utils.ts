@@ -1,4 +1,5 @@
 import { PrismaService } from 'src/prisma/prisma.service';
+import { UsageLogType } from './dto/billing.request.dto';
 import { BillingService } from './billing.service';
 
 /**
@@ -15,7 +16,7 @@ export async function trackUsage(
   billingService: BillingService,
   organizationId: string,
   repositoryId?: string,
-  type = 'EVALUATION',
+  type: UsageLogType = UsageLogType.EVALUATION,
   description = 'Code evaluation',
 ): Promise<void> {
   try {

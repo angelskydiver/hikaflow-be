@@ -82,8 +82,8 @@ export class BillingController {
   }
 
   // Subscription endpoints
-  // @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
   @Post('subscriptions')
   async createSubscription(
     @Body() data: CreateSubscriptionDto,
@@ -100,6 +100,7 @@ export class BillingController {
   }
 
   @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
   @Put('subscriptions/:id')
   async updateSubscription(
     @Param('id') id: string,
@@ -122,9 +123,17 @@ export class BillingController {
     @Query('fromDate') fromDate?: string,
     @Query('toDate') toDate?: string,
   ): Promise<IUsageLog[]> {
-    const options: any = {};
-    if (fromDate) options.fromDate = new Date(fromDate);
-    if (toDate) options.toDate = new Date(toDate);
+    interface UsageLogOptions {
+      fromDate?: Date;
+      toDate?: Date;
+    }
+    const options: UsageLogOptions = {};
+    if (fromDate) {
+      options.fromDate = new Date(fromDate);
+    }
+    if (toDate) {
+      options.toDate = new Date(toDate);
+    }
     return this._billingService.getOrganizationUsageLogs(
       organizationId,
       options,
@@ -147,6 +156,7 @@ export class BillingController {
   }
 
   @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
   @Post('invoices/:id/pay')
   async payInvoice(
     @Param('id') id: string,
@@ -207,13 +217,65 @@ export class BillingController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('payment-methods/organization/:organizationId')
+  async getOrganizationPaymentMethod(
+    @Param('organizationId') organizationId: string,
+  ) {
+    return this._billingService.getOrganizationPaymentMethod(organizationId);
+  }
+
+  // Subscription queue endpoints
+  @UseGuards(JwtAuthGuard)
+  @Get('subscription-queues/organization/:organizationId')
+  async getQueuedSubscriptions(
+    @Param('organizationId') organizationId: string,
+  ) {
+    return this._billingService.getQueuedSubscriptions(organizationId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('subscription-queues/process/:organizationId')
+  async processQueuedSubscriptions(
+    @Param('organizationId') organizationId: string,
+  ) {
+    return this._billingService.processQueuedSubscriptions(organizationId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('subscription-queues/:subscriptionId')
+  async cancelQueuedSubscription(
+    @Param('subscriptionId') subscriptionId: string,
+  ) {
+    return this._billingService.cancelQueuedSubscription(subscriptionId);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Delete('payment-methods/organization/:organizationId')
   async removeOrganizationPaymentMethod(
     @Param('organizationId') organizationId: string,
+    @Query('cancelSubscription') cancelSubscription?: string,
   ) {
-    return this._billingService.removeOrganizationPaymentMethod(organizationId);
+    return this._billingService.removeOrganizationPaymentMethod(
+      organizationId,
+      {
+        cancelSubscription: cancelSubscription === 'true',
+      },
+    );
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Post('subscriptions/:subscriptionId/cancel')
+  async cancelSubscription(
+    @Param('subscriptionId') subscriptionId: string,
+    @Body() body: { immediate?: boolean },
+  ) {
+    return this._billingService.cancelSubscription(subscriptionId, {
+      immediate: body.immediate || false,
+    });
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
   @Get('monthly-usage/:organizationId')
   @ApiOperation({ summary: 'Get current month usage report' })
   @ApiResponse({
@@ -281,7 +343,6 @@ export class BillingController {
       },
     },
   })
-  @ApiBearerAuth()
   async getMonthlyUsageReport(
     @Param('organizationId') organizationId: string,
   ): Promise<IMonthlyUsageReport> {

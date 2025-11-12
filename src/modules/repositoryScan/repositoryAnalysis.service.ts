@@ -11,6 +11,7 @@ import { fetchBitbucketDiff } from 'src/config/helpers/repositories/bitbucket.he
 import { fetchPrFiles } from 'src/config/helpers/repositories/github.helper';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
+import { UsageLogType } from '../billing/dto/billing.request.dto';
 import { BillingService } from '../billing/billing.service';
 import { CommentService } from '../comment/comment.service';
 import { SeniorEngineerAnalysisService } from './seniorEngineerAnalysis.service';
@@ -3498,7 +3499,7 @@ Your answer should be immediately useful to someone trying to understand this co
       await this.billingService.trackUsageWithQuota({
         organizationId: context.repository.organizationId,
         repositoryId: context.repositoryId,
-        type: 'ASSISTANT_QUESTION',
+        type: UsageLogType.ASSISTANT_QUESTION,
         description: `Question: ${query.substring(0, 50)}${query.length > 50 ? '...' : ''}`,
       });
     } catch (logError) {
