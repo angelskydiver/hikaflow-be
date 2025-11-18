@@ -65,7 +65,7 @@ export class WeeklyReportsCronService {
       );
 
       // Fetch full organization details
-      const organizations = await this.prisma.organization.findMany({
+      let organizations = await this.prisma.organization.findMany({
         where: {
           id: {
             in: validOrgIds,
@@ -76,6 +76,50 @@ export class WeeklyReportsCronService {
           name: true,
         },
       });
+
+      console.log('NODE_ENV', process.env.NODE_ENV);
+
+      const environment = (
+        process.env.ENV ||
+        process.env.ENVIRONMENT ||
+        process.env.NODE_ENV ||
+        ''
+      ).toUpperCase();
+      const developmentOrgId = '450c441a-f4dd-4357-b799-28be332c980c';
+
+      if (environment === 'DEVELOPMENT') {
+        const existingDevOrg = organizations.find(
+          (org) => org.id === developmentOrgId,
+        );
+        console.log('existingDevOrg', existingDevOrg);
+        if (existingDevOrg) {
+          console.log('existingDevOrg found', existingDevOrg);
+          organizations = [existingDevOrg];
+        } else {
+          console.log('existingDevOrg not found', existingDevOrg);
+          const devOrg = await this.prisma.organization.findUnique({
+            where: { id: developmentOrgId },
+            select: { id: true, name: true },
+          });
+          console.log('devOrg', devOrg);
+
+          if (devOrg) {
+            organizations = [devOrg];
+            console.log('devOrg found', devOrg);
+          } else {
+            console.warn(
+              `Development override enabled but organization ${developmentOrgId} was not found. Skipping report generation.`,
+            );
+            organizations = [];
+          }
+        }
+
+        if (organizations.length > 0) {
+          console.log(
+            `Development environment detected. Restricting weekly reports to organization ${organizations[0].name} (${organizations[0].id}).`,
+          );
+        }
+      }
 
       console.log(
         `Found ${organizations.length} organizations with team hierarchy and teams to process`,

@@ -1335,7 +1335,7 @@ export class ReportsService {
     const commits = await this.prisma.commitSummary.findMany({
       where: {
         repositoryId: repository.repositoryId,
-        createdAt: { gte: startDate, lte: endDate },
+        createdAt: { gte: startDate, lt: endDate },
       },
     });
 
@@ -1348,7 +1348,7 @@ export class ReportsService {
       repositoryId: repository.repositoryId,
       type: CommentType.ISSUE,
       status: CommentStatus.OUTDATED,
-      updatedAt: { gte: startDate, lte: endDate },
+      updatedAt: { gte: startDate, lt: endDate },
     });
 
     const fixedIssues = await this.prisma.comment.findMany({
@@ -1356,7 +1356,7 @@ export class ReportsService {
         repositoryId: repository.repositoryId,
         type: CommentType.PULL_REQUEST,
         status: CommentStatus.OUTDATED,
-        updatedAt: { gte: startDate, lte: endDate },
+        updatedAt: { gte: startDate, lt: endDate },
       },
     });
 
@@ -1366,9 +1366,9 @@ export class ReportsService {
     const openedIssues = await this.prisma.comment.findMany({
       where: {
         repositoryId: repository.repositoryId,
-        type: CommentType.ISSUE,
+        type: CommentType.PULL_REQUEST,
         status: CommentStatus.OPEN,
-        createdAt: { gte: startDate, lte: endDate },
+        createdAt: { gte: startDate, lt: endDate },
       },
     });
     console.log('openedIssues (opened in period): ', openedIssues);
@@ -1377,9 +1377,9 @@ export class ReportsService {
     const stillOpenIssues = await this.prisma.comment.findMany({
       where: {
         repositoryId: repository.repositoryId,
-        type: CommentType.ISSUE,
+        type: CommentType.PULL_REQUEST,
         status: CommentStatus.OPEN,
-        createdAt: { lte: endDate }, // Created before or during period
+        createdAt: { lt: endDate }, // Created before or during period
       },
     });
     console.log('stillOpenIssues: ', stillOpenIssues.length);
@@ -1392,7 +1392,7 @@ export class ReportsService {
     const prs = await this.prisma.pullRequest.findMany({
       where: {
         repositoryId: repository.repositoryId,
-        createdAt: { gte: startDate, lte: endDate },
+        createdAt: { gte: startDate, lt: endDate },
       },
     });
 
