@@ -1,9 +1,11 @@
+import { RepositoryProvider } from '@prisma/client';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CallsiteDetectorService } from './callsite-detector.service';
 import { DependencyAnalyzerService } from './dependency-analyzer.service';
 import { ImpactAnalysisService } from './impact-analysis.service';
 import { ImpactClassifierService } from './impact-classifier.service';
+import { RemoteCodeSearchService } from './remote-code-search.service';
 
 describe('ImpactAnalysisService', () => {
   let service: ImpactAnalysisService;
@@ -32,6 +34,10 @@ describe('ImpactAnalysisService', () => {
     performRiskAssessment: jest.fn(),
   };
 
+const mockRemoteCodeSearch = {
+  searchFunctionReferences: jest.fn(),
+};
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -52,6 +58,10 @@ describe('ImpactAnalysisService', () => {
           provide: ImpactClassifierService,
           useValue: mockImpactClassifier,
         },
+        {
+          provide: RemoteCodeSearchService,
+          useValue: mockRemoteCodeSearch,
+        },
       ],
     }).compile();
 
@@ -66,6 +76,8 @@ describe('ImpactAnalysisService', () => {
     impactClassifier = module.get<ImpactClassifierService>(
       ImpactClassifierService,
     );
+    mockRemoteCodeSearch.searchFunctionReferences.mockReset();
+    mockRemoteCodeSearch.searchFunctionReferences.mockResolvedValue([]);
   });
 
   it('should be defined', () => {
@@ -79,6 +91,7 @@ describe('ImpactAnalysisService', () => {
       const changedFiles = [
         {
           filename: 'src/components/Button.tsx',
+          status: 'modified',
           patch: 'diff content',
         },
       ];
@@ -95,6 +108,7 @@ describe('ImpactAnalysisService', () => {
             'handleClick(event: MouseEvent, options?: ClickOptions)',
           impactScope: 'LOCAL' as const,
           confidence: 'HIGH' as const,
+          codeType: 'FUNCTION' as const,
         },
       ];
 
@@ -178,6 +192,7 @@ describe('ImpactAnalysisService', () => {
       const changedFiles = [
         {
           filename: 'src/utils/api.ts',
+          status: 'modified',
           patch: 'diff content',
         },
       ];
@@ -193,6 +208,7 @@ describe('ImpactAnalysisService', () => {
           newSignature: 'fetchUser(id: string, includeProfile: boolean)',
           impactScope: 'SYSTEM' as const,
           confidence: 'HIGH' as const,
+          codeType: 'FUNCTION' as const,
         },
       ];
 
@@ -283,6 +299,7 @@ describe('ImpactAnalysisService', () => {
       const changedFiles = [
         {
           filename: 'invalid-file.txt',
+          status: 'modified',
           patch: 'diff content',
         },
       ];
@@ -300,6 +317,85 @@ describe('ImpactAnalysisService', () => {
           organizationId,
         ),
       ).rejects.toThrow();
+    });
+
+    it('should include remote callsite matches detected via search', async () => {
+      const repositoryId = 'test-repo-id';
+      const prNumber = 321;
+      const changedFiles = [
+        {
+          filename: 'src/components/Button.tsx',
+          status: 'modified',
+          patch: 'diff content',
+        },
+      ];
+      const organizationId = 'test-org-id';
+
+      const mockChangedFunctions = [
+        {
+          name: 'handleClick',
+          file: 'src/components/Button.tsx',
+          line: 10,
+          changeType: 'MODIFIED' as const,
+          previousSignature: 'handleClick(event: MouseEvent)',
+          newSignature: 'handleClick(event: MouseEvent)',
+          impactScope: 'MODULE' as const,
+          confidence: 'MEDIUM' as const,
+          codeType: 'FUNCTION' as const,
+        },
+      ];
+
+      const mockRemoteMatches = [
+        {
+          provider: RepositoryProvider.GITHUB,
+          branch: 'feature/ui',
+          filePath: 'src/pages/Dashboard.tsx',
+          line: 42,
+          snippet: '<Button onClick={handleClick} />',
+          url: 'https://github.com/org/repo/blob/feature/ui/src/pages/Dashboard.tsx#L42',
+        },
+      ];
+
+      mockCallsiteDetector.extractFunctionsFromFile.mockResolvedValue(
+        mockChangedFunctions,
+      );
+      mockDependencyAnalyzer.buildDependencyMap.mockResolvedValue({});
+      mockCallsiteDetector.findCallsites.mockResolvedValue([]);
+      mockImpactClassifier.classifyChanges.mockResolvedValue({
+        breakingChanges: [],
+        compatibleChanges: [],
+      });
+      mockImpactClassifier.performRiskAssessment.mockResolvedValue({
+        overallRisk: 'LOW',
+        riskFactors: [],
+        mitigationStrategies: [],
+        estimatedFixTime: '5 minutes',
+        deploymentReadiness: 100,
+      });
+      mockPrismaService.regressionReport.create.mockResolvedValue({});
+      mockRemoteCodeSearch.searchFunctionReferences.mockResolvedValue(
+        mockRemoteMatches,
+      );
+
+      const result = await service.analyzeImpact(
+        repositoryId,
+        prNumber,
+        changedFiles,
+        organizationId,
+      );
+
+      expect(result.impactedCallsites).toHaveLength(1);
+      expect(result.impactedCallsites[0].callType).toBe('REMOTE_SEARCH');
+      expect(result.impactedCallsites[0].context.branchName).toBe('feature/ui');
+      expect(
+        mockRemoteCodeSearch.searchFunctionReferences,
+      ).toHaveBeenCalledWith({
+        repositoryId,
+        functionName: 'handleClick',
+        filePath: 'src/components/Button.tsx',
+        prNumber,
+        codeType: 'FUNCTION',
+      });
     });
   });
 });

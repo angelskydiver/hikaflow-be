@@ -1,9 +1,19 @@
 import { Injectable } from '@nestjs/common';
+import { RepositoryProvider } from '@prisma/client';
+import * as path from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CallsiteDetectorService } from './callsite-detector.service';
+import {
+  CallsiteDetectorService,
+  FunctionDefinition,
+} from './callsite-detector.service';
 import { DependencyAnalyzerService } from './dependency-analyzer.service';
 import { ImpactAnalysisLogger } from './impact-analysis.logger';
+import { CodeBlockType } from './impact-analysis.types';
 import { ImpactClassifierService } from './impact-classifier.service';
+import {
+  RemoteCodeMatch,
+  RemoteCodeSearchService,
+} from './remote-code-search.service';
 import { SimpleLogger } from './simple-logger';
 
 export interface EnhancedImpactAnalysis {
@@ -26,6 +36,7 @@ export interface ChangedFunction {
   newSignature?: string;
   impactScope: 'LOCAL' | 'MODULE' | 'SYSTEM';
   confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  codeType: CodeBlockType;
 }
 
 export interface ImpactedCallsite {
@@ -33,7 +44,13 @@ export interface ImpactedCallsite {
   file: string;
   line: number;
   callCode: string;
-  callType: 'DIRECT' | 'METHOD' | 'CALLBACK' | 'IMPORTED' | 'DESTRUCTURED';
+  callType:
+    | 'DIRECT'
+    | 'METHOD'
+    | 'CALLBACK'
+    | 'IMPORTED'
+    | 'DESTRUCTURED'
+    | 'REMOTE_SEARCH';
   compatibilityStatus: 'WILL_BREAK' | 'MIGHT_BREAK' | 'WILL_WORK';
   breakageReason?: string;
   requiredFix?: string;
@@ -45,6 +62,10 @@ export interface ImpactedCallsite {
     callContext: string;
     isInSameDirectory: boolean;
     isInSameModule: boolean;
+    branchName?: string;
+    provider?: 'GITHUB' | 'BITBUCKET';
+    matchUrl?: string;
+    detectionSource?: 'AST' | 'REMOTE_SEARCH';
   };
 }
 
@@ -116,6 +137,7 @@ export class ImpactAnalysisService {
     private readonly callsiteDetector: CallsiteDetectorService,
     private readonly dependencyAnalyzer: DependencyAnalyzerService,
     private readonly impactClassifier: ImpactClassifierService,
+    private readonly remoteCodeSearch: RemoteCodeSearchService,
   ) {}
 
   /**
@@ -164,7 +186,7 @@ export class ImpactAnalysisService {
         count: changedFunctions.length,
       });
 
-      // Step 2: Build dependency map for the repository
+      // Step 2: Build dependency map first (needed to find relevant files)
       simpleLogger.log('🔗 STEP 2: Building dependency map for repository');
       const dependencyMap =
         await this.dependencyAnalyzer.buildDependencyMap(repositoryId);
@@ -175,14 +197,36 @@ export class ImpactAnalysisService {
 
       logger.debug('analyzeImpact', 'Dependency map built');
 
-      // Step 3: Find all callsites for changed functions
+      // Step 3: Search GitHub/Bitbucket API for all usages (using relevant files from dependency map)
       simpleLogger.log(
-        '🎯 STEP 3: Finding impacted callsites for each changed function',
+        '🔍 STEP 3: Searching repository for function/component usages via API (using dependency map)',
+      );
+      const remoteCallsitesMap = await this.searchRemoteCallsites(
+        changedFunctions,
+        repositoryId,
+        prNumber,
+        dependencyMap,
+      );
+      simpleLogger.log('✅ Remote API search complete', {
+        totalRemoteCallsites: Array.from(remoteCallsitesMap.values()).flat()
+          .length,
+        functionsSearched: changedFunctions.length,
+      });
+
+      logger.debug('analyzeImpact', 'Remote API search complete', {
+        functionsSearched: changedFunctions.length,
+      });
+
+      // Step 4: Find all callsites (combine local + remote)
+      simpleLogger.log(
+        '🎯 STEP 4: Finding impacted callsites (combining local AST + remote API results)',
       );
       const impactedCallsites = await this.findImpactedCallsites(
         changedFunctions,
         dependencyMap,
         repositoryId,
+        prNumber,
+        remoteCallsitesMap,
       );
       simpleLogger.log('✅ Impacted callsites found', {
         count: impactedCallsites.length,
@@ -199,9 +243,9 @@ export class ImpactAnalysisService {
         count: impactedCallsites.length,
       });
 
-      // Step 4: Classify changes as breaking or compatible
+      // Step 5: Classify changes as breaking or compatible
       simpleLogger.log(
-        '🔍 STEP 4: Classifying changes as breaking or compatible',
+        '🔍 STEP 5: Classifying changes as breaking or compatible',
       );
       const { breakingChanges, compatibleChanges } = await this.classifyChanges(
         changedFunctions,
@@ -222,8 +266,8 @@ export class ImpactAnalysisService {
         compatible: compatibleChanges.length,
       });
 
-      // Step 5: Generate test recommendations
-      simpleLogger.log('🧪 STEP 5: Generating test recommendations');
+      // Step 6: Generate test recommendations
+      simpleLogger.log('🧪 STEP 6: Generating test recommendations');
       const testRecommendations = await this.generateTestRecommendations(
         breakingChanges,
         compatibleChanges,
@@ -233,8 +277,8 @@ export class ImpactAnalysisService {
         count: testRecommendations.length,
       });
 
-      // Step 6: Perform risk assessment
-      simpleLogger.log('⚠️ STEP 6: Performing risk assessment');
+      // Step 7: Perform risk assessment
+      simpleLogger.log('⚠️ STEP 7: Performing risk assessment');
       const riskAssessment = await this.performRiskAssessment(
         breakingChanges,
         compatibleChanges,
@@ -245,8 +289,8 @@ export class ImpactAnalysisService {
         riskFactors: riskAssessment.riskFactors,
       });
 
-      // Step 7: Generate deployment recommendation
-      simpleLogger.log('🚀 STEP 7: Generating deployment recommendation');
+      // Step 8: Generate deployment recommendation
+      simpleLogger.log('🚀 STEP 8: Generating deployment recommendation');
       const deploymentRecommendation = this.generateDeploymentRecommendation(
         riskAssessment,
         breakingChanges,
@@ -255,8 +299,8 @@ export class ImpactAnalysisService {
         recommendation: deploymentRecommendation,
       });
 
-      // Step 8: Generate summary
-      simpleLogger.log('📝 STEP 8: Generating analysis summary');
+      // Step 9: Generate summary
+      simpleLogger.log('📝 STEP 9: Generating analysis summary');
       const summary = this.generateSummary(
         changedFunctions,
         breakingChanges,
@@ -343,6 +387,7 @@ export class ImpactAnalysisService {
           newSignature: func.signature,
           impactScope: this.determineImpactScope(func),
           confidence: this.determineConfidence(func),
+          codeType: this.determineCodeType(func),
         }));
 
         changedFunctions.push(...changedFuncs);
@@ -367,6 +412,31 @@ export class ImpactAnalysisService {
     return 'LOCAL';
   }
 
+  private determineCodeType(func: FunctionDefinition): CodeBlockType {
+    if (this.isLikelyComponent(func)) {
+      return 'COMPONENT';
+    }
+
+    if (func.type === 'CLASS_METHOD' || func.type === 'METHOD') {
+      return 'METHOD';
+    }
+
+    if (func.type === 'ARROW_FUNCTION') {
+      return 'ARROW_FUNCTION';
+    }
+
+    return 'FUNCTION';
+  }
+
+  private isLikelyComponent(func: FunctionDefinition): boolean {
+    const ext = path.extname(func.file || '').toLowerCase();
+    if (!['.tsx', '.jsx'].includes(ext)) {
+      return false;
+    }
+
+    return /^[A-Z]/.test(func.name || '');
+  }
+
   /**
    * Determine confidence based on function properties
    */
@@ -381,12 +451,206 @@ export class ImpactAnalysisService {
   }
 
   /**
+   * Search GitHub/Bitbucket API for all usages of changed functions
+   * Uses dependency map and FileDocumentation to find relevant files first
+   * Then searches only in those relevant files for better performance
+   */
+  private async searchRemoteCallsites(
+    changedFunctions: ChangedFunction[],
+    repositoryId: string,
+    prNumber: number,
+    dependencyMap: any,
+  ): Promise<Map<string, ImpactedCallsite[]>> {
+    const remoteCallsitesMap = new Map<string, ImpactedCallsite[]>();
+
+    for (const changedFunction of changedFunctions) {
+      try {
+        // Find relevant files using dependency map and FileDocumentation
+        const relevantFiles = await this.findRelevantFilesForFunction(
+          changedFunction,
+          repositoryId,
+          dependencyMap,
+        );
+
+        const remoteMatches =
+          await this.remoteCodeSearch.searchFunctionReferences({
+            repositoryId,
+            functionName: changedFunction.name,
+            filePath: changedFunction.file,
+            prNumber,
+            codeType: changedFunction.codeType,
+            limit: 20, // Limit per function
+            includeBaseBranch: true, // Search in both PR branch and base branch
+            relevantFiles, // Pass relevant files to search only in those
+          });
+
+        // Convert remote matches to ImpactedCallsite format
+        const remoteCallsites = remoteMatches.map((match) =>
+          this.convertRemoteMatchToCallsite(match, changedFunction),
+        );
+
+        remoteCallsitesMap.set(changedFunction.name, remoteCallsites);
+      } catch (error) {
+        console.error(
+          `Remote search failed for ${changedFunction.name}:`,
+          error,
+        );
+        // Continue with other functions even if one fails
+        remoteCallsitesMap.set(changedFunction.name, []);
+      }
+    }
+
+    return remoteCallsitesMap;
+  }
+
+  /**
+   * Find relevant files that might use the changed function
+   * Uses dependency map and FileDocumentation to identify files that:
+   * 1. Import from the changed file
+   * 2. Import from the same directory
+   * 3. Are in the same module
+   * 4. Reference the function name in their imports
+   */
+  private async findRelevantFilesForFunction(
+    changedFunction: ChangedFunction,
+    repositoryId: string,
+    dependencyMap: any,
+  ): Promise<string[]> {
+    const relevantFiles = new Set<string>();
+    const changedFilePath = changedFunction.file;
+    const changedFileDir = path.dirname(changedFilePath);
+
+    try {
+      // 1. Find files that import from the changed file (using dependency map)
+      const filesThatImportChangedFile =
+        dependencyMap.importedBy?.[changedFilePath] || [];
+      filesThatImportChangedFile.forEach((file: string) =>
+        relevantFiles.add(file),
+      );
+
+      // 2. Find files in the same directory (likely to import from each other)
+      const allFiles = Object.keys(dependencyMap.imports || {});
+      const filesInSameDir = allFiles.filter((file) => {
+        const fileDir = path.dirname(file);
+        return fileDir === changedFileDir && file !== changedFilePath;
+      });
+      filesInSameDir.forEach((file) => relevantFiles.add(file));
+
+      // 3. Find files that import from the same directory
+      const filesImportingFromDir = allFiles.filter((file) => {
+        const imports = dependencyMap.imports?.[file] || [];
+        return imports.some((importPath: string) => {
+          const importDir = path.dirname(importPath);
+          return importDir === changedFileDir;
+        });
+      });
+      filesImportingFromDir.forEach((file) => relevantFiles.add(file));
+
+      // 4. Use FileDocumentation to find files that import the function name
+      const filesWithFunctionImport = await this.findFilesImportingFunction(
+        changedFunction.name,
+        repositoryId,
+      );
+      filesWithFunctionImport.forEach((file) => relevantFiles.add(file));
+
+      // 5. Find files in the same module (based on directory structure)
+      const modulePath = this.getModulePath(changedFilePath);
+      const filesInSameModule = allFiles.filter((file) => {
+        const fileModulePath = this.getModulePath(file);
+        return fileModulePath === modulePath && file !== changedFilePath;
+      });
+      filesInSameModule.forEach((file) => relevantFiles.add(file));
+
+      return Array.from(relevantFiles);
+    } catch (error) {
+      console.error(
+        `Error finding relevant files for ${changedFunction.name}:`,
+        error,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Find files that import a specific function using FileDocumentation
+   */
+  private async findFilesImportingFunction(
+    functionName: string,
+    repositoryId: string,
+  ): Promise<string[]> {
+    try {
+      // Get all file documentation for the repository
+      const fileDocs = await this.prisma.fileDocumentation.findMany({
+        where: { repositoryId },
+        select: {
+          fullPath: true,
+          imports: true,
+          functions: true,
+        },
+      });
+
+      const relevantFiles: string[] = [];
+
+      for (const fileDoc of fileDocs) {
+        // Check if file imports the function
+        const imports = (fileDoc.imports as string[]) || [];
+        const hasFunctionImport = imports.some((imp) => {
+          // Check if import contains the function name
+          return (
+            imp.includes(functionName) ||
+            imp.includes(`{ ${functionName} }`) ||
+            imp.includes(`{${functionName}}`)
+          );
+        });
+
+        // Check if file has the function in its functions list (might be a re-export)
+        const functions = (fileDoc.functions as any[]) || [];
+        const hasFunction = functions.some(
+          (func: any) => func.name === functionName,
+        );
+
+        if (hasFunctionImport || hasFunction) {
+          relevantFiles.push(fileDoc.fullPath);
+        }
+      }
+
+      return relevantFiles;
+    } catch (error) {
+      console.error(
+        `Error finding files importing function ${functionName}:`,
+        error,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Get module path from file path (e.g., src/modules/user -> modules/user)
+   */
+  private getModulePath(filePath: string): string {
+    const parts = filePath.split('/');
+    // Find common module directories
+    const moduleIndex = parts.findIndex(
+      (part) =>
+        part === 'modules' || part === 'components' || part === 'services',
+    );
+    if (moduleIndex >= 0) {
+      return parts.slice(0, moduleIndex + 2).join('/');
+    }
+    // Fallback to first 2 directory levels
+    return parts.slice(0, 2).join('/');
+  }
+
+  /**
    * Find all callsites that use the changed functions
+   * Combines local AST-based detection with remote API search results
    */
   private async findImpactedCallsites(
     changedFunctions: ChangedFunction[],
     dependencyMap: any,
     repositoryId: string,
+    prNumber: number,
+    remoteCallsitesMap?: Map<string, ImpactedCallsite[]>,
   ): Promise<ImpactedCallsite[]> {
     const impactedCallsites: ImpactedCallsite[] = [];
 
@@ -399,7 +663,6 @@ export class ImpactAnalysisService {
           repositoryId,
         );
 
-        // Convert CallsiteInfo to ImpactedCallsite
         const impactedCalls = callsites.map((callsite) => ({
           functionName: callsite.functionName,
           file: callsite.file,
@@ -423,10 +686,16 @@ export class ImpactAnalysisService {
             callContext: callsite.context.callContext,
             isInSameDirectory: callsite.context.isInSameDirectory,
             isInSameModule: callsite.context.isInSameModule,
+            detectionSource: 'AST' as const,
           },
         }));
 
         impactedCallsites.push(...impactedCalls);
+
+        // Use pre-fetched remote callsites (from Step 2) instead of fetching again
+        const remoteCallsites =
+          remoteCallsitesMap?.get(changedFunction.name) || [];
+        impactedCallsites.push(...remoteCallsites);
       } catch (error) {
         console.error(
           `Error finding callsites for ${changedFunction.name}:`,
@@ -435,7 +704,7 @@ export class ImpactAnalysisService {
       }
     }
 
-    return impactedCallsites;
+    return this.deduplicateCallsites(impactedCallsites);
   }
 
   /**
@@ -511,6 +780,127 @@ export class ImpactAnalysisService {
       return '15 minutes';
     }
     return '5 minutes';
+  }
+
+  private async fetchRemoteCallsites(
+    changedFunction: ChangedFunction,
+    repositoryId: string,
+    prNumber: number,
+  ): Promise<ImpactedCallsite[]> {
+    try {
+      const matches = await this.remoteCodeSearch.searchFunctionReferences({
+        repositoryId,
+        functionName: changedFunction.name,
+        filePath: changedFunction.file,
+        prNumber,
+        codeType: changedFunction.codeType,
+      });
+
+      return matches.map((match) =>
+        this.convertRemoteMatchToCallsite(match, changedFunction),
+      );
+    } catch (error) {
+      console.error(
+        `Remote code search failed for ${changedFunction.name}:`,
+        error,
+      );
+      return [];
+    }
+  }
+
+  private convertRemoteMatchToCallsite(
+    match: RemoteCodeMatch,
+    changedFunction: ChangedFunction,
+  ): ImpactedCallsite {
+    const isSameDirectory = this.pathsShareDirectory(
+      match.filePath,
+      changedFunction.file,
+    );
+    const isSameModule = this.pathsShareModule(
+      match.filePath,
+      changedFunction.file,
+    );
+
+    const provider =
+      match.provider === RepositoryProvider.GITHUB ? 'GITHUB' : 'BITBUCKET';
+
+    return {
+      functionName: changedFunction.name,
+      file: match.filePath,
+      line: match.line,
+      callCode: match.snippet,
+      callType: 'REMOTE_SEARCH',
+      compatibilityStatus:
+        changedFunction.changeType === 'REMOVED' ? 'WILL_BREAK' : 'MIGHT_BREAK',
+      breakageReason:
+        changedFunction.changeType === 'REMOVED'
+          ? 'Function removed but remote usage detected'
+          : 'Potential downstream usage detected via remote search',
+      requiredFix:
+        changedFunction.changeType === 'REMOVED'
+          ? 'Remove or replace usage in referenced file'
+          : undefined,
+      priority:
+        changedFunction.impactScope === 'SYSTEM' ? 'HIGH' : ('MEDIUM' as const),
+      estimatedFixTime:
+        changedFunction.changeType === 'REMOVED' ? '30 minutes' : '15 minutes',
+      context: {
+        importPath: undefined,
+        callFrequency: 'MODERATE',
+        callContext: 'Remote repository usage',
+        isInSameDirectory: isSameDirectory,
+        isInSameModule: isSameModule,
+        branchName: match.branch,
+        provider,
+        matchUrl: match.url,
+        detectionSource: 'REMOTE_SEARCH' as const,
+      },
+    };
+  }
+
+  private deduplicateCallsites(
+    callsites: ImpactedCallsite[],
+  ): ImpactedCallsite[] {
+    const seen = new Set<string>();
+    const unique: ImpactedCallsite[] = [];
+
+    for (const callsite of callsites) {
+      const key = `${callsite.functionName}:${this.normalizePath(callsite.file)}:${callsite.line}:${callsite.callType}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      unique.push(callsite);
+    }
+
+    return unique;
+  }
+
+  private pathsShareDirectory(pathA: string, pathB: string): boolean {
+    return (
+      path.dirname(this.normalizePath(pathA)) ===
+      path.dirname(this.normalizePath(pathB))
+    );
+  }
+
+  private pathsShareModule(pathA: string, pathB: string): boolean {
+    const normalizedA = this.normalizePath(pathA).split('/');
+    const normalizedB = this.normalizePath(pathB).split('/');
+
+    while (normalizedA.length && normalizedB.length) {
+      const segmentA = normalizedA.shift();
+      const segmentB = normalizedB.shift();
+
+      if (segmentA !== segmentB) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private normalizePath(filePath: string): string {
+    return path.normalize(filePath).replace(/\\/g, '/').toLowerCase();
   }
 
   /**

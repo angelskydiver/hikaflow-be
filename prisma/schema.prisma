@@ -92,6 +92,11 @@ enum SubscriptionPlanType {
   CUSTOM   @map("CUSTOM") // Custom pricing
 }
 
+enum PricingModel {
+  USER_BASED    @map("USER_BASED") // Current model: charge per user
+  PROJECT_BASED @map("PROJECT_BASED") // New model: charge per project ($30/project)
+}
+
 enum InvoiceStatus {
   DRAFT    @map("DRAFT")
   PENDING  @map("PENDING")
@@ -686,15 +691,25 @@ model PricingPlan {
   id              String               @id @default(uuid())
   name            String
   planType        SubscriptionPlanType
-  basePrice       Float // Base price per user
+  pricingModel    PricingModel         @default(USER_BASED) // USER_BASED or PROJECT_BASED
+  basePrice       Float // Base price per user (for USER_BASED) or not used (for PROJECT_BASED)
+  projectPrice    Float? // Price per project (for PROJECT_BASED plans, fixed $30)
   evaluationPrice Float // Price per evaluation
   prAnalysisQuota Int                  @default(20)
   assistantQuota  Int                  @default(50)
-  active          Boolean              @default(true)
+
+  // Feature flags - all default to true to maintain current behavior
+  allowsCollaboratorAnalysis Boolean @default(true)
+  allowsWeeklyReports        Boolean @default(true)
+  allowsTeamReports          Boolean @default(true)
+  allowsContributorReports   Boolean @default(true)
+  allowsOrganizationReports  Boolean @default(true)
+
+  active          Boolean  @default(true)
   stripeProductId String? // Stripe product ID
   stripePriceId   String? // Stripe price ID
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   subscriptions     Subscription[] @relation("CurrentPlan")
   nextSubscriptions Subscription[] @relation("NextPlan")
@@ -716,6 +731,7 @@ model Subscription {
   customBasePrice      Float? // Only for custom plans
   customEvalPrice      Float? // Only for custom plans
   cancelledAt          DateTime? // When the subscription was cancelled
+  activeProjectCount   Int          @default(0) // Track active projects for PROJECT_BASED plans
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
 
