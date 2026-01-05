@@ -4,7 +4,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InvoiceStatus, Prisma, SubscriptionPlanType } from '@prisma/client';
+import {
+  InvoiceStatus,
+  PricingModelType,
+  Prisma,
+  SubscriptionPlanType,
+} from '@prisma/client';
 import { Queue } from 'bullmq';
 import { MailService } from 'src/mail/mail.service';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -161,6 +166,19 @@ export class BillingService {
     return email || 'Member';
   }
 
+  /**
+   * Get active projects (repositories) for an organization
+   * Uses Repository.createdAt for billing tracking (when project was added to organization)
+   */
+  private async getOrganizationProjects(organizationId: string) {
+    return this._prismaService.repository.findMany({
+      where: {
+        organizationId,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
   // ================== PRICING PLAN METHODS ==================
 
   async createPricingPlan(data: CreatePricingPlanDto): Promise<IPricingPlan> {
@@ -168,7 +186,9 @@ export class BillingService {
       const {
         name,
         planType,
-        basePrice,
+        pricingModelType = PricingModelType.USER_BASED,
+        basePrice = 0,
+        projectBasePrice = 0,
         evaluationPrice,
         prAnalysisQuota = DEFAULT_PR_ANALYSIS_QUOTA,
         assistantQuota = DEFAULT_ASSISTANT_QUOTA,
@@ -180,7 +200,9 @@ export class BillingService {
         data: {
           name,
           planType,
+          pricingModelType,
           basePrice,
+          projectBasePrice,
           evaluationPrice,
           prAnalysisQuota,
           assistantQuota,
@@ -197,8 +219,15 @@ export class BillingService {
 
   async getAllPricingPlans(): Promise<IPricingPlan[]> {
     return this._prismaService.pricingPlan.findMany({
-      where: { active: true, basePrice: { gt: 0 } },
-      orderBy: { basePrice: 'asc' },
+      where: {
+        active: true,
+        OR: [
+          { basePrice: { gt: 0 } }, // User-based plans
+          { projectBasePrice: { gt: 0 } }, // Project-based plans
+        ],
+      },
+      // Note: Frontend handles sorting by pricing model type
+      orderBy: { createdAt: 'asc' },
     });
   }
 
@@ -319,7 +348,9 @@ export class BillingService {
       const {
         organizationId,
         pricingPlanId,
+        pricingModelType,
         customBasePrice,
+        customProjectPrice,
         customEvalPrice,
       } = data;
 
@@ -335,26 +366,56 @@ export class BillingService {
       // Get the pricing plan
       const pricingPlan = await this.getPricingPlanById(pricingPlanId);
 
+      // Determine pricing model type (use from plan if not specified, default to USER_BASED)
+      const finalPricingModelType =
+        pricingModelType ||
+        pricingPlan.pricingModelType ||
+        PricingModelType.USER_BASED;
+
       // Check if this is a custom plan
       if (pricingPlan.planType === SubscriptionPlanType.CUSTOM) {
-        if (!customBasePrice || !customEvalPrice) {
-          throw new BadRequestException(
-            'Custom pricing requires customBasePrice and customEvalPrice',
-          );
+        if (finalPricingModelType === PricingModelType.USER_BASED) {
+          if (!customBasePrice || !customEvalPrice) {
+            throw new BadRequestException(
+              'Custom user-based pricing requires customBasePrice and customEvalPrice',
+            );
+          }
+        } else if (finalPricingModelType === PricingModelType.PROJECT_BASED) {
+          if (!customProjectPrice || !customEvalPrice) {
+            throw new BadRequestException(
+              'Custom project-based pricing requires customProjectPrice and customEvalPrice',
+            );
+          }
         }
       }
 
-      const organizationMembers =
-        await this.getOrganizationMembers(organizationId);
-      const activeMemberCount = organizationMembers.length;
+      // Validate based on pricing model type
+      if (finalPricingModelType === PricingModelType.USER_BASED) {
+        const organizationMembers =
+          await this.getOrganizationMembers(organizationId);
+        const activeMemberCount = organizationMembers.length;
 
-      if (activeMemberCount === 0) {
-        throw new BadRequestException(
-          'At least one active member is required to create a subscription.',
+        if (activeMemberCount === 0) {
+          throw new BadRequestException(
+            'At least one active member is required to create a user-based subscription.',
+          );
+        }
+
+        this.validatePlanForMemberCount(
+          pricingPlan.planType,
+          activeMemberCount,
         );
-      }
+      } else if (finalPricingModelType === PricingModelType.PROJECT_BASED) {
+        const organizationProjects =
+          await this.getOrganizationProjects(organizationId);
+        const activeProjectCount = organizationProjects.length;
 
-      this.validatePlanForMemberCount(pricingPlan.planType, activeMemberCount);
+        if (activeProjectCount === 0) {
+          throw new BadRequestException(
+            'At least one active project is required to create a project-based subscription.',
+          );
+        }
+      }
 
       // Create or get Stripe customer
       let stripeCustomerId: string;
@@ -434,12 +495,14 @@ export class BillingService {
         data: {
           organizationId,
           pricingPlanId,
+          pricingModelType: finalPricingModelType,
           stripeCustomerId,
           stripeSubscriptionId, // Will be null by default
           startDate: new Date(),
           endDate: subscriptionEndDate,
           isActive: true,
           customBasePrice,
+          customProjectPrice,
           customEvalPrice,
         },
       });
@@ -488,19 +551,38 @@ export class BillingService {
         throw new NotFoundException('Subscription not found');
       }
 
+      // Handle pricing model type changes
+      const currentPricingModelType =
+        subscription.pricingModelType || PricingModelType.USER_BASED;
+      const newPricingModelType =
+        data.pricingModelType || currentPricingModelType;
+
       // Handle plan changes
       if (
         data.pricingPlanId &&
         data.pricingPlanId !== subscription.pricingPlanId
       ) {
         const newPlan = await this.getPricingPlanById(data.pricingPlanId);
-        const organizationMembers = await this.getOrganizationMembers(
-          subscription.organizationId,
-        );
-        this.validatePlanForMemberCount(
-          newPlan.planType,
-          organizationMembers.length,
-        );
+
+        // Validate based on pricing model type
+        if (newPricingModelType === PricingModelType.USER_BASED) {
+          const organizationMembers = await this.getOrganizationMembers(
+            subscription.organizationId,
+          );
+          this.validatePlanForMemberCount(
+            newPlan.planType,
+            organizationMembers.length,
+          );
+        } else if (newPricingModelType === PricingModelType.PROJECT_BASED) {
+          const organizationProjects = await this.getOrganizationProjects(
+            subscription.organizationId,
+          );
+          if (organizationProjects.length === 0) {
+            throw new BadRequestException(
+              'At least one active project is required for project-based subscription.',
+            );
+          }
+        }
 
         const today = new Date();
         // Handle null/undefined endDate with explicit check
@@ -587,9 +669,17 @@ export class BillingService {
 
       console.log('check post 08: ', data);
 
+      // Prepare update data
+      const updateData: any = { ...data };
+
+      // Include pricingModelType if provided
+      if (data.pricingModelType) {
+        updateData.pricingModelType = data.pricingModelType;
+      }
+
       return this._prismaService.subscription.update({
         where: { id: subscriptionId },
-        data,
+        data: updateData,
       });
     } catch (error) {
       console.error('Error updating subscription:', error);
@@ -849,165 +939,365 @@ export class BillingService {
         },
       });
 
-      const organizationMembers = await this.getOrganizationMembers(
-        data.organizationId,
-      );
+      // Determine pricing model type (default to USER_BASED for backward compatibility)
+      const pricingModelType =
+        subscription.pricingModelType || PricingModelType.USER_BASED;
 
-      // Skip invoicing if there are no members and no usage logs
-      if (organizationMembers.length === 0 && usageLogs.length === 0) {
-        return {
-          message: 'No active members or usage logs to generate invoice',
-          success: false,
-        };
-      }
-
-      // Calculate prorated amounts for each member - AT INVOICE CREATION TIME
-      let totalMemberAmount = 0;
-      const memberLineItems = [];
-
-      // Calculate amounts based on pricing plan - use CURRENT pricing
-      const planType = subscription.pricingPlan.planType;
-      this.validatePlanForMemberCount(planType, organizationMembers.length);
-
-      let basePrice =
-        planType === SubscriptionPlanType.CUSTOM
-          ? subscription.customBasePrice
-          : subscription.pricingPlan.basePrice;
-
-      basePrice = basePrice ?? 0;
-
-      const memberDailyRate = basePrice / totalDaysInPeriod;
-
-      for (const member of organizationMembers) {
-        const memberStartDate = new Date(
-          Math.max(member.createdAt.getTime(), options.fromDate.getTime()),
-        );
-
-        let daysActive;
-        if (isForSubscriptionUpdate) {
-          daysActive = Math.ceil(
-            (options.toDate.getTime() - options.fromDate.getTime()) /
-              (1000 * 60 * 60 * 24),
-          );
-        } else {
-          daysActive = Math.ceil(
-            (options.toDate.getTime() - memberStartDate.getTime()) /
-              (1000 * 60 * 60 * 24),
-          );
-        }
-
-        const effectiveDaysActive = Math.max(
-          1,
-          Math.min(daysActive, totalDaysInPeriod),
-        );
-
-        const proratedAmount = memberDailyRate * effectiveDaysActive;
-        totalMemberAmount += proratedAmount;
-
-        memberLineItems.push({
-          description: `Member: ${this.getMemberDisplayName(member)} (${effectiveDaysActive}/${totalDaysInPeriod} days)`,
-          quantity: 1,
-          unitPrice: basePrice,
-          amount: proratedAmount,
-          type: 'USER',
-        });
-      }
-
-      // Usage-based charges are not billed under the per-seat model
-      const subtotal = totalMemberAmount;
-
-      console.log('check post 06: ', subtotal);
-
-      // If total amount is zero, skip creating an invoice
-      if (subtotal === 0) {
-        return {
-          message: 'Total invoice amount is zero',
-          success: false,
-        };
-      }
-
-      // Standard tax rate (e.g., 8.25%)
-      // const taxRate = 0.0825;
-      const taxRate = 0;
-      const tax = subtotal * taxRate;
-      const total = subtotal + tax;
-
-      console.log('check post 07');
-
-      // Generate invoice number
-      const invoiceNumber = `INV-${Math.floor(Date.now() / 1000)}-${data.organizationId.substring(0, 6)}`;
-
-      // Check if organization has a default payment method on file
-      const organization = await this.getOrganizationWithPaymentMethod(
-        data.organizationId,
-      );
-
-      console.log('check post 08');
-
-      // Create initial invoice in database with PENDING status
-      let invoice = await this._prismaService.invoice.create({
-        data: {
-          subscriptionId: subscription.id,
-          invoiceNumber,
-          amount: subtotal,
-          tax,
-          total,
-          status: InvoiceStatus.PENDING, // Initially PENDING until payment is processed
-          dueDate: new Date(), // Due same day as creation
-          stripeInvoiceId: '', // No Stripe invoice involved
-          description: `Invoice for ${organizationMembers.length} active members and usage`,
-          invoiceItems: {
-            create: memberLineItems,
-          },
-        },
-      });
-
-      // Apply any available discounts to the invoice
-      try {
-        invoice = await this.discountService.applyDiscountToInvoice(
-          invoice.id,
+      // Branch based on pricing model type
+      if (pricingModelType === PricingModelType.PROJECT_BASED) {
+        return this.generateProjectBasedInvoice(
+          subscription,
+          options,
+          usageLogs,
           data.organizationId,
+          isForSubscriptionUpdate,
         );
-        console.log(
-          `Applied discount to invoice ${invoice.id}. New total: $${invoice.total}`,
+      } else {
+        return this.generateUserBasedInvoice(
+          subscription,
+          options,
+          usageLogs,
+          data.organizationId,
+          isForSubscriptionUpdate,
         );
-      } catch (discountError) {
-        console.log(
-          'No discounts applied or discount error:',
-          discountError.message,
-        );
-        // Continue without discount if there's an error
       }
-
-      // Mark usage logs as counted and update with invoice ID
-      if (usageLogs.length > 0) {
-        await this._prismaService.usageLog.updateMany({
-          where: { id: { in: usageLogs.map((log) => log.id) } },
-          data: { counted: true, invoiceId: invoice.id },
-        });
-      }
-
-      console.log('organization?.defaultPaymentMethodId:', organization);
-
-      // Try to automatically pay the invoice if payment method is on file
-      if (organization?.defaultPaymentMethodId) {
-        try {
-          return await this.payInvoice(invoice.id, {
-            paymentMethodId: organization.defaultPaymentMethodId,
-          });
-        } catch (error) {
-          console.log('Automatic payment failed:', error.message);
-          // Return the pending invoice if payment fails
-          return invoice;
-        }
-      }
-
-      // Otherwise return the pending invoice
-      return invoice;
     } catch (error) {
       console.error('Error generating invoice:', error);
       throw new BadRequestException(error.message);
     }
+  }
+
+  /**
+   * Generate invoice for user-based pricing model
+   */
+  private async generateUserBasedInvoice(
+    subscription: any,
+    options: IGenerateInvoiceOptions,
+    usageLogs: any[],
+    organizationId: string,
+    isForSubscriptionUpdate: boolean,
+  ): Promise<IInvoice | IInvoiceGenerationResult> {
+    const totalDaysInPeriod = 30;
+
+    const organizationMembers =
+      await this.getOrganizationMembers(organizationId);
+
+    // Skip invoicing if there are no members and no usage logs
+    if (organizationMembers.length === 0 && usageLogs.length === 0) {
+      return {
+        message: 'No active members or usage logs to generate invoice',
+        success: false,
+      };
+    }
+
+    // Calculate prorated amounts for each member - AT INVOICE CREATION TIME
+    let totalMemberAmount = 0;
+    const memberLineItems = [];
+
+    // Calculate amounts based on pricing plan - use CURRENT pricing
+    const planType = subscription.pricingPlan.planType;
+    this.validatePlanForMemberCount(planType, organizationMembers.length);
+
+    let basePrice =
+      planType === SubscriptionPlanType.CUSTOM
+        ? subscription.customBasePrice
+        : subscription.pricingPlan.basePrice;
+
+    basePrice = basePrice ?? 0;
+
+    const memberDailyRate = basePrice / totalDaysInPeriod;
+
+    for (const member of organizationMembers) {
+      const memberStartDate = new Date(
+        Math.max(member.createdAt.getTime(), options.fromDate.getTime()),
+      );
+
+      let daysActive;
+      if (isForSubscriptionUpdate) {
+        daysActive = Math.ceil(
+          (options.toDate.getTime() - options.fromDate.getTime()) /
+            (1000 * 60 * 60 * 24),
+        );
+      } else {
+        daysActive = Math.ceil(
+          (options.toDate.getTime() - memberStartDate.getTime()) /
+            (1000 * 60 * 60 * 24),
+        );
+      }
+
+      const effectiveDaysActive = Math.max(
+        1,
+        Math.min(daysActive, totalDaysInPeriod),
+      );
+
+      const proratedAmount = memberDailyRate * effectiveDaysActive;
+      totalMemberAmount += proratedAmount;
+
+      memberLineItems.push({
+        description: `Member: ${this.getMemberDisplayName(member)} (${effectiveDaysActive}/${totalDaysInPeriod} days)`,
+        quantity: 1,
+        unitPrice: basePrice,
+        amount: proratedAmount,
+        type: 'USER',
+      });
+    }
+
+    // Usage-based charges are not billed under the per-seat model
+    const subtotal = totalMemberAmount;
+
+    console.log('check post 06: ', subtotal);
+
+    // If total amount is zero, skip creating an invoice
+    if (subtotal === 0) {
+      return {
+        message: 'Total invoice amount is zero',
+        success: false,
+      };
+    }
+
+    // Standard tax rate (e.g., 8.25%)
+    // const taxRate = 0.0825;
+    const taxRate = 0;
+    const tax = subtotal * taxRate;
+    const total = subtotal + tax;
+
+    console.log('check post 07');
+
+    // Generate invoice number
+    const invoiceNumber = `INV-${Math.floor(Date.now() / 1000)}-${organizationId.substring(0, 6)}`;
+
+    // Check if organization has a default payment method on file
+    const organization =
+      await this.getOrganizationWithPaymentMethod(organizationId);
+
+    console.log('check post 08');
+
+    // Create initial invoice in database with PENDING status
+    let invoice = await this._prismaService.invoice.create({
+      data: {
+        subscriptionId: subscription.id,
+        invoiceNumber,
+        amount: subtotal,
+        tax,
+        total,
+        status: InvoiceStatus.PENDING, // Initially PENDING until payment is processed
+        dueDate: new Date(), // Due same day as creation
+        stripeInvoiceId: '', // No Stripe invoice involved
+        description: `Invoice for ${organizationMembers.length} active members and usage`,
+        invoiceItems: {
+          create: memberLineItems,
+        },
+      },
+    });
+
+    // Apply any available discounts to the invoice
+    try {
+      invoice = await this.discountService.applyDiscountToInvoice(
+        invoice.id,
+        organizationId,
+      );
+      console.log(
+        `Applied discount to invoice ${invoice.id}. New total: $${invoice.total}`,
+      );
+    } catch (discountError) {
+      console.log(
+        'No discounts applied or discount error:',
+        discountError.message,
+      );
+      // Continue without discount if there's an error
+    }
+
+    // Mark usage logs as counted and update with invoice ID
+    if (usageLogs.length > 0) {
+      await this._prismaService.usageLog.updateMany({
+        where: { id: { in: usageLogs.map((log) => log.id) } },
+        data: { counted: true, invoiceId: invoice.id },
+      });
+    }
+
+    console.log('organization?.defaultPaymentMethodId:', organization);
+
+    // Try to automatically pay the invoice if payment method is on file
+    if (organization?.defaultPaymentMethodId) {
+      try {
+        return await this.payInvoice(invoice.id, {
+          paymentMethodId: organization.defaultPaymentMethodId,
+        });
+      } catch (error) {
+        console.log('Automatic payment failed:', error.message);
+        // Return the pending invoice if payment fails
+        return invoice;
+      }
+    }
+
+    // Otherwise return the pending invoice
+    return invoice;
+  }
+
+  /**
+   * Generate invoice for project-based pricing model
+   */
+  private async generateProjectBasedInvoice(
+    subscription: any,
+    options: IGenerateInvoiceOptions,
+    usageLogs: any[],
+    organizationId: string,
+    isForSubscriptionUpdate: boolean,
+  ): Promise<IInvoice | IInvoiceGenerationResult> {
+    const totalDaysInPeriod = 30;
+
+    const organizationProjects =
+      await this.getOrganizationProjects(organizationId);
+
+    // Skip invoicing if there are no projects and no usage logs
+    if (organizationProjects.length === 0 && usageLogs.length === 0) {
+      return {
+        message: 'No active projects or usage logs to generate invoice',
+        success: false,
+      };
+    }
+
+    // Calculate prorated amounts for each project - AT INVOICE CREATION TIME
+    let totalProjectAmount = 0;
+    const projectLineItems = [];
+
+    // Calculate amounts based on pricing plan - use CURRENT pricing
+    const planType = subscription.pricingPlan.planType;
+
+    let projectBasePrice =
+      planType === SubscriptionPlanType.CUSTOM
+        ? subscription.customProjectPrice
+        : subscription.pricingPlan.projectBasePrice;
+
+    projectBasePrice = projectBasePrice ?? 0;
+
+    const projectDailyRate = projectBasePrice / totalDaysInPeriod;
+
+    for (const project of organizationProjects) {
+      const projectStartDate = new Date(
+        Math.max(project.createdAt.getTime(), options.fromDate.getTime()),
+      );
+
+      let daysActive;
+      if (isForSubscriptionUpdate) {
+        daysActive = Math.ceil(
+          (options.toDate.getTime() - options.fromDate.getTime()) /
+            (1000 * 60 * 60 * 24),
+        );
+      } else {
+        daysActive = Math.ceil(
+          (options.toDate.getTime() - projectStartDate.getTime()) /
+            (1000 * 60 * 60 * 24),
+        );
+      }
+
+      const effectiveDaysActive = Math.max(
+        1,
+        Math.min(daysActive, totalDaysInPeriod),
+      );
+
+      const proratedAmount = projectDailyRate * effectiveDaysActive;
+      totalProjectAmount += proratedAmount;
+
+      projectLineItems.push({
+        description: `Project: ${project.name} (${effectiveDaysActive}/${totalDaysInPeriod} days)`,
+        quantity: 1,
+        unitPrice: projectBasePrice,
+        amount: proratedAmount,
+        type: 'PROJECT',
+      });
+    }
+
+    // Usage-based charges are not billed under the per-seat model
+    const subtotal = totalProjectAmount;
+
+    console.log('check post 06 (project-based): ', subtotal);
+
+    // If total amount is zero, skip creating an invoice
+    if (subtotal === 0) {
+      return {
+        message: 'Total invoice amount is zero',
+        success: false,
+      };
+    }
+
+    // Standard tax rate (e.g., 8.25%)
+    // const taxRate = 0.0825;
+    const taxRate = 0;
+    const tax = subtotal * taxRate;
+    const total = subtotal + tax;
+
+    console.log('check post 07 (project-based)');
+
+    // Generate invoice number
+    const invoiceNumber = `INV-${Math.floor(Date.now() / 1000)}-${organizationId.substring(0, 6)}`;
+
+    // Check if organization has a default payment method on file
+    const organization =
+      await this.getOrganizationWithPaymentMethod(organizationId);
+
+    console.log('check post 08 (project-based)');
+
+    // Create initial invoice in database with PENDING status
+    let invoice = await this._prismaService.invoice.create({
+      data: {
+        subscriptionId: subscription.id,
+        invoiceNumber,
+        amount: subtotal,
+        tax,
+        total,
+        status: InvoiceStatus.PENDING, // Initially PENDING until payment is processed
+        dueDate: new Date(), // Due same day as creation
+        stripeInvoiceId: '', // No Stripe invoice involved
+        description: `Invoice for ${organizationProjects.length} active projects and usage`,
+        invoiceItems: {
+          create: projectLineItems,
+        },
+      },
+    });
+
+    // Apply any available discounts to the invoice
+    try {
+      invoice = await this.discountService.applyDiscountToInvoice(
+        invoice.id,
+        organizationId,
+      );
+      console.log(
+        `Applied discount to invoice ${invoice.id}. New total: $${invoice.total}`,
+      );
+    } catch (discountError) {
+      console.log(
+        'No discounts applied or discount error:',
+        discountError.message,
+      );
+      // Continue without discount if there's an error
+    }
+
+    // Mark usage logs as counted and update with invoice ID
+    if (usageLogs.length > 0) {
+      await this._prismaService.usageLog.updateMany({
+        where: { id: { in: usageLogs.map((log) => log.id) } },
+        data: { counted: true, invoiceId: invoice.id },
+      });
+    }
+
+    console.log('organization?.defaultPaymentMethodId:', organization);
+
+    // Try to automatically pay the invoice if payment method is on file
+    if (organization?.defaultPaymentMethodId) {
+      try {
+        return await this.payInvoice(invoice.id, {
+          paymentMethodId: organization.defaultPaymentMethodId,
+        });
+      } catch (error) {
+        console.log('Automatic payment failed:', error.message);
+        // Return the pending invoice if payment fails
+        return invoice;
+      }
+    }
+
+    // Otherwise return the pending invoice
+    return invoice;
   }
 
   async finalizeInvoice(invoiceId: string): Promise<IInvoice> {
@@ -1316,41 +1606,86 @@ export class BillingService {
         return existingPlans; // Return properly typed plans
       }
 
-      // Create the default pricing plans
-      const plans = [
+      // Create the default pricing plans (user-based)
+      // User-based plans have unlimited quotas (set to 0, but treated as unlimited in code)
+      const userBasedPlans = [
         {
           name: 'Trial',
           planType: SubscriptionPlanType.TRIAL,
+          pricingModelType: PricingModelType.USER_BASED,
           basePrice: 0, // Free
+          projectBasePrice: 0,
           evaluationPrice: 0, // Free
-          prAnalysisQuota: DEFAULT_PR_ANALYSIS_QUOTA,
-          assistantQuota: DEFAULT_ASSISTANT_QUOTA,
+          prAnalysisQuota: 0, // Unlimited for user-based (not used)
+          assistantQuota: 0, // Unlimited for user-based (not used)
         },
         {
           name: 'Basic',
           planType: SubscriptionPlanType.BASIC,
+          pricingModelType: PricingModelType.USER_BASED,
           basePrice: USER_PRICING_TIERS[SubscriptionPlanType.BASIC].price, // $15 per user
+          projectBasePrice: 0,
           evaluationPrice: 0.5, // 50 cents per evaluation
-          prAnalysisQuota: 20, // PR analyses quota
-          assistantQuota: 50, // Assistant questions quota
+          prAnalysisQuota: 0, // Unlimited for user-based (not used)
+          assistantQuota: 0, // Unlimited for user-based (not used)
         },
         {
           name: 'Standard',
           planType: SubscriptionPlanType.STANDARD,
+          pricingModelType: PricingModelType.USER_BASED,
           basePrice: USER_PRICING_TIERS[SubscriptionPlanType.STANDARD].price, // $13 per user for 50-150 members
+          projectBasePrice: 0,
           evaluationPrice: 0.25, // 25 cents per evaluation
-          prAnalysisQuota: 20, // PR analyses quota
-          assistantQuota: 50, // Assistant questions quota
+          prAnalysisQuota: 0, // Unlimited for user-based (not used)
+          assistantQuota: 0, // Unlimited for user-based (not used)
         },
         {
           name: 'Premium',
           planType: SubscriptionPlanType.PREMIUM,
+          pricingModelType: PricingModelType.USER_BASED,
           basePrice: USER_PRICING_TIERS[SubscriptionPlanType.PREMIUM].price, // $10 per user for 151+ members
+          projectBasePrice: 0,
           evaluationPrice: 0.1, // 10 cents per evaluation
-          prAnalysisQuota: 20, // PR analyses quota
-          assistantQuota: 50, // Assistant questions quota
+          prAnalysisQuota: 0, // Unlimited for user-based (not used)
+          assistantQuota: 0, // Unlimited for user-based (not used)
         },
       ];
+
+      // Create project-based pricing plans
+      const projectBasedPlans = [
+        {
+          name: 'Project Basic',
+          planType: SubscriptionPlanType.BASIC,
+          pricingModelType: PricingModelType.PROJECT_BASED,
+          basePrice: 0,
+          projectBasePrice: 30, // $30 per project
+          evaluationPrice: 0.5, // 50 cents per evaluation
+          prAnalysisQuota: 100, // 100 PR analyses per project
+          assistantQuota: 300, // 300 assistant questions per project
+        },
+        {
+          name: 'Project Standard',
+          planType: SubscriptionPlanType.STANDARD,
+          pricingModelType: PricingModelType.PROJECT_BASED,
+          basePrice: 0,
+          projectBasePrice: 30, // $30 per project
+          evaluationPrice: 0.25, // 25 cents per evaluation
+          prAnalysisQuota: 100, // 100 PR analyses per project
+          assistantQuota: 300, // 300 assistant questions per project
+        },
+        {
+          name: 'Project Premium',
+          planType: SubscriptionPlanType.PREMIUM,
+          pricingModelType: PricingModelType.PROJECT_BASED,
+          basePrice: 0,
+          projectBasePrice: 30, // $30 per project
+          evaluationPrice: 0.1, // 10 cents per evaluation
+          prAnalysisQuota: 100, // 100 PR analyses per project
+          assistantQuota: 300, // 300 assistant questions per project
+        },
+      ];
+
+      const plans = [...userBasedPlans, ...projectBasedPlans];
 
       const createdPlans = [];
       for (const plan of plans) {
@@ -2989,21 +3324,39 @@ export class BillingService {
         };
       });
 
-      // Get the quotas from the pricing plan (per user) and scale by active members
-      const basePrAnalysisQuota = subscription
-        ? subscription.pricingPlan.prAnalysisQuota || DEFAULT_PR_ANALYSIS_QUOTA
-        : DEFAULT_PR_ANALYSIS_QUOTA;
-      const baseAssistantQuota = subscription
-        ? subscription.pricingPlan.assistantQuota || DEFAULT_ASSISTANT_QUOTA
-        : DEFAULT_ASSISTANT_QUOTA;
+      // Determine pricing model type
+      const pricingModelType =
+        subscription?.pricingModelType || PricingModelType.USER_BASED;
 
-      const totalPrAnalysisQuota =
-        basePrAnalysisQuota * organizationMembers.length;
-      const totalAssistantQuota =
-        baseAssistantQuota * organizationMembers.length;
+      // User-based plans have unlimited quotas
+      // Project-based plans use quotas from pricing plan
+      let totalPrAnalysisQuota = Infinity; // Unlimited for user-based
+      let totalAssistantQuota = Infinity; // Unlimited for user-based
 
-      let remainingPrQuota = totalPrAnalysisQuota;
-      let remainingAssistantQuota = totalAssistantQuota;
+      if (pricingModelType === PricingModelType.PROJECT_BASED) {
+        // Project-based plans: use quotas from pricing plan
+        const basePrAnalysisQuota = subscription
+          ? subscription.pricingPlan.prAnalysisQuota ||
+            DEFAULT_PR_ANALYSIS_QUOTA
+          : DEFAULT_PR_ANALYSIS_QUOTA;
+        const baseAssistantQuota = subscription
+          ? subscription.pricingPlan.assistantQuota || DEFAULT_ASSISTANT_QUOTA
+          : DEFAULT_ASSISTANT_QUOTA;
+
+        // For project-based, quotas are per project, not per user
+        const organizationProjects =
+          await this.getOrganizationProjects(organizationId);
+        totalPrAnalysisQuota =
+          basePrAnalysisQuota * organizationProjects.length;
+        totalAssistantQuota = baseAssistantQuota * organizationProjects.length;
+      }
+
+      // For user-based plans, quotas are unlimited (Infinity)
+      // For project-based plans, calculate remaining quota
+      let remainingPrQuota =
+        totalPrAnalysisQuota === Infinity ? Infinity : totalPrAnalysisQuota;
+      let remainingAssistantQuota =
+        totalAssistantQuota === Infinity ? Infinity : totalAssistantQuota;
 
       // Process each repository to gather usage insights (informational only)
       const repositoryUsage = repositories.map((repo) => {
@@ -3440,6 +3793,8 @@ export class BillingService {
 
   /**
    * Calculate the billing rate based on current usage
+   * User-based plans have unlimited quotas (always withinQuota = true)
+   * Project-based plans respect quotas
    */
   async calculateBillingRate(
     organizationId: string,
@@ -3465,6 +3820,31 @@ export class BillingService {
         throw new NotFoundException('No active subscription found');
       }
 
+      // Determine pricing model type (default to USER_BASED for backward compatibility)
+      const pricingModelType =
+        subscription.pricingModelType || PricingModelType.USER_BASED;
+
+      // Determine base evaluation price
+      const evaluationPrice =
+        subscription.customEvalPrice ||
+        subscription.pricingPlan.evaluationPrice;
+
+      // User-based plans have unlimited quotas - always within quota
+      if (pricingModelType === PricingModelType.USER_BASED) {
+        if (type === 'PR_ANALYSIS') {
+          return {
+            withinQuota: true, // Unlimited for user-based plans
+            rate: evaluationPrice,
+          };
+        } else {
+          return {
+            withinQuota: true, // Unlimited for user-based plans
+            rate: evaluationPrice / 3,
+          };
+        }
+      }
+
+      // Project-based plans: check quotas
       // Get current month's date range
       const now = new Date();
       const startDate = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -3485,12 +3865,7 @@ export class BillingService {
           toDate: endDate,
         });
 
-      // Determine base evaluation price
-      const evaluationPrice =
-        subscription.customEvalPrice ||
-        subscription.pricingPlan.evaluationPrice;
-
-      // Get the quotas from the pricing plan
+      // Get the quotas from the pricing plan (only used for project-based)
       const prAnalysisQuota = subscription.pricingPlan.prAnalysisQuota;
       const assistantQuota = subscription.pricingPlan.assistantQuota;
 

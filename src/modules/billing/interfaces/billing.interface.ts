@@ -1,4 +1,8 @@
-import { InvoiceStatus, SubscriptionPlanType } from '@prisma/client';
+import {
+  InvoiceStatus,
+  PricingModelType,
+  SubscriptionPlanType,
+} from '@prisma/client';
 import { UsageLogType } from '../dto/billing.request.dto';
 
 export type InvoiceItemType = 'USER' | 'PROJECT' | 'EVALUATION';
@@ -7,7 +11,9 @@ export interface IPricingPlan {
   id: string;
   name: string;
   planType: SubscriptionPlanType; // Use the proper enum type
-  basePrice: number; // Base price charged per active user
+  pricingModelType: PricingModelType; // Pricing model type
+  basePrice: number; // Base price charged per active user (for USER_BASED)
+  projectBasePrice?: number; // Base price charged per project (for PROJECT_BASED)
   evaluationPrice: number;
   prAnalysisQuota: number; // Number of PR analyses included in plan
   assistantQuota: number; // Number of assistant questions included in plan
@@ -23,12 +29,14 @@ export interface ISubscription {
   organizationId: string;
   pricingPlanId: string;
   pricingPlan?: IPricingPlan;
+  pricingModelType: PricingModelType; // Pricing model for this subscription
   stripeCustomerId?: string;
   stripeSubscriptionId?: string;
   startDate: Date;
   endDate?: Date;
   isActive: boolean;
-  customBasePrice?: number;
+  customBasePrice?: number; // For custom user-based plans
+  customProjectPrice?: number; // For custom project-based plans
   customEvalPrice?: number;
   createdAt: Date;
   updatedAt: Date;

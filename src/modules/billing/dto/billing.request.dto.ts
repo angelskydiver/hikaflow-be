@@ -1,4 +1,4 @@
-import { SubscriptionPlanType } from '@prisma/client';
+import { PricingModelType, SubscriptionPlanType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
@@ -26,8 +26,17 @@ export class CreatePricingPlanDto {
   @IsEnum(SubscriptionPlanType)
   planType: SubscriptionPlanType;
 
+  @IsEnum(PricingModelType)
+  @IsOptional()
+  pricingModelType?: PricingModelType; // Pricing model type
+
   @IsNumber()
-  basePrice: number; // Base price per active user
+  @IsOptional()
+  basePrice?: number; // Base price per active user (for USER_BASED)
+
+  @IsNumber()
+  @IsOptional()
+  projectBasePrice?: number; // Base price per project (for PROJECT_BASED)
 
   @IsNumber()
   evaluationPrice: number; // Price per evaluation
@@ -70,9 +79,17 @@ export class CreateSubscriptionDto {
   @IsUUID()
   pricingPlanId: string;
 
+  @IsEnum(PricingModelType)
+  @IsOptional()
+  pricingModelType?: PricingModelType; // Pricing model type
+
   @IsNumber()
   @IsOptional()
-  customBasePrice?: number;
+  customBasePrice?: number; // For custom user-based plans
+
+  @IsNumber()
+  @IsOptional()
+  customProjectPrice?: number; // For custom project-based plans
 
   @IsNumber()
   @IsOptional()
@@ -84,6 +101,10 @@ export class UpdateSubscriptionDto {
   @IsOptional()
   pricingPlanId?: string;
 
+  @IsEnum(PricingModelType)
+  @IsOptional()
+  pricingModelType?: PricingModelType; // Pricing model type
+
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
@@ -94,7 +115,11 @@ export class UpdateSubscriptionDto {
 
   @IsNumber()
   @IsOptional()
-  customBasePrice?: number;
+  customBasePrice?: number; // For custom user-based plans
+
+  @IsNumber()
+  @IsOptional()
+  customProjectPrice?: number; // For custom project-based plans
 
   @IsNumber()
   @IsOptional()
