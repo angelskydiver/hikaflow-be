@@ -95,11 +95,13 @@ export interface IGenerateInvoiceOptions {
   organizationId: string;
   fromDate?: Date;
   toDate?: Date;
+  creditAmount?: number; // Credit to apply from unused subscription time
 }
 
 export interface IInvoiceGenerationResult {
   message: string;
   success: boolean;
+  creditApplied?: number; // Credit amount that was applied
 }
 
 export interface IOrganization {
@@ -171,6 +173,8 @@ export interface IMonthlyUsageReport {
       name: string;
       planType: SubscriptionPlanType;
       basePrice: number;
+      projectBasePrice?: number | null;
+      pricingModelType?: PricingModelType;
     };
     scheduledStartDate: Date | null;
     status: string;

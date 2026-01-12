@@ -128,15 +128,27 @@ export class MailService implements OnModuleDestroy {
     mailerService?: MailerService,
   ): Promise<boolean> {
     try {
+      // Extract email domain for logging
+      const emailDomain = options.to.split('@')[1]?.toLowerCase();
+      const isMailinator = emailDomain?.includes('mailinator');
+      
       this.logger.log(
         `Attempting to send email with template: ${options.template}`,
       );
+      this.logger.log(`Email recipient: ${options.to}`);
+      
+      if (isMailinator) {
+        this.logger.warn(
+          `⚠️  MAILINATOR EMAIL DETECTED: ${options.to} - Some SMTP providers may block disposable email domains. Check your email service provider settings if email is not received.`,
+        );
+      }
+      
       this.logger.log(
         `Email context: ${JSON.stringify(options.context, null, 2)}`,
       );
 
       const serviceToUse = mailerService || this.mailerService;
-      await serviceToUse.sendMail({
+      const result = await serviceToUse.sendMail({
         to: options.to,
         subject: options.subject,
         template: options.template,
@@ -144,11 +156,41 @@ export class MailService implements OnModuleDestroy {
         from: options.from || '"Hikaflow" <noreply@hikaflow.com>',
       });
 
-      this.logger.log(`Email sent successfully to: ${options.to}`);
+      this.logger.log(`✅ Email sent successfully to: ${options.to}`);
+      
+      // Log message ID if available (helps with debugging delivery issues)
+      if (result?.messageId) {
+        this.logger.log(`📧 Message ID: ${result.messageId}`);
+      }
+      
+      if (isMailinator) {
+        this.logger.log(
+          `ℹ️  Mailinator email sent. Check https://www.mailinator.com/v4/?public_to=${options.to.split('@')[0]} to view the email.`,
+        );
+      }
+      
       return true;
     } catch (error) {
-      this.logger.error(`Failed to send email: ${error.message}`, error.stack);
+      const emailDomain = options.to.split('@')[1]?.toLowerCase();
+      const isMailinator = emailDomain?.includes('mailinator');
+      
+      this.logger.error(`❌ Failed to send email: ${error.message}`, error.stack);
       this.logger.error(`Template: ${options.template}, To: ${options.to}`);
+      
+      if (isMailinator) {
+        this.logger.error(
+          `⚠️  MAILINATOR EMAIL FAILURE: The email service provider may be blocking disposable email domains. Common solutions:
+          1. Check your SMTP provider settings (SendGrid, Mailgun, AWS SES, etc.)
+          2. Add mailinator.com to allowed domains in your email service
+          3. Use a different SMTP provider that allows disposable emails
+          4. For development, consider using a service like Mailtrap or MailHog`,
+        );
+      }
+      
+      // Log full error details for debugging
+      if (error.response) {
+        this.logger.error(`SMTP Response: ${JSON.stringify(error.response)}`);
+      }
 
       if (retries > 0) {
         this.logger.log(

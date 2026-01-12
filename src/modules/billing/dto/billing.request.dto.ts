@@ -113,6 +113,10 @@ export class UpdateSubscriptionDto {
   @IsOptional()
   immediate?: boolean; // For cancellation: true = immediate, false = end of period
 
+  @IsBoolean()
+  @IsOptional()
+  immediateChange?: boolean; // For plan/model changes: true = change now, false/undefined = queue for end of period
+
   @IsNumber()
   @IsOptional()
   customBasePrice?: number; // For custom user-based plans
@@ -188,4 +192,8 @@ export class GenerateInvoiceDto {
   @IsBoolean()
   @IsOptional()
   isForSubscriptionUpdate?: boolean;
+
+  @IsNumber()
+  @IsOptional()
+  creditAmount?: number; // Credit to apply from unused subscription time
 }
