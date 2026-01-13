@@ -13,6 +13,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 export class MailService implements OnModuleDestroy {
   private readonly logger = new Logger(MailService.name);
   private paymentWorker: Worker;
+  private paymentMailerService: MailerService;
 
   constructor(
     private mailerService: MailerService,
@@ -20,7 +21,7 @@ export class MailService implements OnModuleDestroy {
   ) {
     // Create a separate MailerService instance for the payment worker
     // to ensure it uses the correct template directory
-    const paymentMailerService = new MailerService(
+    this.paymentMailerService = new MailerService(
       {
         transport: {
           host: process.env.MAILER_HOST,
@@ -57,7 +58,7 @@ export class MailService implements OnModuleDestroy {
               context: job.data,
             },
             3,
-            paymentMailerService,
+            this.paymentMailerService,
           );
         } else if (job.name === 'payment-failure') {
           // Send payment failure email using the dedicated mailer service
@@ -69,7 +70,7 @@ export class MailService implements OnModuleDestroy {
               context: job.data,
             },
             3,
-            paymentMailerService,
+            this.paymentMailerService,
           );
         } else if (job.name === 'verification-complete') {
           // Send verification email using the dedicated mailer service
@@ -81,7 +82,7 @@ export class MailService implements OnModuleDestroy {
               context: job.data,
             },
             3,
-            paymentMailerService,
+            this.paymentMailerService,
           );
         } else if (job.name === 'reversal-complete') {
           // Send reversal email using the dedicated mailer service
@@ -94,7 +95,7 @@ export class MailService implements OnModuleDestroy {
               context: job.data,
             },
             3,
-            paymentMailerService,
+            this.paymentMailerService,
           );
         }
       },
@@ -768,9 +769,35 @@ export class MailService implements OnModuleDestroy {
   }
 
   async onModuleDestroy() {
+    // Close payment worker
     if (this.paymentWorker) {
-      await this.paymentWorker.close();
-      this.logger.log('Payment worker closed');
+      try {
+        await this.paymentWorker.close();
+        this.logger.log('Payment worker closed');
+      } catch (error) {
+        this.logger.error(
+          `Error closing payment worker: ${error.message}`,
+          error.stack,
+        );
+      }
+    }
+
+    // Cleanup payment mailer service to prevent resource leaks
+    if (this.paymentMailerService) {
+      try {
+        // MailerService wraps nodemailer transport which may have connections
+        // Access the underlying transport and close it if available
+        const transport = (this.paymentMailerService as any).transporter;
+        if (transport && typeof transport.close === 'function') {
+          await transport.close();
+          this.logger.log('Payment mailer service transport closed');
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Error closing payment mailer service: ${error.message}`,
+        );
+        // Non-critical error, don't throw
+      }
     }
   }
 }
