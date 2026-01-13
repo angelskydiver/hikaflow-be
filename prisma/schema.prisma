@@ -92,6 +92,11 @@ enum SubscriptionPlanType {
   CUSTOM   @map("CUSTOM") // Custom pricing
 }
 
+enum PricingModelType {
+  USER_BASED    @map("USER_BASED") // Per-user pricing
+  PROJECT_BASED @map("PROJECT_BASED") // Per-project pricing
+}
+
 enum InvoiceStatus {
   DRAFT    @map("DRAFT")
   PENDING  @map("PENDING")
@@ -683,41 +688,45 @@ model RegressionReport {
 }
 
 model PricingPlan {
-  id              String               @id @default(uuid())
-  name            String
-  planType        SubscriptionPlanType
-  basePrice       Float // Base price per user
-  evaluationPrice Float // Price per evaluation
-  prAnalysisQuota Int                  @default(20)
-  assistantQuota  Int                  @default(50)
-  active          Boolean              @default(true)
-  stripeProductId String? // Stripe product ID
-  stripePriceId   String? // Stripe price ID
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
+  id               String               @id @default(uuid())
+  name             String
+  planType         SubscriptionPlanType
+  pricingModelType PricingModelType     @default(USER_BASED) // Pricing model type
+  basePrice        Float // Base price per user (for USER_BASED)
+  projectBasePrice Float? // Base price per project (for PROJECT_BASED)
+  evaluationPrice  Float // Price per evaluation
+  prAnalysisQuota  Int                  @default(20)
+  assistantQuota   Int                  @default(50)
+  active           Boolean              @default(true)
+  stripeProductId  String? // Stripe product ID
+  stripePriceId    String? // Stripe price ID
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
 
   subscriptions     Subscription[] @relation("CurrentPlan")
   nextSubscriptions Subscription[] @relation("NextPlan")
 }
 
 model Subscription {
-  id                   String       @id @default(uuid())
+  id                   String           @id @default(uuid())
   organizationId       String
-  organization         Organization @relation(fields: [organizationId], references: [id])
+  organization         Organization     @relation(fields: [organizationId], references: [id])
   pricingPlanId        String
-  pricingPlan          PricingPlan  @relation("CurrentPlan", fields: [pricingPlanId], references: [id])
+  pricingPlan          PricingPlan      @relation("CurrentPlan", fields: [pricingPlanId], references: [id])
   nextPricingPlanId    String? // Future plan to activate when current subscription ends
-  nextPricingPlan      PricingPlan? @relation("NextPlan", fields: [nextPricingPlanId], references: [id])
+  nextPricingPlan      PricingPlan?     @relation("NextPlan", fields: [nextPricingPlanId], references: [id])
+  pricingModelType     PricingModelType @default(USER_BASED) // Pricing model for this subscription
   stripeCustomerId     String? // Keep as is, don't change to a relation yet
   stripeSubscriptionId String? // Stripe subscription ID
-  startDate            DateTime     @default(now())
+  startDate            DateTime         @default(now())
   endDate              DateTime?
-  isActive             Boolean      @default(true)
-  customBasePrice      Float? // Only for custom plans
+  isActive             Boolean          @default(true)
+  customBasePrice      Float? // Only for custom plans (user-based)
+  customProjectPrice   Float? // Only for custom plans (project-based)
   customEvalPrice      Float? // Only for custom plans
   cancelledAt          DateTime? // When the subscription was cancelled
-  createdAt            DateTime     @default(now())
-  updatedAt            DateTime     @updatedAt
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
 
   invoices  Invoice[]
   usageLogs UsageLog[]

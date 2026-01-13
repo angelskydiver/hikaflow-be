@@ -1,4 +1,4 @@
-import { SubscriptionPlanType } from '@prisma/client';
+import { PricingModelType, SubscriptionPlanType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
@@ -26,8 +26,17 @@ export class CreatePricingPlanDto {
   @IsEnum(SubscriptionPlanType)
   planType: SubscriptionPlanType;
 
+  @IsEnum(PricingModelType)
+  @IsOptional()
+  pricingModelType?: PricingModelType; // Pricing model type
+
   @IsNumber()
-  basePrice: number; // Base price per active user
+  @IsOptional()
+  basePrice?: number; // Base price per active user (for USER_BASED)
+
+  @IsNumber()
+  @IsOptional()
+  projectBasePrice?: number; // Base price per project (for PROJECT_BASED)
 
   @IsNumber()
   evaluationPrice: number; // Price per evaluation
@@ -70,9 +79,17 @@ export class CreateSubscriptionDto {
   @IsUUID()
   pricingPlanId: string;
 
+  @IsEnum(PricingModelType)
+  @IsOptional()
+  pricingModelType?: PricingModelType; // Pricing model type
+
   @IsNumber()
   @IsOptional()
-  customBasePrice?: number;
+  customBasePrice?: number; // For custom user-based plans
+
+  @IsNumber()
+  @IsOptional()
+  customProjectPrice?: number; // For custom project-based plans
 
   @IsNumber()
   @IsOptional()
@@ -84,6 +101,10 @@ export class UpdateSubscriptionDto {
   @IsOptional()
   pricingPlanId?: string;
 
+  @IsEnum(PricingModelType)
+  @IsOptional()
+  pricingModelType?: PricingModelType; // Pricing model type
+
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
@@ -92,9 +113,17 @@ export class UpdateSubscriptionDto {
   @IsOptional()
   immediate?: boolean; // For cancellation: true = immediate, false = end of period
 
+  @IsBoolean()
+  @IsOptional()
+  immediateChange?: boolean; // For plan/model changes: true = change now, false/undefined = queue for end of period
+
   @IsNumber()
   @IsOptional()
-  customBasePrice?: number;
+  customBasePrice?: number; // For custom user-based plans
+
+  @IsNumber()
+  @IsOptional()
+  customProjectPrice?: number; // For custom project-based plans
 
   @IsNumber()
   @IsOptional()
@@ -163,4 +192,8 @@ export class GenerateInvoiceDto {
   @IsBoolean()
   @IsOptional()
   isForSubscriptionUpdate?: boolean;
+
+  @IsNumber()
+  @IsOptional()
+  creditAmount?: number; // Credit to apply from unused subscription time
 }
