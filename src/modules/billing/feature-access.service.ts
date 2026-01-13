@@ -89,7 +89,3 @@ export class FeatureAccessService {
     return subscription.pricingModelType || PricingModelType.USER_BASED;
   }
 }
-
-
-
-

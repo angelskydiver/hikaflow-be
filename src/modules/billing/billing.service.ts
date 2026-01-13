@@ -345,6 +345,27 @@ export class BillingService {
     data: CreateSubscriptionDto,
   ): Promise<ISubscription> {
     try {
+      // 🔍 DEBUG: Log incoming request data
+      console.log(
+        '═══════════════════════════════════════════════════════════',
+      );
+      console.log('🆕 CREATE SUBSCRIPTION REQUEST');
+      console.log(
+        '═══════════════════════════════════════════════════════════',
+      );
+      console.log('📥 INCOMING DATA:');
+      console.log('   - Organization ID:', data.organizationId);
+      console.log('   - Requested Plan ID:', data.pricingPlanId);
+      console.log(
+        '   - Requested Pricing Model Type:',
+        data.pricingModelType || 'NOT PROVIDED',
+      );
+      console.log('   - Custom Base Price:', data.customBasePrice || 'NONE');
+      console.log(
+        '   - Custom Project Price:',
+        data.customProjectPrice || 'NONE',
+      );
+
       const {
         organizationId,
         pricingPlanId,
@@ -366,11 +387,26 @@ export class BillingService {
       // Get the pricing plan
       const pricingPlan = await this.getPricingPlanById(pricingPlanId);
 
+      // 🔍 DEBUG: Log fetched plan details
+      console.log('📦 PLAN DETAILS FROM DATABASE:');
+      console.log('   - Plan ID:', pricingPlan.id);
+      console.log('   - Plan Name:', pricingPlan.name);
+      console.log('   - Plan Type:', pricingPlan.planType);
+      console.log('   - Plan Pricing Model:', pricingPlan.pricingModelType);
+      console.log('   - Base Price (User):', pricingPlan.basePrice);
+      console.log('   - Project Base Price:', pricingPlan.projectBasePrice);
+
       // Determine pricing model type (use from plan if not specified, default to USER_BASED)
       const finalPricingModelType =
         pricingModelType ||
         pricingPlan.pricingModelType ||
         PricingModelType.USER_BASED;
+
+      // 🔍 DEBUG: Log final pricing model type
+      console.log('💰 FINAL PRICING MODEL TYPE:');
+      console.log('   - Requested:', pricingModelType || 'NOT PROVIDED');
+      console.log('   - From Plan:', pricingPlan.pricingModelType);
+      console.log('   - Final Decision:', finalPricingModelType);
 
       // Check if this is a custom plan
       if (pricingPlan.planType === SubscriptionPlanType.CUSTOM) {
@@ -430,6 +466,9 @@ export class BillingService {
       const existingSubscription =
         await this._prismaService.subscription.findFirst({
           where: { organizationId, isActive: true },
+          include: {
+            pricingPlan: true,
+          },
         });
 
       if (organizationsCustomerId) {
@@ -472,26 +511,79 @@ export class BillingService {
       stripeSubscriptionId = stripeSubscription.id;
       */
 
-      // Deactivate any existing subscriptions for this organization
-      if (existingSubscription) {
-        await this._prismaService.subscription.update({
-          where: { id: existingSubscription.id },
-          data: { isActive: false, endDate: new Date() },
+      // CRITICAL: Deactivate ALL existing active subscriptions for this organization
+      // This ensures we don't have multiple active subscriptions causing invoice issues
+      const allActiveSubscriptions =
+        await this._prismaService.subscription.findMany({
+          where: {
+            organizationId,
+            isActive: true,
+          },
+          include: {
+            pricingPlan: true,
+          },
         });
 
-        // Also cancel in Stripe if exists
-        if (existingSubscription.stripeSubscriptionId) {
-          await this.stripe.subscriptions.cancel(
-            existingSubscription.stripeSubscriptionId,
+      if (allActiveSubscriptions.length > 0) {
+        console.log(
+          `🗑️ Deactivating ${allActiveSubscriptions.length} existing active subscription(s):`,
+        );
+        for (const sub of allActiveSubscriptions) {
+          console.log(
+            `   - Subscription ${sub.id}: Plan ${sub.pricingPlan?.name || 'N/A'} (${sub.pricingPlanId})`,
           );
+
+          // Cancel in Stripe if exists
+          if (sub.stripeSubscriptionId) {
+            try {
+              await this.stripe.subscriptions.cancel(sub.stripeSubscriptionId);
+            } catch (stripeError) {
+              console.warn(
+                'Could not cancel Stripe subscription:',
+                stripeError,
+              );
+            }
+          }
         }
+
+        // Deactivate all of them at once
+        await this._prismaService.subscription.updateMany({
+          where: {
+            organizationId,
+            isActive: true,
+          },
+          data: {
+            isActive: false,
+            endDate: new Date(),
+          },
+        });
+        console.log('✅ All old active subscriptions deactivated');
+      }
+
+      // Keep the existingSubscription reference for logging purposes
+      if (existingSubscription) {
+        // Already handled above, but log for reference
+        console.log(
+          '   - Primary subscription reference:',
+          existingSubscription.id,
+        );
       }
 
       const subscriptionEndDate = new Date();
       subscriptionEndDate.setDate(subscriptionEndDate.getDate() + 30);
 
+      // 🔍 DEBUG: Log new subscription creation
+      console.log('🆕 Creating NEW subscription:');
+      console.log('   - Organization ID:', organizationId);
+      console.log('   - Plan ID:', pricingPlanId);
+      console.log('   - Plan Name:', pricingPlan.name);
+      console.log('   - Pricing Model Type:', finalPricingModelType);
+      console.log('   - Base Price (User):', pricingPlan.basePrice);
+      console.log('   - Project Base Price:', pricingPlan.projectBasePrice);
+      console.log('   - Is Active: true');
+
       // Create subscription in database
-      return this._prismaService.subscription.create({
+      const newSubscription = await this._prismaService.subscription.create({
         data: {
           organizationId,
           pricingPlanId,
@@ -505,7 +597,20 @@ export class BillingService {
           customProjectPrice,
           customEvalPrice,
         },
+        include: {
+          pricingPlan: true,
+        },
       });
+
+      // 🔍 DEBUG: Verify subscription was created correctly
+      console.log('✅ NEW subscription created:');
+      console.log('   - Subscription ID:', newSubscription.id);
+      console.log('   - Plan ID:', newSubscription.pricingPlanId);
+      console.log('   - Plan Name:', newSubscription.pricingPlan.name);
+      console.log('   - Pricing Model:', newSubscription.pricingModelType);
+      console.log('   - Is Active:', newSubscription.isActive);
+
+      return newSubscription;
     } catch (error) {
       console.error('Error creating subscription:', error);
       throw new BadRequestException(error.message);
@@ -515,6 +620,11 @@ export class BillingService {
   async getSubscriptionByOrganizationId(
     organizationId: string,
   ): Promise<ISubscription> {
+    // 🔍 DEBUG: Log subscription lookup
+    console.log('🔍 Looking up subscription for organization:', organizationId);
+
+    // CRITICAL: Order by updatedAt first, then createdAt to get the most recently modified subscription
+    // This ensures we get the NEW subscription if multiple exist
     const subscription = await this._prismaService.subscription.findFirst({
       where: {
         organizationId,
@@ -523,14 +633,83 @@ export class BillingService {
       include: {
         pricingPlan: true,
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: [
+        { updatedAt: 'desc' }, // First priority: most recently updated (new subscriptions are updated when created)
+        { createdAt: 'desc' }, // Second priority: most recently created
+      ],
     });
 
     if (!subscription) {
+      console.error(
+        '❌ No active subscription found for organization:',
+        organizationId,
+      );
       throw new NotFoundException(
         'No active subscription found for this organization',
+      );
+    }
+
+    // 🔍 DEBUG: Log found subscription details
+    console.log('✅ Found subscription:');
+    console.log('   - Subscription ID:', subscription.id);
+    console.log('   - Plan ID:', subscription.pricingPlanId);
+    console.log('   - Plan Name:', subscription.pricingPlan?.name || 'N/A');
+    console.log('   - Plan Type:', subscription.pricingPlan?.planType || 'N/A');
+    console.log(
+      '   - Pricing Model:',
+      subscription.pricingModelType || 'USER_BASED',
+    );
+    console.log(
+      '   - Base Price (User):',
+      subscription.pricingPlan?.basePrice || 'N/A',
+    );
+    console.log(
+      '   - Project Base Price:',
+      subscription.pricingPlan?.projectBasePrice || 'N/A',
+    );
+    console.log('   - Is Active:', subscription.isActive);
+    console.log('   - Created At:', subscription.createdAt);
+    console.log('   - Updated At:', subscription.updatedAt);
+
+    // 🔍 DEBUG: Also check if there are multiple active subscriptions
+    const allActiveSubscriptions =
+      await this._prismaService.subscription.findMany({
+        where: {
+          organizationId,
+          isActive: true,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+        select: {
+          id: true,
+          pricingPlanId: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+    if (allActiveSubscriptions.length > 1) {
+      console.warn('⚠️ WARNING: Multiple active subscriptions found!');
+      console.warn(
+        '   - Total active subscriptions:',
+        allActiveSubscriptions.length,
+      );
+      allActiveSubscriptions.forEach((sub, index) => {
+        console.warn(
+          `   - Subscription ${index + 1}:`,
+          sub.id,
+          'Plan:',
+          sub.pricingPlanId,
+          'Created:',
+          sub.createdAt,
+          'Updated:',
+          sub.updatedAt,
+        );
+      });
+      console.warn(
+        '   - Using most recent one (by createdAt):',
+        subscription.id,
       );
     }
 
@@ -542,9 +721,30 @@ export class BillingService {
     data: UpdateSubscriptionDto,
   ): Promise<ISubscription> {
     try {
+      // 🔍 DEBUG: Log incoming request data
+      console.log(
+        '═══════════════════════════════════════════════════════════',
+      );
+      console.log('🔄 UPDATE SUBSCRIPTION REQUEST');
+      console.log(
+        '═══════════════════════════════════════════════════════════',
+      );
+      console.log('📥 INCOMING DATA:');
+      console.log('   - Subscription ID:', subscriptionId);
+      console.log(
+        '   - Requested Plan ID:',
+        data.pricingPlanId || 'NOT PROVIDED',
+      );
+      console.log(
+        '   - Requested Pricing Model Type:',
+        data.pricingModelType || 'NOT PROVIDED',
+      );
+      console.log('   - Immediate Change:', data.immediateChange);
+      console.log('   - Is Active:', data.isActive);
+
       const subscription = await this._prismaService.subscription.findUnique({
         where: { id: subscriptionId },
-        include: { 
+        include: {
           pricingPlan: true,
           nextPricingPlan: true, // Include queued plan if exists
         },
@@ -553,6 +753,27 @@ export class BillingService {
       if (!subscription) {
         throw new NotFoundException('Subscription not found');
       }
+
+      // 🔍 DEBUG: Log current subscription state
+      console.log('📋 CURRENT SUBSCRIPTION STATE:');
+      console.log('   - Current Plan ID:', subscription.pricingPlanId);
+      console.log(
+        '   - Current Plan Name:',
+        subscription.pricingPlan?.name || 'N/A',
+      );
+      console.log(
+        '   - Current Plan Type:',
+        subscription.pricingPlan?.planType || 'N/A',
+      );
+      console.log(
+        '   - Current Pricing Model:',
+        subscription.pricingModelType || 'USER_BASED',
+      );
+      console.log('   - Is Active:', subscription.isActive);
+      console.log(
+        '   - Queued Plan ID:',
+        subscription.nextPricingPlanId || 'NONE',
+      );
 
       // Check if there's an existing queued subscription change
       const hasQueuedChange = !!subscription.nextPricingPlanId;
@@ -581,9 +802,27 @@ export class BillingService {
         data.pricingPlanId && data.pricingPlanId !== subscription.pricingPlanId;
 
       if (isPlanChanging || isPricingModelChanging) {
+        // 🔍 DEBUG: Log plan change detection
+        console.log('🔄 PLAN CHANGE DETECTED:');
+        console.log('   - Plan Changing:', isPlanChanging);
+        console.log('   - Pricing Model Changing:', isPricingModelChanging);
+        console.log('   - Current Plan ID:', subscription.pricingPlanId);
+        console.log('   - New Plan ID (requested):', data.pricingPlanId);
+        console.log('   - Current Pricing Model:', currentPricingModelType);
+        console.log('   - New Pricing Model:', newPricingModelType);
+
         const newPlan = data.pricingPlanId
           ? await this.getPricingPlanById(data.pricingPlanId)
           : subscription.pricingPlan;
+
+        // 🔍 DEBUG: Log new plan details
+        console.log('📦 NEW PLAN DETAILS:');
+        console.log('   - Plan ID:', newPlan.id);
+        console.log('   - Plan Name:', newPlan.name);
+        console.log('   - Plan Type:', newPlan.planType);
+        console.log('   - Plan Pricing Model:', newPlan.pricingModelType);
+        console.log('   - Base Price (User):', newPlan.basePrice);
+        console.log('   - Project Base Price:', newPlan.projectBasePrice);
 
         // Validate based on pricing model type
         if (newPricingModelType === PricingModelType.USER_BASED) {
@@ -664,11 +903,37 @@ export class BillingService {
         const isUpgrade = newTotalPrice > currentTotalPrice;
         const isDowngrade = newTotalPrice < currentTotalPrice;
 
+        // 🔍 DEBUG: Detailed price comparison
+        console.log('💰 PRICE CALCULATION:');
+        console.log('   - Current Plan Price Calculation:');
         console.log(
-          `💰 Price comparison: Current=$${currentTotalPrice.toFixed(2)} (${currentUnitCount} ${currentPricingModelType === PricingModelType.PROJECT_BASED ? 'projects' : 'members'} × $${getCurrentPlanPrice().toFixed(2)}), New=$${newTotalPrice.toFixed(2)} (${newUnitCount} ${newPricingModelType === PricingModelType.PROJECT_BASED ? 'projects' : 'members'} × $${getNewPlanPrice().toFixed(2)})`,
+          '     * Unit Price:',
+          `$${getCurrentPlanPrice().toFixed(2)}`,
         );
         console.log(
-          `📊 Change type: ${isUpgrade ? 'UPGRADE' : isDowngrade ? 'DOWNGRADE' : 'SAME PRICE'}`,
+          '     * Unit Count:',
+          currentUnitCount,
+          currentPricingModelType === PricingModelType.PROJECT_BASED
+            ? 'projects'
+            : 'members',
+        );
+        console.log(
+          '     * Total Current Price:',
+          `$${currentTotalPrice.toFixed(2)}`,
+        );
+        console.log('   - New Plan Price Calculation:');
+        console.log('     * Unit Price:', `$${getNewPlanPrice().toFixed(2)}`);
+        console.log(
+          '     * Unit Count:',
+          newUnitCount,
+          newPricingModelType === PricingModelType.PROJECT_BASED
+            ? 'projects'
+            : 'members',
+        );
+        console.log('     * Total New Price:', `$${newTotalPrice.toFixed(2)}`);
+        console.log(
+          '   - Change Type:',
+          isUpgrade ? 'UPGRADE' : isDowngrade ? 'DOWNGRADE' : 'SAME PRICE',
         );
 
         const today = new Date();
@@ -684,12 +949,22 @@ export class BillingService {
           subscription.pricingPlan.planType === SubscriptionPlanType.TRIAL;
 
         // Determine if change should be immediate
-        // - Downgrades: ALWAYS queue for next billing cycle (NEVER allow immediate change)
-        // - Upgrades: Apply immediately with credit (unless user explicitly wants to queue)
+        // CRITICAL: If user explicitly requests immediate change (data.immediateChange === true),
+        // honor it regardless of upgrade/downgrade/same-price
+        // - Explicit immediate request: ALWAYS apply immediately (even for downgrades)
+        // - Downgrades without explicit immediate: Queue for next billing cycle
+        // - Upgrades: Apply immediately with credit (default behavior)
         // - Same price: Queue by default (unless user explicitly wants immediate)
         let immediateChange = false;
-        if (isDowngrade) {
-          // Downgrades are ALWAYS queued - NEVER allow immediate change, regardless of any other conditions
+
+        // PRIORITY 1: If user explicitly requests immediate change, honor it ALWAYS
+        if (data.immediateChange === true) {
+          immediateChange = true;
+          console.log(
+            `⚡ User explicitly requested immediate change - honoring request regardless of upgrade/downgrade`,
+          );
+        } else if (isDowngrade) {
+          // Downgrades are queued by default (unless user explicitly wants immediate)
           immediateChange = false;
           console.log(
             `⏭️ Downgrade detected - will be queued for next billing cycle (NO payment will be charged)`,
@@ -702,16 +977,32 @@ export class BillingService {
           );
         } else {
           // Same price - queue by default unless user explicitly wants immediate
-          immediateChange = data.immediateChange === true;
+          immediateChange = !!data.immediateChange;
         }
 
-        // CRITICAL: For downgrades, ALWAYS queue - never process immediately
-        // This ensures downgrades never trigger payment, even if subscription has ended or is trial
-        if (isDowngrade) {
+        // 🔍 DEBUG: Log immediate change decision
+        console.log('⚡ IMMEDIATE CHANGE DECISION:');
+        console.log('   - Is Downgrade:', isDowngrade);
+        console.log('   - Is Upgrade:', isUpgrade);
+        console.log(
+          '   - User Requested Immediate Change:',
+          data.immediateChange,
+        );
+        console.log('   - Final Immediate Change:', immediateChange);
+        console.log('   - Has Queued Plan:', hasQueuedChange);
+        if (immediateChange && isDowngrade) {
+          console.log(
+            '   - ⚠️ NOTE: User explicitly requested immediate change for downgrade - will be honored',
+          );
+        }
+
+        // CRITICAL: Only queue downgrades if user did NOT explicitly request immediate change
+        // If user explicitly requests immediate, honor it even for downgrades
+        if (isDowngrade && !immediateChange) {
           console.log(
             `🔄 Processing downgrade - queuing for next billing cycle (skipping immediate change path)`,
           );
-          
+
           // Queue the downgrade - NO payment charged
           const updateData: any = {
             nextPricingPlanId: isPlanChanging ? data.pricingPlanId : null,
@@ -753,12 +1044,34 @@ export class BillingService {
         // If subscription is active (not trial) and hasn't ended, queue the change
         // This happens for upgrades/same-price when user doesn't want immediate change
         // IMPORTANT: Only queue - NO payment is charged here
-        if (isSubscriptionActive && !isTrialSubscription && !immediateChange) {
+        // CRITICAL: If subscription is cancelled (not active), skip queuing and activate immediately
+        // CRITICAL: If user requests immediate change, skip queuing and activate immediately
+        if (
+          isSubscriptionActive &&
+          !isTrialSubscription &&
+          !immediateChange &&
+          subscription.isActive
+        ) {
           // If there's already a queued change, update it instead of creating a new one
           // This syncs the queued plan with the new request
           const updateData: any = {
             nextPricingPlanId: isPlanChanging ? data.pricingPlanId : null,
           };
+
+          // 🔍 DEBUG: Log queued plan update
+          if (hasQueuedChange && isPlanChanging) {
+            console.log('🔄 Updating queued plan:');
+            console.log(
+              '   - Old Queued Plan ID:',
+              subscription.nextPricingPlanId,
+            );
+            console.log('   - New Queued Plan ID:', data.pricingPlanId);
+          } else if (isPlanChanging) {
+            console.log(
+              '📋 Queuing new plan for next billing cycle:',
+              data.pricingPlanId,
+            );
+          }
 
           // If pricing model is changing, store that too
           if (isPricingModelChanging) {
@@ -863,16 +1176,56 @@ export class BillingService {
 
         // Prepare update data - always include pricingPlanId if plan is changing
         // Also clear any queued subscription since we're applying change immediately
+        // CRITICAL: If subscription is cancelled (not active), reactivate it immediately
+        // CRITICAL: When user requests immediate change, clear any queued plans and charge for the NEW plan
         const updateData: any = {
           pricingModelType: newPricingModelType,
           startDate: newStartDate,
           endDate: newEndDate,
-          nextPricingPlanId: null, // Clear any queued subscription
+          nextPricingPlanId: null, // CRITICAL: Clear any queued subscription when applying immediate change
+          isActive: true, // Reactivate if subscription was cancelled
         };
+
+        // 🔍 DEBUG: Log queued plan clearing for immediate changes
+        // CRITICAL: Always clear queued plan when immediate change is requested
+        if (hasQueuedChange) {
+          console.log('🗑️ IMMEDIATE CHANGE REQUESTED - CLEARING QUEUED PLAN:');
+          console.log(
+            '   - Previous Queued Plan ID:',
+            subscription.nextPricingPlanId,
+          );
+          console.log('   - New Plan ID (to be charged):', data.pricingPlanId);
+          console.log(
+            '   - Reason: User requested immediate change - queued plan will be removed',
+          );
+          console.log(
+            '   - ⚠️ IMPORTANT: Will charge for NEW plan, NOT queued plan',
+          );
+        } else {
+          console.log(
+            '✅ No queued plan to clear - proceeding with immediate change',
+          );
+        }
+
+        // CRITICAL: Ensure nextPricingPlanId is ALWAYS null for immediate changes
+        // This removes any queued plan when user selects immediate change
+        if (updateData.nextPricingPlanId !== null) {
+          console.warn(
+            '⚠️ WARNING: nextPricingPlanId should be null for immediate change, forcing it to null',
+          );
+          updateData.nextPricingPlanId = null;
+        }
 
         if (isPlanChanging && data.pricingPlanId) {
           updateData.pricingPlanId = data.pricingPlanId;
           console.log(`📝 Setting new pricingPlanId: ${data.pricingPlanId}`);
+        }
+
+        // Log if we're reactivating a cancelled subscription
+        if (!subscription.isActive) {
+          console.log(
+            `🔄 Reactivating cancelled subscription and applying new plan immediately`,
+          );
         }
 
         // Store original subscription state for potential rollback
@@ -883,6 +1236,17 @@ export class BillingService {
           endDate: subscription.endDate,
         };
 
+        // 🔍 DEBUG: Log what we're updating
+        console.log('📝 UPDATING SUBSCRIPTION WITH:');
+        console.log(
+          '   - Pricing Plan ID:',
+          updateData.pricingPlanId || 'UNCHANGED',
+        );
+        console.log('   - Pricing Model Type:', updateData.pricingModelType);
+        console.log('   - Start Date:', updateData.startDate);
+        console.log('   - End Date:', updateData.endDate);
+        console.log('   - Is Active:', updateData.isActive);
+
         const updatedSubscription =
           await this._prismaService.subscription.update({
             where: { id: subscriptionId },
@@ -892,9 +1256,37 @@ export class BillingService {
             },
           });
 
+        // 🔍 DEBUG: Verify what was actually saved
+        console.log('✅ SUBSCRIPTION UPDATED - VERIFICATION:');
+        console.log('   - Saved Plan ID:', updatedSubscription.pricingPlanId);
         console.log(
-          `✅ Subscription updated: New Plan=${updatedSubscription.pricingPlan.name} (${updatedSubscription.pricingPlan.planType}), Model=${updatedSubscription.pricingModelType}`,
+          '   - Saved Plan Name:',
+          updatedSubscription.pricingPlan.name,
         );
+        console.log(
+          '   - Saved Plan Type:',
+          updatedSubscription.pricingPlan.planType,
+        );
+        console.log(
+          '   - Saved Pricing Model:',
+          updatedSubscription.pricingModelType,
+        );
+        console.log('   - Saved Is Active:', updatedSubscription.isActive);
+
+        // Verify plan ID matches what was requested
+        if (
+          isPlanChanging &&
+          updatedSubscription.pricingPlanId !== data.pricingPlanId
+        ) {
+          console.error('❌ PLAN ID MISMATCH!');
+          console.error('   - Expected Plan ID:', data.pricingPlanId);
+          console.error(
+            '   - Actual Plan ID:',
+            updatedSubscription.pricingPlanId,
+          );
+        } else if (isPlanChanging) {
+          console.log('✅ Plan ID matches request:', data.pricingPlanId);
+        }
 
         // Verify the subscription was actually updated
         if (
@@ -912,12 +1304,57 @@ export class BillingService {
         // Generate invoice for the NEW subscription period with credit applied
         // IMPORTANT: Payment is charged here when plan actually changes
         try {
+          // 🔍 DEBUG: Log invoice generation details
           console.log(
-            `💰 Generating invoice with credit: $${creditAmount.toFixed(2)}`,
+            '═══════════════════════════════════════════════════════════',
+          );
+          console.log('💰 GENERATING INVOICE FOR IMMEDIATE CHANGE');
+          console.log(
+            '═══════════════════════════════════════════════════════════',
+          );
+          console.log('📊 INVOICE DETAILS:');
+          console.log('   - Organization ID:', subscription.organizationId);
+          console.log('   - Subscription ID:', updatedSubscription.id);
+          console.log(
+            '   - Plan ID (from subscription - THIS IS THE PLAN BEING CHARGED):',
+            updatedSubscription.pricingPlanId,
+          );
+          console.log('   - Plan Name:', updatedSubscription.pricingPlan.name);
+          console.log(
+            '   - Plan Type:',
+            updatedSubscription.pricingPlan.planType,
           );
           console.log(
-            `📊 Invoice will use updated subscription: Plan=${updatedSubscription.pricingPlan.name}, Model=${updatedSubscription.pricingModelType}`,
+            '   - Pricing Model:',
+            updatedSubscription.pricingModelType,
           );
+          console.log(
+            '   - Base Price (User):',
+            updatedSubscription.pricingPlan.basePrice,
+          );
+          console.log(
+            '   - Project Base Price:',
+            updatedSubscription.pricingPlan.projectBasePrice,
+          );
+          console.log('   - Credit Amount:', `$${creditAmount.toFixed(2)}`);
+          console.log(
+            '   - Period:',
+            `${newStartDate.toISOString()} to ${newEndDate.toISOString()}`,
+          );
+          console.log('   - Is For Subscription Update: true');
+          if (hasQueuedChange) {
+            console.log(
+              '   - ⚠️ IMPORTANT: Previous queued plan cleared - charging for NEW plan only',
+            );
+            console.log(
+              '   - Previous Queued Plan ID:',
+              subscription.nextPricingPlanId,
+            );
+            console.log(
+              '   - New Plan ID (being charged):',
+              updatedSubscription.pricingPlanId,
+            );
+          }
 
           const invoiceResult = await this.generateInvoice({
             organizationId: subscription.organizationId,
@@ -1038,7 +1475,7 @@ export class BillingService {
             '❌ Error generating invoice for subscription change:',
             invoiceError.message,
           );
-          
+
           // REVERT subscription change if invoice generation fails
           console.error(
             `🔄 Reverting subscription change due to invoice generation failure...`,
@@ -1130,17 +1567,19 @@ export class BillingService {
         ? new Date(subscription.endDate)
         : null;
 
-      // Clear any queued subscription changes
-      if (subscription.nextPricingPlanId) {
-        await this._prismaService.subscription.update({
-          where: { id: subscriptionId },
-          data: { nextPricingPlanId: null },
-        });
-        console.log(`Cleared queued subscription change for ${subscriptionId}`);
-      }
-
       // Handle immediate cancellation
       if (immediate) {
+        // For immediate cancellation, clear any queued subscription changes
+        // (user won't need the queued plan if they're cancelling immediately)
+        if (subscription.nextPricingPlanId) {
+          await this._prismaService.subscription.update({
+            where: { id: subscriptionId },
+            data: { nextPricingPlanId: null },
+          });
+          console.log(
+            `Cleared queued subscription change for immediate cancellation: ${subscriptionId}`,
+          );
+        }
         // PREPAID MODEL: No refund or final invoice needed
         // User has already paid for the period, cancellation just stops access
         // No need to generate invoice - they keep what they paid for
@@ -1171,8 +1610,18 @@ export class BillingService {
       // Set endDate to current endDate (or today if null) - no renewal
       const cancellationDate = subscriptionEndDate || today;
 
+      // IMPORTANT: For end-of-period cancellations, preserve the queued plan (nextPricingPlanId)
+      // The queued plan should activate when the subscription ends
+      const hasQueuedPlan = !!subscription.nextPricingPlanId;
+      if (hasQueuedPlan) {
+        console.log(
+          `📋 Preserving queued plan ${subscription.nextPricingPlanId} for end-of-period cancellation of ${subscriptionId}`,
+        );
+      }
+
       // Update subscription to not renew (keep active until endDate)
       // Mark as cancelled so cron knows not to renew
+      // NOTE: We do NOT clear nextPricingPlanId here - it should remain for the queued plan
       return this._prismaService.subscription.update({
         where: { id: subscriptionId },
         data: {
@@ -1180,6 +1629,7 @@ export class BillingService {
           cancelledAt: today, // Mark as cancelled - prevents renewal
           // Keep isActive = true until endDate arrives
           // Daily cron will handle deactivation when endDate arrives
+          // Keep nextPricingPlanId if it exists (queued plan)
         },
       });
     } catch (error) {
@@ -1284,11 +1734,27 @@ export class BillingService {
     data: GenerateInvoiceDto,
   ): Promise<IInvoice | IInvoiceGenerationResult> {
     try {
+      // 🔍 DEBUG: Log invoice generation request
+      console.log(
+        '═══════════════════════════════════════════════════════════',
+      );
+      console.log('💰 GENERATE INVOICE REQUEST');
+      console.log(
+        '═══════════════════════════════════════════════════════════',
+      );
+      console.log('📥 INVOICE REQUEST DATA:');
+      console.log('   - Organization ID:', data.organizationId);
+      console.log('   - From Date:', data.fromDate);
+      console.log('   - To Date:', data.toDate);
+      console.log(
+        '   - Is For Subscription Update:',
+        data.isForSubscriptionUpdate || false,
+      );
+      console.log('   - Credit Amount:', data.creditAmount || 0);
+
       const options: IGenerateInvoiceOptions = {
         organizationId: data.organizationId,
       };
-
-      console.log('check post 01: ', data.fromDate, !data.toDate);
 
       // Set default date range to the current month if not provided
       if (!data.fromDate && !data.toDate) {
@@ -1331,9 +1797,88 @@ export class BillingService {
       console.log(`Total days in billing period: ${totalDaysInPeriod}`);
 
       // Get active subscription
-      const subscription = await this.getSubscriptionByOrganizationId(
-        data.organizationId,
+      // CRITICAL: If subscriptionId is provided, use it directly to avoid race conditions
+      // Otherwise, look up by organizationId
+      let subscription: any;
+      if ((data as any).subscriptionId) {
+        console.log(
+          '🔍 Using provided subscription ID:',
+          (data as any).subscriptionId,
+        );
+        subscription = await this._prismaService.subscription.findUnique({
+          where: {
+            id: (data as any).subscriptionId,
+            organizationId: data.organizationId,
+          },
+          include: {
+            pricingPlan: true,
+          },
+        });
+
+        if (!subscription) {
+          console.error(
+            '❌ Subscription not found with provided ID, falling back to organization lookup',
+          );
+          subscription = await this.getSubscriptionByOrganizationId(
+            data.organizationId,
+          );
+        } else if (!subscription.isActive) {
+          console.error(
+            '❌ Provided subscription is not active, falling back to organization lookup',
+          );
+          console.error('   - Subscription ID:', subscription.id);
+          console.error('   - Is Active:', subscription.isActive);
+          console.error('   - Plan ID:', subscription.pricingPlanId);
+          console.error('   - Plan Name:', subscription.pricingPlan?.name);
+          // Try to find the most recently created active subscription
+          subscription = await this.getSubscriptionByOrganizationId(
+            data.organizationId,
+          );
+        } else {
+          console.log(
+            '✅ Using provided subscription ID - found active subscription',
+          );
+          console.log('   - Subscription ID:', subscription.id);
+          console.log('   - Plan ID:', subscription.pricingPlanId);
+          console.log('   - Plan Name:', subscription.pricingPlan?.name);
+          console.log('   - Pricing Model:', subscription.pricingModelType);
+        }
+      } else {
+        subscription = await this.getSubscriptionByOrganizationId(
+          data.organizationId,
+        );
+      }
+
+      // 🔍 DEBUG: Log subscription details used for invoice
+      console.log('📋 SUBSCRIPTION USED FOR INVOICE:');
+      console.log('   - Subscription ID:', subscription.id);
+      console.log('   - Plan ID:', subscription.pricingPlanId);
+      console.log('   - Plan Name:', subscription.pricingPlan?.name || 'N/A');
+      console.log(
+        '   - Plan Type:',
+        subscription.pricingPlan?.planType || 'N/A',
       );
+      console.log(
+        '   - Pricing Model Type:',
+        subscription.pricingModelType || 'USER_BASED',
+      );
+      console.log(
+        '   - Base Price (User):',
+        subscription.pricingPlan?.basePrice || 'N/A',
+      );
+      console.log(
+        '   - Project Base Price:',
+        subscription.pricingPlan?.projectBasePrice || 'N/A',
+      );
+      console.log(
+        '   - Custom Base Price:',
+        subscription.customBasePrice || 'NONE',
+      );
+      console.log(
+        '   - Custom Project Price:',
+        subscription.customProjectPrice || 'NONE',
+      );
+      console.log('   - Is Active:', subscription.isActive);
 
       // Skip invoicing for TRIAL plans since they're free, but return a message instead of throwing an error
       if (subscription.pricingPlan.planType === SubscriptionPlanType.TRIAL) {
@@ -1342,8 +1887,6 @@ export class BillingService {
           success: false,
         };
       }
-
-      console.log('check post 03');
 
       // Get uncounted usage logs (for record keeping)
       const usageLogs = await this._prismaService.usageLog.findMany({
@@ -1359,6 +1902,20 @@ export class BillingService {
       // Determine pricing model type (default to USER_BASED for backward compatibility)
       const pricingModelType =
         subscription.pricingModelType || PricingModelType.USER_BASED;
+
+      // 🔍 DEBUG: Log pricing model decision
+      console.log('💰 PRICING MODEL DECISION:');
+      console.log(
+        '   - Subscription Pricing Model:',
+        subscription.pricingModelType || 'NOT SET',
+      );
+      console.log('   - Final Pricing Model:', pricingModelType);
+      console.log(
+        '   - Will use:',
+        pricingModelType === PricingModelType.PROJECT_BASED
+          ? 'PROJECT_BASED invoice'
+          : 'USER_BASED invoice',
+      );
 
       // Branch based on pricing model type
       if (pricingModelType === PricingModelType.PROJECT_BASED) {
@@ -1394,10 +1951,29 @@ export class BillingService {
     organizationId: string,
     isForSubscriptionUpdate: boolean,
   ): Promise<IInvoice | IInvoiceGenerationResult> {
+    // 🔍 DEBUG: Log user-based invoice generation
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('👥 GENERATING USER-BASED INVOICE');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('📊 PLAN DETAILS FOR PRICING:');
+    console.log('   - Plan ID:', subscription.pricingPlanId);
+    console.log('   - Plan Name:', subscription.pricingPlan?.name || 'N/A');
+    console.log('   - Plan Type:', subscription.pricingPlan?.planType || 'N/A');
+    console.log(
+      '   - Base Price from Plan:',
+      subscription.pricingPlan?.basePrice || 'N/A',
+    );
+    console.log(
+      '   - Custom Base Price:',
+      subscription.customBasePrice || 'NONE',
+    );
+
     const totalDaysInPeriod = 30;
 
     const organizationMembers =
       await this.getOrganizationMembers(organizationId);
+
+    console.log('   - Member Count:', organizationMembers.length);
 
     // Skip invoicing if there are no members and no usage logs
     if (organizationMembers.length === 0 && usageLogs.length === 0) {
@@ -1421,6 +1997,12 @@ export class BillingService {
         : subscription.pricingPlan.basePrice;
 
     basePrice = basePrice ?? 0;
+
+    console.log('   - Final Base Price Used:', `$${basePrice.toFixed(2)}`);
+    console.log(
+      '   - Daily Rate:',
+      `$${(basePrice / totalDaysInPeriod).toFixed(4)}`,
+    );
 
     const memberDailyRate = basePrice / totalDaysInPeriod;
 
@@ -1600,10 +2182,29 @@ export class BillingService {
     organizationId: string,
     isForSubscriptionUpdate: boolean,
   ): Promise<IInvoice | IInvoiceGenerationResult> {
+    // 🔍 DEBUG: Log project-based invoice generation
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('📁 GENERATING PROJECT-BASED INVOICE');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('📊 PLAN DETAILS FOR PRICING:');
+    console.log('   - Plan ID:', subscription.pricingPlanId);
+    console.log('   - Plan Name:', subscription.pricingPlan?.name || 'N/A');
+    console.log('   - Plan Type:', subscription.pricingPlan?.planType || 'N/A');
+    console.log(
+      '   - Project Base Price from Plan:',
+      subscription.pricingPlan?.projectBasePrice || 'N/A',
+    );
+    console.log(
+      '   - Custom Project Price:',
+      subscription.customProjectPrice || 'NONE',
+    );
+
     const totalDaysInPeriod = 30;
 
     const organizationProjects =
       await this.getOrganizationProjects(organizationId);
+
+    console.log('   - Project Count:', organizationProjects.length);
 
     // Skip invoicing if there are no projects and no usage logs
     if (organizationProjects.length === 0 && usageLogs.length === 0) {
@@ -1626,6 +2227,15 @@ export class BillingService {
         : subscription.pricingPlan.projectBasePrice;
 
     projectBasePrice = projectBasePrice ?? 0;
+
+    console.log(
+      '   - Final Project Base Price Used:',
+      `$${projectBasePrice.toFixed(2)}`,
+    );
+    console.log(
+      '   - Daily Rate:',
+      `$${(projectBasePrice / totalDaysInPeriod).toFixed(4)}`,
+    );
 
     const projectDailyRate = projectBasePrice / totalDaysInPeriod;
 
@@ -3552,15 +4162,23 @@ export class BillingService {
 
   /**
    * Gets queued subscriptions for an organization
+   * Includes both active subscriptions with queued plans and cancelled subscriptions
+   * that still have a queued plan (cancelled at end of period)
    */
   async getQueuedSubscriptions(organizationId: string): Promise<any[]> {
     try {
-      const subscriptionsWithNextPlan =
+      // First, try to find active subscriptions with queued plans
+      // This includes:
+      // - Active subscriptions with queued plans (normal case)
+      // - Subscriptions cancelled at end of period (cancelledAt set, but isActive=true until endDate)
+      const activeSubscriptionsWithQueue =
         await this._prismaService.subscription.findMany({
           where: {
             organizationId,
             nextPricingPlanId: { not: null },
             isActive: true,
+            // Include both regular active subscriptions and those cancelled at end of period
+            // (cancelledAt being set doesn't affect isActive until endDate arrives)
           },
           include: {
             pricingPlan: true,
@@ -3569,12 +4187,53 @@ export class BillingService {
           orderBy: { updatedAt: 'desc' },
         });
 
-      return subscriptionsWithNextPlan.map((sub) => ({
+      // Also find cancelled subscriptions with queued plans
+      // Include both those with future endDate and those without (recently cancelled)
+      const cancelledSubscriptionsWithQueue =
+        await this._prismaService.subscription.findMany({
+          where: {
+            organizationId,
+            nextPricingPlanId: { not: null },
+            isActive: false,
+            // Include cancelled subscriptions that either:
+            // 1. Have an endDate in the future (cancelled but still running)
+            // 2. Have no endDate or endDate in past but were recently updated (just cancelled with queued plan)
+            OR: [
+              { endDate: { gte: new Date() } },
+              {
+                AND: [
+                  {
+                    OR: [{ endDate: null }, { endDate: { lt: new Date() } }],
+                  },
+                  // Include if updated in the last 30 days (recently cancelled with queued plan)
+                  {
+                    updatedAt: {
+                      gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+          include: {
+            pricingPlan: true,
+            nextPricingPlan: true,
+          },
+          orderBy: { updatedAt: 'desc' },
+        });
+
+      // Combine both lists
+      const allSubscriptionsWithQueue = [
+        ...activeSubscriptionsWithQueue,
+        ...cancelledSubscriptionsWithQueue,
+      ];
+
+      return allSubscriptionsWithQueue.map((sub) => ({
         id: sub.id,
         currentPlan: sub.pricingPlan,
         nextPlan: sub.nextPricingPlan,
         scheduledStartDate: sub.endDate,
-        status: 'PENDING',
+        status: sub.isActive ? 'PENDING' : 'CANCELLED_PENDING',
         createdAt: sub.updatedAt,
       }));
     } catch (error) {
