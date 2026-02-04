@@ -30,6 +30,7 @@ import {
 import { filterFiles } from 'src/config/helpers/unnecessary.files.helper';
 import { MailService } from 'src/mail/mail.service';
 import { queueChangedFilesScan } from 'src/queue/repository.scan.queue';
+import { queueCommitImpactAnalysis } from 'src/queue/commit-impact-analysis.queue';
 import { AccountCredentialService } from '../accountCredentials/accountCredentials.service';
 import { UsageLogType } from '../billing/dto/billing.request.dto';
 import { BillingService } from '../billing/billing.service';
@@ -2797,7 +2798,15 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
    * Handle GitHub push events for individual commit analysis
    */
   async handleGithubPushEvent(data: any) {
+    console.log('🔄 [CHECKPOINT 1] GitHub push event received:', {
+      repository: data.repository?.name,
+      commitsCount: data.commits?.length,
+      ref: data.ref,
+    });
+
     try {
+      // [CHECKPOINT 2] Get repository
+      console.log('🔄 [CHECKPOINT 2] Fetching repository...');
       const repository = await this._prismaService.repository.findUnique({
         where: {
           repositoryId: data.repository.id.toString(),
@@ -2808,11 +2817,13 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
       });
 
       if (!repository) {
-        console.log('Repository not found for push event');
+        console.log('❌ [CHECKPOINT 2] Repository not found for push event');
         return { success: false, message: 'Repository not found' };
       }
+      console.log('✅ [CHECKPOINT 2] Repository found:', repository.name);
 
-      // Check if organization has active subscription
+      // [CHECKPOINT 3] Check subscription
+      console.log('🔄 [CHECKPOINT 3] Checking subscription status...');
       const subscriptionStatus =
         await this._billingService.checkSubscriptionStatus(
           repository.organization.id,
@@ -2820,7 +2831,7 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
 
       if (!subscriptionStatus.isActive) {
         console.log(
-          `Organization ${repository.organization.id} does not have active subscription for push event processing`,
+          `❌ [CHECKPOINT 3] Organization ${repository.organization.id} does not have active subscription`,
         );
         return {
           success: false,
@@ -2829,27 +2840,109 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
             'Active subscription required to process commits',
         };
       }
+      console.log('✅ [CHECKPOINT 3] Subscription is active');
 
-      await Promise.all(
+      // [CHECKPOINT 4] Create commit summaries
+      console.log('🔄 [CHECKPOINT 4] Creating commit summaries...');
+      const branchName = data.ref.replace('refs/heads/', '');
+      const commitSummaries = await Promise.all(
         data.commits.map((commit) =>
           this._commitSummaryService.createCommitSummary(
             {
               ...commit,
-              branchName: data.ref.replace('refs/heads/', ''),
+              branchName: branchName,
               baseBranch: repository.baseBranch,
             },
             data.repository.id.toString(),
           ),
         ),
       );
+      console.log('✅ [CHECKPOINT 4] Created commit summaries:', commitSummaries.length);
+
+      // [CHECKPOINT 5] Check if push is to base branch
+      console.log('🔄 [CHECKPOINT 5] Checking if push is to base branch...');
+      const shouldAnalyze = await this.shouldRunImpactAnalysis(
+        branchName,
+        repository.baseBranch,
+      );
+      console.log('✅ [CHECKPOINT 5] Should run impact analysis:', shouldAnalyze, {
+        branchName,
+        baseBranch: repository.baseBranch,
+      });
+
+      // [CHECKPOINT 6] Queue impact analysis for base branch pushes
+      if (shouldAnalyze) {
+        console.log('🔄 [CHECKPOINT 6] Base branch push detected, queueing impact analysis...');
+        
+        // Get account credentials
+        const { decryptedToken } = await this._accountCredentialByRepository(data);
+        console.log('✅ [CHECKPOINT 6] Got account credentials');
+
+        // Process each commit
+        for (const commit of data.commits) {
+          try {
+            console.log(`🔄 [CHECKPOINT 6.${commit.id}] Processing commit:`, commit.id);
+
+            // Extract changed files
+            console.log(`🔄 [CHECKPOINT 6.${commit.id}.1] Extracting changed files...`);
+            const changedFiles = await this.extractCommitFilesFromGitHub(
+              commit.id,
+              repository,
+              decryptedToken,
+            );
+            console.log(`✅ [CHECKPOINT 6.${commit.id}.1] Extracted ${changedFiles.length} changed files`);
+
+            if (changedFiles.length === 0) {
+              console.log(`⚠️ [CHECKPOINT 6.${commit.id}] No files to analyze, skipping`);
+              continue;
+            }
+
+            // Find commitSummary.id (created above)
+            console.log(`🔄 [CHECKPOINT 6.${commit.id}.2] Finding commit summary...`);
+            const commitSummary = await this._prismaService.commitSummary.findFirst({
+              where: {
+                commitId: commit.id,
+                repositoryId: repository.id,
+              },
+            });
+
+            if (!commitSummary) {
+              console.warn(`⚠️ [CHECKPOINT 6.${commit.id}.2] Commit summary not found, continuing without link`);
+            } else {
+              console.log(`✅ [CHECKPOINT 6.${commit.id}.2] Found commit summary:`, commitSummary.id);
+            }
+
+            // Queue analysis
+            console.log(`🔄 [CHECKPOINT 6.${commit.id}.3] Queueing impact analysis...`);
+            await queueCommitImpactAnalysis({
+              repositoryId: repository.id,
+              commitSha: commit.id,
+              changedFiles: changedFiles,
+              organizationId: repository.organizationId,
+              commitId: commitSummary?.id,
+              repositoryOwner: repository.owner,
+              repositoryName: repository.name,
+              repositoryProvider: repository.provider,
+            });
+            console.log(`✅ [CHECKPOINT 6.${commit.id}.3] Successfully queued impact analysis`);
+          } catch (error) {
+            console.error(`❌ [CHECKPOINT 6.${commit.id}] Error queueing analysis for commit ${commit.id}:`, error);
+            // Continue with other commits
+          }
+        }
+        console.log('✅ [CHECKPOINT 6] Finished queueing impact analysis for all commits');
+      } else {
+        console.log('ℹ️ [CHECKPOINT 6] Not a base branch push, skipping impact analysis');
+      }
 
       return {
         success: true,
         message: `Processed ${data.commits.length} commits`,
         commits: data.commits,
+        queuedAnalysis: shouldAnalyze,
       };
     } catch (error) {
-      console.error('Error handling GitHub push event:', error);
+      console.error('❌ [CHECKPOINT ERROR] Error handling GitHub push event:', error);
       return { success: false, message: error.message };
     }
   }
@@ -2858,8 +2951,14 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
    * Handle Bitbucket push events for individual commit analysis
    */
   async handleBitbucketPushEvent(data: any) {
+    console.log('🔄 [CHECKPOINT 1] Bitbucket push event received:', {
+      repository: data.data?.repository?.name,
+      changesCount: data.data?.push?.changes?.length,
+    });
+
     try {
-      // Fix: Access repository from data.data.repository, not data.repository
+      // [CHECKPOINT 2] Get repository
+      console.log('🔄 [CHECKPOINT 2] Fetching repository...');
       const repository = await this._prismaService.repository.findUnique({
         where: {
           repositoryId: data.data.repository.uuid,
@@ -2870,17 +2969,30 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
       });
 
       if (!repository) {
-        console.log('Repository not found for push event');
+        console.log('❌ [CHECKPOINT 2] Repository not found for push event');
         return { success: false, message: 'Repository not found' };
       }
+      console.log('✅ [CHECKPOINT 2] Repository found:', repository.name);
 
-      // Check if organization has active subscription
+      // [CHECKPOINT 3] Check subscription
+      console.log('🔄 [CHECKPOINT 3] Checking subscription status...');
       const subscriptionStatus =
         await this._billingService.checkSubscriptionStatus(
           repository.organization.id,
         );
 
-      console.log('subscriptionStatus: ', subscriptionStatus);
+      if (!subscriptionStatus.isActive) {
+        console.log(
+          `❌ [CHECKPOINT 3] Organization ${repository.organization.id} does not have active subscription`,
+        );
+        return {
+          success: false,
+          message:
+            subscriptionStatus.message ||
+            'Active subscription required to process commits',
+        };
+      }
+      console.log('✅ [CHECKPOINT 3] Subscription is active');
 
       // Get repository credentials to fetch commit file information
       const organizationAccount =
@@ -2994,8 +3106,9 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
 
       console.log(JSON.stringify(repository, null, 2));
 
-      // Use dedicated Bitbucket commit summary method
-      await Promise.all(
+      // [CHECKPOINT 4] Create commit summaries
+      console.log('🔄 [CHECKPOINT 4] Creating commit summaries...');
+      const commitSummaries = await Promise.all(
         validCommits.map((commit) =>
           this._commitSummaryService.createBitbucketCommitSummary(
             commit,
@@ -3003,18 +3116,105 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
           ),
         ),
       );
+      console.log('✅ [CHECKPOINT 4] Created commit summaries:', commitSummaries.length);
+
+      // [CHECKPOINT 5] Check if push is to base branch
+      // Get branch name from the first change
+      const branchName = data.data.push.changes[0]?.new?.name || data.data.push.changes[0]?.old?.name || 'unknown';
+      console.log('🔄 [CHECKPOINT 5] Checking if push is to base branch...', {
+        branchName,
+        baseBranch: repository.baseBranch,
+      });
+      const shouldAnalyze = await this.shouldRunImpactAnalysis(
+        branchName,
+        repository.baseBranch,
+      );
+      console.log('✅ [CHECKPOINT 5] Should run impact analysis:', shouldAnalyze);
+
+      // [CHECKPOINT 6] Queue impact analysis for base branch pushes
+      if (shouldAnalyze) {
+        console.log('🔄 [CHECKPOINT 6] Base branch push detected, queueing impact analysis...');
+
+        // Process each commit
+        for (const commit of validCommits) {
+          try {
+            const commitSha = commit.hash || commit.id;
+            console.log(`🔄 [CHECKPOINT 6.${commitSha}] Processing commit:`, commitSha);
+
+            // Get parent commit SHA
+            console.log(`🔄 [CHECKPOINT 6.${commitSha}.1] Getting parent commit SHA...`);
+            const parentCommitSha = await this.getParentCommitSha(
+              commitSha,
+              repository,
+              decryptedToken,
+            );
+            console.log(`✅ [CHECKPOINT 6.${commitSha}.1] Parent commit SHA:`, parentCommitSha);
+
+            // Extract changed files
+            console.log(`🔄 [CHECKPOINT 6.${commitSha}.2] Extracting changed files...`);
+            const changedFiles = await this.extractCommitFilesFromBitbucket(
+              commitSha,
+              parentCommitSha,
+              repository,
+              decryptedToken,
+            );
+            console.log(`✅ [CHECKPOINT 6.${commitSha}.2] Extracted ${changedFiles.length} changed files`);
+
+            if (changedFiles.length === 0) {
+              console.log(`⚠️ [CHECKPOINT 6.${commitSha}] No files to analyze, skipping`);
+              continue;
+            }
+
+            // Find commitSummary.id (created above)
+            console.log(`🔄 [CHECKPOINT 6.${commitSha}.3] Finding commit summary...`);
+            const commitSummary = await this._prismaService.commitSummary.findFirst({
+              where: {
+                commitId: commitSha,
+                repositoryId: repository.id,
+              },
+            });
+
+            if (!commitSummary) {
+              console.warn(`⚠️ [CHECKPOINT 6.${commitSha}.3] Commit summary not found, continuing without link`);
+            } else {
+              console.log(`✅ [CHECKPOINT 6.${commitSha}.3] Found commit summary:`, commitSummary.id);
+            }
+
+            // Queue analysis
+            console.log(`🔄 [CHECKPOINT 6.${commitSha}.4] Queueing impact analysis...`);
+            await queueCommitImpactAnalysis({
+              repositoryId: repository.id,
+              commitSha: commitSha,
+              changedFiles: changedFiles,
+              organizationId: repository.organizationId,
+              commitId: commitSummary?.id,
+              repositoryOwner: repository.owner,
+              repositoryName: repository.name,
+              repositoryProvider: repository.provider,
+            });
+            console.log(`✅ [CHECKPOINT 6.${commitSha}.4] Successfully queued impact analysis`);
+          } catch (error) {
+            console.error(`❌ [CHECKPOINT 6.${commit.hash || commit.id}] Error queueing analysis:`, error);
+            // Continue with other commits
+          }
+        }
+        console.log('✅ [CHECKPOINT 6] Finished queueing impact analysis for all commits');
+      } else {
+        console.log('ℹ️ [CHECKPOINT 6] Not a base branch push, skipping impact analysis');
+      }
 
       console.log(
-        `Processed ${validCommits.length} commits from Bitbucket push event (${allCommits.length} total commits, ${allCommits.length - validCommits.length} skipped due to no file changes)`,
+        `✅ Processed ${validCommits.length} commits from Bitbucket push event (${allCommits.length} total commits, ${allCommits.length - validCommits.length} skipped due to no file changes)`,
       );
 
       return {
         success: true,
         message: `Processed ${allCommits.length} commits`,
+        queuedAnalysis: shouldAnalyze,
         commits: allCommits,
       };
     } catch (error) {
-      console.error('Error handling Bitbucket push event:', error);
+      console.error('❌ [CHECKPOINT ERROR] Error handling Bitbucket push event:', error);
       return { success: false, message: error.message };
     }
   }
@@ -3400,19 +3600,208 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
   }
 
   /**
+   * Check if push is to base branch and should trigger impact analysis
+   */
+  private async shouldRunImpactAnalysis(
+    branchName: string,
+    baseBranch: string,
+  ): Promise<boolean> {
+    // Remove 'refs/heads/' prefix if present
+    const cleanBranch = branchName.replace('refs/heads/', '');
+    return cleanBranch === baseBranch;
+  }
+
+  /**
+   * Extract changed files from GitHub commit diff
+   * Uses existing commitInfo helper to get full commit details with patches
+   */
+  private async extractCommitFilesFromGitHub(
+    commitSha: string,
+    repository: any,
+    token: string,
+  ): Promise<any[]> {
+    try {
+      console.log(
+        `Extracting files from GitHub commit ${commitSha} for repository ${repository.name}`,
+      );
+
+      // Use existing commitInfo helper to get commit details
+      const commitData = await commitInfo({
+        owner: repository.owner,
+        repo: repository.name,
+        commitSha: commitSha,
+        token: token,
+      });
+
+      if (!commitData || !commitData.files) {
+        console.warn(
+          `No files found in commit ${commitSha}, returning empty array`,
+        );
+        return [];
+      }
+
+      // Format files to match ChangedFile interface expected by impact analysis
+      const changedFiles = commitData.files.map((file: any) => ({
+        filename: file.filename,
+        status: file.status || 'modified', // 'added' | 'modified' | 'removed'
+        patch: file.patch || '', // Full patch content for analysis
+      }));
+
+      console.log(
+        `Extracted ${changedFiles.length} files from GitHub commit ${commitSha}`,
+      );
+      return changedFiles;
+    } catch (error) {
+      console.error(
+        `Error extracting files from GitHub commit ${commitSha}:`,
+        error.message,
+      );
+      throw new Error(
+        `Failed to extract files from GitHub commit: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Extract changed files from Bitbucket commit diff
+   * Uses existing commitInfoBitbucket helper to get commit diff
+   */
+  private async extractCommitFilesFromBitbucket(
+    commitSha: string,
+    parentCommitSha: string,
+    repository: any,
+    token: string,
+  ): Promise<any[]> {
+    try {
+      console.log(
+        `Extracting files from Bitbucket commit ${commitSha} (parent: ${parentCommitSha}) for repository ${repository.name}`,
+      );
+
+      // Build diff URL for Bitbucket
+      const diffUrl = `https://api.bitbucket.org/2.0/repositories/${repository.owner}/${repository.name}/diff/${parentCommitSha}..${commitSha}`;
+
+      // Use existing commitInfoBitbucket helper
+      const commitDiffData = await commitInfoBitbucket({
+        token: token,
+        commitDiffUrl: diffUrl,
+      });
+
+      if (!commitDiffData || !Array.isArray(commitDiffData)) {
+        console.warn(
+          `No files found in Bitbucket commit ${commitSha}, returning empty array`,
+        );
+        return [];
+      }
+
+      // Format files to match ChangedFile interface
+      // commitInfoBitbucket returns parsed files with filename, status, and patch
+      const changedFiles = commitDiffData.map((file: any) => ({
+        filename: file.filename,
+        status: file.status || 'modified', // 'added' | 'modified' | 'removed' | 'deleted'
+        patch: file.patch || '', // Full patch content
+      }));
+
+      console.log(
+        `Extracted ${changedFiles.length} files from Bitbucket commit ${commitSha}`,
+      );
+      return changedFiles;
+    } catch (error) {
+      console.error(
+        `Error extracting files from Bitbucket commit ${commitSha}:`,
+        error.message,
+      );
+      throw new Error(
+        `Failed to extract files from Bitbucket commit: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Get parent commit SHA, handling edge cases (merge commits, first commit)
+   * For merge commits, uses first parent (the branch being merged into)
+   * For first commit, falls back to base branch HEAD
+   */
+  private async getParentCommitSha(
+    commitSha: string,
+    repository: any,
+    token: string,
+  ): Promise<string> {
+    try {
+      const platform =
+        repository.provider === 'BITBUCKET' ? 'bitbucket' : 'github';
+
+      if (platform === 'github') {
+        // Get commit details from GitHub API
+        const commitData = await commitInfo({
+          owner: repository.owner,
+          repo: repository.name,
+          commitSha: commitSha,
+          token: token,
+        });
+
+        // Use first parent (for merge commits, this is the base branch)
+        if (commitData?.parents && commitData.parents.length > 0) {
+          const parentSha = commitData.parents[0].sha;
+          console.log(
+            `Found parent commit ${parentSha} for commit ${commitSha}`,
+          );
+          return parentSha;
+        }
+      } else {
+        // Bitbucket: Get commit details
+        const commitUrl = `https://api.bitbucket.org/2.0/repositories/${repository.owner}/${repository.name}/commit/${commitSha}`;
+        const response = await fetch(commitUrl, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (response.ok) {
+          const commitData = await response.json();
+          if (commitData?.parents && commitData.parents.length > 0) {
+            const parentSha = commitData.parents[0].hash;
+            console.log(
+              `Found parent commit ${parentSha} for commit ${commitSha}`,
+            );
+            return parentSha;
+          }
+        }
+      }
+
+      // Fallback: use base branch HEAD if no parent found
+      console.log(
+        `No parent found for commit ${commitSha}, using base branch ${repository.baseBranch} as fallback`,
+      );
+      return repository.baseBranch;
+    } catch (error) {
+      console.error(
+        `Error getting parent commit for ${commitSha}:`,
+        error.message,
+      );
+      // Fallback to base branch on error
+      console.log(
+        `Using base branch ${repository.baseBranch} as fallback due to error`,
+      );
+      return repository.baseBranch;
+    }
+  }
+
+  /**
    * Runs enhanced impact analysis for a repository and logs the results
    * @param repositoryId The repository ID
-   * @param prNumber The pull request number
+   * @param prNumber The pull request number (null for commits)
    * @param filesForAnalysis Array of files to analyze
    * @param organizationId The organization ID
-   * @param context Additional context for logging (e.g., 'GitHub PR', 'Bitbucket PR')
+   * @param context Additional context for logging (e.g., 'GitHub PR', 'Bitbucket PR', 'Commit')
+   * @param commitSha Optional commit SHA for commit-based analysis
+   * @param commitId Optional commitSummary.id for linking
    */
   private async runEnhancedImpactAnalysis(
     repositoryId: string,
-    prNumber: number,
+    prNumber: number | null,
     filesForAnalysis: any[],
     organizationId: string,
     context: string = 'PR',
+    commitSha?: string,
+    commitId?: string,
   ): Promise<void> {
     try {
       const enhancedAnalysis = await this._impactAnalysisService.analyzeImpact(
@@ -3420,10 +3809,13 @@ Each issue in this PR has been analyzed with specific contextual prompts. Click 
         prNumber,
         filesForAnalysis,
         organizationId,
+        commitSha,
+        commitId,
       );
 
       console.log(`Enhanced impact analysis completed for ${context}:`, {
-        prNumber,
+        prNumber: prNumber || 'N/A',
+        commitSha: commitSha || 'N/A',
         changedFunctions: enhancedAnalysis.changedFunctions.length,
         impactedCallsites: enhancedAnalysis.impactedCallsites.length,
         breakingChanges: enhancedAnalysis.breakingChanges.length,

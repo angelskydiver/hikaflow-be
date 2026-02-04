@@ -119,22 +119,33 @@ export class ImpactAnalysisService {
   ) {}
 
   /**
-   * Perform enhanced impact analysis on changed files from PR
+   * Perform enhanced impact analysis on changed files from PR or commit
+   * @param repositoryId Repository ID
+   * @param prNumber PR number (null for commits)
+   * @param changedFiles Array of changed files
+   * @param organizationId Organization ID
+   * @param commitSha Optional commit SHA for commit-based analysis
+   * @param commitId Optional commitSummary.id for linking
    */
   async analyzeImpact(
     repositoryId: string,
-    prNumber: number,
+    prNumber: number | null,
     changedFiles: ChangedFile[],
     organizationId: string,
+    commitSha?: string,
+    commitId?: string,
   ): Promise<EnhancedImpactAnalysis> {
     const simpleLogger = SimpleLogger.getInstance();
     simpleLogger.clear(); // Start fresh for each analysis
 
     try {
       const logger = ImpactAnalysisLogger.getInstance();
+      const analysisType = prNumber ? 'PR' : 'COMMIT';
       simpleLogger.log('🚀 STARTING ENHANCED IMPACT ANALYSIS', {
         repositoryId,
-        prNumber,
+        analysisType,
+        prNumber: prNumber || 'N/A',
+        commitSha: commitSha || 'N/A',
         changedFilesCount: changedFiles.length,
         changedFiles: changedFiles.map((f) => ({
           filename: f.filename,
@@ -145,7 +156,9 @@ export class ImpactAnalysisService {
       logger.info('analyzeImpact', 'Starting enhanced impact analysis', {
         repositoryId,
         prNumber,
+        commitSha,
         files: changedFiles.length,
+        analysisType,
       });
 
       // Step 1: Extract and analyze changed functions
@@ -287,6 +300,8 @@ export class ImpactAnalysisService {
         prNumber,
         analysis,
         organizationId,
+        commitSha,
+        commitId,
       );
       simpleLogger.log('✅ Analysis stored successfully');
 
@@ -625,21 +640,33 @@ export class ImpactAnalysisService {
 
   /**
    * Store analysis results in database using existing RegressionReport table
+   * Supports both PR and commit analysis
    */
   private async storeAnalysis(
     repositoryId: string,
-    prNumber: number,
+    prNumber: number | null,
     analysis: EnhancedImpactAnalysis,
     organizationId: string,
+    commitSha?: string,
+    commitId?: string,
   ): Promise<void> {
+    console.log('🔄 [CHECKPOINT 8.1] Starting to store analysis in database:', {
+      repositoryId,
+      prNumber: prNumber || 'N/A',
+      commitSha: commitSha || 'N/A',
+      commitId: commitId || 'N/A',
+      analysisType: prNumber ? 'PR' : 'COMMIT',
+    });
+
     try {
       // Check if organizationId is valid
       if (!organizationId) {
-        console.warn('No organizationId provided, skipping database storage');
+        console.warn('⚠️ [CHECKPOINT 8.1] No organizationId provided, skipping database storage');
         return;
       }
 
       // Verify organization exists
+      console.log('🔄 [CHECKPOINT 8.2] Verifying organization exists...');
       const organization = await this.prisma.organization.findUnique({
         where: { id: organizationId },
         select: { id: true },
@@ -647,32 +674,245 @@ export class ImpactAnalysisService {
 
       if (!organization) {
         console.warn(
-          `Organization with ID ${organizationId} not found, skipping database storage`,
+          `⚠️ [CHECKPOINT 8.2] Organization with ID ${organizationId} not found, skipping database storage`,
         );
         return;
       }
+      console.log('✅ [CHECKPOINT 8.2] Organization verified');
 
-      //   await this.prisma.regressionReport.create({
-      //     data: {
-      //       repositoryId,
-      //       prNumber,
-      //       status: analysis.deploymentRecommendation,
-      //       summary: analysis.summary,
-      //       impactedFlows: JSON.parse(JSON.stringify(analysis.impactedCallsites)),
-      //       changedBehavior: JSON.parse(
-      //         JSON.stringify(analysis.changedFunctions),
-      //       ),
-      //       potentialBreakages: JSON.parse(
-      //         JSON.stringify(analysis.breakingChanges),
-      //       ),
-      //       testCases: JSON.parse(JSON.stringify(analysis.testRecommendations)),
-      //       organizationId,
-      //     },
-      //   });
+      // Create regression report
+      console.log('🔄 [CHECKPOINT 8.3] Creating regression report...');
+      
+      // Transform data to match frontend format
+      console.log('🔄 [CHECKPOINT 8.3.1] Transforming data for frontend format...');
+      const transformedData = this.transformAnalysisForFrontend(analysis);
+      console.log('✅ [CHECKPOINT 8.3.1] Data transformed:', {
+        impactedFlows: transformedData.impactedFlows.length,
+        changedBehavior: transformedData.changedBehavior.length,
+        potentialBreakages: transformedData.potentialBreakages.length,
+        testCases: transformedData.testCases.length,
+      });
+
+      const report = await this.prisma.regressionReport.create({
+        data: {
+          repositoryId,
+          prNumber: prNumber, // Can be null for commits
+          commitSha: commitSha || null, // Set for commits
+          commitId: commitId || null, // Link to commitSummary
+          analysisType: prNumber ? 'PR' : 'COMMIT', // Auto-detect type
+          status: analysis.deploymentRecommendation || 'COMPLETED',
+          summary: analysis.summary || 'Impact analysis completed',
+          impactedFlows: transformedData.impactedFlows,
+          changedBehavior: transformedData.changedBehavior,
+          potentialBreakages: transformedData.potentialBreakages,
+          testCases: transformedData.testCases,
+          organizationId,
+        },
+      });
+
+      console.log('✅ [CHECKPOINT 8.3] Regression report created:', {
+        reportId: report.id,
+        analysisType: report.analysisType,
+        prNumber: report.prNumber || 'N/A',
+        commitSha: report.commitSha || 'N/A',
+      });
     } catch (error) {
-      console.error('Error storing analysis in database:', error);
+      console.error('❌ [CHECKPOINT 8.ERROR] Error storing analysis in database:', {
+        error: error.message,
+        stack: error.stack,
+        repositoryId,
+        prNumber,
+        commitSha,
+      });
       // Don't throw error to prevent breaking the main flow
       // Just log the error and continue
+    }
+  }
+
+  /**
+   * Transform analysis data to match frontend expected format
+   * Converts ImpactAnalysisService format to frontend format
+   */
+  private transformAnalysisForFrontend(analysis: EnhancedImpactAnalysis): {
+    impactedFlows: any[];
+    changedBehavior: any[];
+    potentialBreakages: any[];
+    testCases: any[];
+  } {
+    console.log('🔄 [TRANSFORM] Starting data transformation...');
+
+    // Transform changedFunctions to changedBehavior format
+    const changedBehavior = analysis.changedFunctions.map((func) => {
+      // Convert signatures to strings if they're objects
+      const previousSignature = func.previousSignature
+        ? typeof func.previousSignature === 'string'
+          ? func.previousSignature
+          : JSON.stringify(func.previousSignature)
+        : '';
+
+      const newSignature = func.newSignature
+        ? typeof func.newSignature === 'string'
+          ? func.newSignature
+          : JSON.stringify(func.newSignature)
+        : '';
+
+      // Find callsites for this function
+      const functionCallsites = analysis.impactedCallsites.filter(
+        (callsite) => callsite.functionName === func.name,
+      );
+
+      // Transform callsites to match frontend format
+      const callsites = functionCallsites.map((callsite) => ({
+        file: callsite.file,
+        line: callsite.line,
+        callCode: callsite.callCode,
+        compatibilityStatus: callsite.compatibilityStatus,
+        breakageStatus: callsite.compatibilityStatus, // Alias for compatibility
+        breakageReason: callsite.breakageReason || '',
+        requiredFix: callsite.requiredFix || '',
+        importPath: callsite.context?.importPath || '',
+        callFrequency: callsite.context?.callFrequency || 'MODERATE',
+        callContext: callsite.context?.callContext || '',
+        confidence: 'HIGH', // Default confidence
+      }));
+
+      return {
+        component: func.name,
+        file: func.file,
+        line: func.line,
+        changeType: func.changeType,
+        previousSignature: previousSignature,
+        newSignature: newSignature,
+        previousBehavior: '', // Will be populated by AI analysis if available
+        newBehavior: '', // Will be populated by AI analysis if available
+        callsites: callsites,
+        invocations: callsites, // Alias for callsites
+      };
+    });
+
+    // Transform impactedCallsites to impactedFlows format
+    // Group callsites by function and create flows
+    const impactedFlowsMap = new Map<string, any>();
+
+    analysis.impactedCallsites.forEach((callsite) => {
+      const flowKey = `${callsite.functionName}-${callsite.file}`;
+      
+      if (!impactedFlowsMap.has(flowKey)) {
+        // Find the changed function for this callsite
+        const changedFunc = analysis.changedFunctions.find(
+          (f) => f.name === callsite.functionName,
+        );
+
+        impactedFlowsMap.set(flowKey, {
+          flowName: `${callsite.functionName} Flow`,
+          impactSeverity: this.determineSeverity(callsite.compatibilityStatus),
+          breakageStatus: callsite.compatibilityStatus,
+          description: `Impact analysis for ${callsite.functionName} function. ${callsite.breakageReason || 'Function signature or behavior changed.'}`,
+          affectedComponents: [callsite.file],
+          breakageDetails: callsite.breakageReason
+            ? `File: ${callsite.file}:${callsite.line}\nReason: ${callsite.breakageReason}\nCode: ${callsite.callCode}`
+            : `File: ${callsite.file}:${callsite.line}\nCode: ${callsite.callCode}`,
+        });
+      } else {
+        // Add to affected components if not already there
+        const flow = impactedFlowsMap.get(flowKey);
+        if (!flow.affectedComponents.includes(callsite.file)) {
+          flow.affectedComponents.push(callsite.file);
+        }
+      }
+    });
+
+    // Also create flows from breaking changes
+    analysis.breakingChanges.forEach((breakingChange) => {
+      const flowKey = `breakage-${breakingChange.id}`;
+      if (!impactedFlowsMap.has(flowKey)) {
+        impactedFlowsMap.set(flowKey, {
+          flowName: `${breakingChange.functionName} Breaking Change`,
+          impactSeverity: this.mapSeverityToImpact(breakingChange.severity),
+          breakageStatus: 'WILL_BREAK',
+          description: breakingChange.description,
+          affectedComponents: [breakingChange.file],
+          breakageDetails: `File: ${breakingChange.file}:${breakingChange.line}\nEvidence: ${breakingChange.evidence}\nFailure Condition: ${breakingChange.failureCondition}`,
+        });
+      }
+    });
+
+    const impactedFlows = Array.from(impactedFlowsMap.values());
+
+    // Transform breakingChanges to potentialBreakages format
+    const potentialBreakages = analysis.breakingChanges.map((breakingChange) => ({
+      area: breakingChange.functionName,
+      breakageStatus: 'WILL_BREAK',
+      description: breakingChange.description,
+      evidence: breakingChange.evidence,
+      location: `${breakingChange.file}:${breakingChange.line}`,
+      failureCondition: breakingChange.failureCondition,
+      mitigation: breakingChange.mitigation,
+      severity: breakingChange.severity,
+      impactScope: breakingChange.impactScope,
+    }));
+
+    // Transform testRecommendations (already in correct format)
+    const testCases = analysis.testRecommendations.map((test) => ({
+      testName: test.testName,
+      type: test.type,
+      priority: test.priority,
+      scenario: test.scenario,
+      codeExample: test.codeExample,
+      willCatchBreakage: test.willCatchBreakage,
+      estimatedTime: test.estimatedTime,
+      framework: test.framework,
+    }));
+
+    console.log('✅ [TRANSFORM] Transformation complete:', {
+      impactedFlows: impactedFlows.length,
+      changedBehavior: changedBehavior.length,
+      potentialBreakages: potentialBreakages.length,
+      testCases: testCases.length,
+    });
+
+    return {
+      impactedFlows,
+      changedBehavior,
+      potentialBreakages,
+      testCases,
+    };
+  }
+
+  /**
+   * Determine impact severity from compatibility status
+   */
+  private determineSeverity(
+    compatibilityStatus: string,
+  ): 'HIGH' | 'MEDIUM' | 'LOW' {
+    switch (compatibilityStatus) {
+      case 'WILL_BREAK':
+        return 'HIGH';
+      case 'MIGHT_BREAK':
+        return 'MEDIUM';
+      case 'WILL_WORK':
+        return 'LOW';
+      default:
+        return 'MEDIUM';
+    }
+  }
+
+  /**
+   * Map severity to impact severity
+   */
+  private mapSeverityToImpact(
+    severity: string,
+  ): 'HIGH' | 'MEDIUM' | 'LOW' {
+    switch (severity) {
+      case 'CRITICAL':
+      case 'HIGH':
+        return 'HIGH';
+      case 'MEDIUM':
+        return 'MEDIUM';
+      case 'LOW':
+        return 'LOW';
+      default:
+        return 'MEDIUM';
     }
   }
 

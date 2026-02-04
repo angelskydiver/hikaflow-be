@@ -678,10 +678,15 @@ export class CallsiteDetectorService {
     const candidateFiles = new Set<string>();
 
     try {
-      // Add source file directory files
+      // Add source file directory files (only if they exist locally)
+      // For commit analysis, files may not exist locally, so we skip this gracefully
       const sourceDir = path.dirname(sourceFile);
-      const sourceDirFiles = await this.getFilesInDirectory(sourceDir);
-      sourceDirFiles.forEach((file) => candidateFiles.add(file));
+      // Only try to read local directory if it's an absolute path or exists
+      if (path.isAbsolute(sourceDir) || fs.existsSync(sourceDir)) {
+        const sourceDirFiles = await this.getFilesInDirectory(sourceDir);
+        sourceDirFiles.forEach((file) => candidateFiles.add(file));
+      }
+      // For commit analysis, we'll rely on getAllRepositoryFiles instead
 
       // Add files that import from source file
       const importedBy = dependencyMap?.importedBy?.[sourceFile] || [];
@@ -827,10 +832,20 @@ export class CallsiteDetectorService {
 
   private async getFilesInDirectory(dirPath: string): Promise<string[]> {
     try {
+      // Check if directory exists before trying to read it
+      if (!fs.existsSync(dirPath)) {
+        // Silently return empty array for non-existent directories
+        // This is expected when analyzing commits (files don't exist locally)
+        return [];
+      }
+      
       const files = fs.readdirSync(dirPath);
       return files.map((file) => path.join(dirPath, file));
     } catch (error) {
-      console.error(`Error reading directory ${dirPath}:`, error);
+      // Only log if it's not a "directory doesn't exist" error
+      if (error.code !== 'ENOENT') {
+        console.error(`Error reading directory ${dirPath}:`, error);
+      }
       return [];
     }
   }

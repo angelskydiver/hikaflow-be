@@ -532,11 +532,19 @@ model commitSummary {
   commitUrl      String? // URL to the commit
   parentCommitId String? // Parent commit ID for tracking
 
-  repository Repository       @relation(fields: [repositoryId], references: [repositoryId])
-  report     ExecutiveReport? @relation(fields: [reportId], references: [id])
+  // Impact analysis fields
+  impactAnalysisReportId String? @unique // Link to RegressionReport.id for commit impact analysis (unique for one-to-one)
+  impactAnalysisStatus   String? // 'pending' | 'processing' | 'completed' | 'failed' - tracks analysis status
+
+  repository           Repository        @relation(fields: [repositoryId], references: [repositoryId])
+  report               ExecutiveReport?  @relation(fields: [reportId], references: [id])
+  impactAnalysisReport RegressionReport? @relation("ReportToCommit", fields: [impactAnalysisReportId], references: [id]) // Optional relation to RegressionReport
+  commitReport         RegressionReport? @relation("CommitToReport") // Reverse relation from RegressionReport.commit
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([impactAnalysisReportId]) // Index for impact analysis report lookups
 }
 
 model RepositorySettings {
@@ -672,7 +680,10 @@ model AssistedQuestions {
 model RegressionReport {
   id                 String   @id @default(uuid())
   repositoryId       String
-  prNumber           Int
+  prNumber           Int? // Made nullable to support commits without PR numbers
+  commitId           String?  @unique // Link to commitSummary.id for commit-based analysis (unique for one-to-one)
+  commitSha          String? // Commit SHA for direct commit lookups
+  analysisType       String   @default("PR") // "PR" | "COMMIT" - distinguishes analysis type
   status             String
   summary            String
   impactedFlows      Json
@@ -683,8 +694,14 @@ model RegressionReport {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  repository   Repository   @relation(fields: [repositoryId], references: [id])
-  organization Organization @relation(fields: [organizationId], references: [id])
+  repository         Repository     @relation(fields: [repositoryId], references: [id])
+  organization       Organization   @relation(fields: [organizationId], references: [id])
+  commit             commitSummary? @relation("CommitToReport", fields: [commitId], references: [id]) // Optional relation to commitSummary (one-to-one)
+  commitImpactReport commitSummary? @relation("ReportToCommit") // Reverse relation from commitSummary.impactAnalysisReport
+
+  @@index([commitSha]) // Index for commit SHA lookups
+  @@index([commitId]) // Index for commit relation lookups
+  @@index([prNumber]) // Keep existing index for PR number lookups
 }
 
 model PricingPlan {

@@ -1,0 +1,225 @@
+[2026-01-22T19:42:32.523Z] 🚀 STARTING ENHANCED IMPACT ANALYSIS
+  Data: {
+  "repositoryId": "34629d33-60ac-4b99-bb6c-87a0f97ef895",
+  "analysisType": "COMMIT",
+  "prNumber": "N/A",
+  "commitSha": "b42a5f10073fd43ab3b40ff7f3bb5d7d304ba167",
+  "changedFilesCount": 1,
+  "changedFiles": [
+    {
+      "filename": "config/Auth.js",
+      "status": "modified"
+    }
+  ]
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:32.525Z] 📋 STEP 1: Extracting changed functions from files
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.496Z] ✅ Changed functions extracted
+  Data: {
+  "count": 4,
+  "functions": [
+    {
+      "name": "getAuthUrl",
+      "file": "config/Auth.js",
+      "changeType": "MODIFIED"
+    },
+    {
+      "name": "callbackUrl",
+      "file": "config/Auth.js",
+      "changeType": "MODIFIED"
+    },
+    {
+      "name": "getOauth",
+      "file": "config/Auth.js",
+      "changeType": "MODIFIED"
+    },
+    {
+      "name": "refreshToken",
+      "file": "config/Auth.js",
+      "changeType": "MODIFIED"
+    }
+  ]
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.496Z] 🔗 STEP 2: Building dependency map for repository
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.497Z] 🔗 Building dependency map for repository: 34629d33-60ac-4b99-bb6c-87a0f97ef895
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.700Z] 📚 Found 7 files in FileDocumentation table
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.703Z] ✅ Filtered to 0 valid files from FileDocumentation
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.703Z] 📁 Found 0 files to analyze
+  Data: {
+  "files": []
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.704Z] 🔗 Building impact relationships
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.705Z] 📦 Building module relationships
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.706Z] ✅ Dependency map built successfully
+  Data: {
+  "totalFiles": 0,
+  "processedFiles": 0,
+  "totalImports": 0,
+  "totalExports": 0
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.707Z] ✅ Dependency map built
+  Data: {
+  "totalFiles": 0,
+  "totalExports": 0
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.708Z] 🎯 STEP 3: Finding impacted callsites for each changed function
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.709Z] 🔍 Finding callsites for function: getAuthUrl
+  Data: {
+  "sourceFile": "config/Auth.js",
+  "repositoryId": "34629d33-60ac-4b99-bb6c-87a0f97ef895"
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.848Z] 📚 Found 7 files in FileDocumentation table
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.851Z] ✅ Filtered to 0 valid files from FileDocumentation
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.852Z] 📁 Found 0 candidate files
+  Data: {
+  "candidateFiles": []
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.852Z] 🎯 Total callsites found for getAuthUrl: 0
+  Data: {
+  "totalCallsites": 0,
+  "filesWithCallsites": 0
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.853Z] 🔍 Finding callsites for function: callbackUrl
+  Data: {
+  "sourceFile": "config/Auth.js",
+  "repositoryId": "34629d33-60ac-4b99-bb6c-87a0f97ef895"
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.959Z] 📚 Found 7 files in FileDocumentation table
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.961Z] ✅ Filtered to 0 valid files from FileDocumentation
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.962Z] 📁 Found 0 candidate files
+  Data: {
+  "candidateFiles": []
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.962Z] 🎯 Total callsites found for callbackUrl: 0
+  Data: {
+  "totalCallsites": 0,
+  "filesWithCallsites": 0
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:34.963Z] 🔍 Finding callsites for function: getOauth
+  Data: {
+  "sourceFile": "config/Auth.js",
+  "repositoryId": "34629d33-60ac-4b99-bb6c-87a0f97ef895"
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.068Z] 📚 Found 7 files in FileDocumentation table
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.071Z] ✅ Filtered to 0 valid files from FileDocumentation
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.072Z] 📁 Found 0 candidate files
+  Data: {
+  "candidateFiles": []
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.072Z] 🎯 Total callsites found for getOauth: 0
+  Data: {
+  "totalCallsites": 0,
+  "filesWithCallsites": 0
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.073Z] 🔍 Finding callsites for function: refreshToken
+  Data: {
+  "sourceFile": "config/Auth.js",
+  "repositoryId": "34629d33-60ac-4b99-bb6c-87a0f97ef895"
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.178Z] 📚 Found 7 files in FileDocumentation table
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.181Z] ✅ Filtered to 0 valid files from FileDocumentation
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.182Z] 📁 Found 0 candidate files
+  Data: {
+  "candidateFiles": []
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.182Z] 🎯 Total callsites found for refreshToken: 0
+  Data: {
+  "totalCallsites": 0,
+  "filesWithCallsites": 0
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.182Z] ✅ Impacted callsites found
+  Data: {
+  "count": 0,
+  "callsites": []
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.183Z] 🔍 STEP 4: Classifying changes as breaking or compatible
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.184Z] ✅ Classification complete
+  Data: {
+  "breakingChanges": 0,
+  "compatibleChanges": 4,
+  "breakingDetails": []
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.184Z] 🧪 STEP 5: Generating test recommendations
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.185Z] ✅ Test recommendations generated
+  Data: {
+  "count": 4
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.185Z] ⚠️ STEP 6: Performing risk assessment
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.186Z] ✅ Risk assessment complete
+  Data: {
+  "overallRisk": "LOW",
+  "riskFactors": []
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.186Z] 🚀 STEP 7: Generating deployment recommendation
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.186Z] ✅ Deployment recommendation generated
+  Data: {
+  "recommendation": "SAFE"
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.187Z] 📝 STEP 8: Generating analysis summary
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.187Z] ✅ Summary generated
+  Data: {
+  "summary": "Analysis of 4 changed functions: 0 breaking changes (0 critical), 4 compatible changes. Overall risk: LOW. 0 minutes estimated fix time."
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.187Z] 💾 Storing analysis in database
+  Data: {
+  "repositoryId": "34629d33-60ac-4b99-bb6c-87a0f97ef895",
+  "prNumber": null,
+  "organizationId": "87fb0b31-8f00-45b3-bcd3-4481df9f9252"
+}
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.596Z] ✅ Analysis stored successfully
+────────────────────────────────────────────────────────────────────────────────
+[2026-01-22T19:42:35.597Z] 🎉 ENHANCED IMPACT ANALYSIS COMPLETED SUCCESSFULLY
+  Data: {
+  "repositoryId": "34629d33-60ac-4b99-bb6c-87a0f97ef895",
+  "prNumber": null,
+  "totalChangedFunctions": 4,
+  "totalImpactedCallsites": 0,
+  "totalBreakingChanges": 0,
+  "totalCompatibleChanges": 4,
+  "deploymentRecommendation": "SAFE"
+}
+────────────────────────────────────────────────────────────────────────────────

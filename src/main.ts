@@ -31,6 +31,7 @@ async function bootstrap() {
               'https://hikaflow.com',
               'https://app.hikaflow.com',
               'https://api.hikaflow.com',
+              'http://localhost:3000',
             ];
 
             if (

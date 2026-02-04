@@ -928,30 +928,40 @@ export class RepositoryScanService {
       let latestCommitSha = 'HEAD';
       let parentCommitSha = repository.baseBranch;
 
-      try {
-        // Get the latest commit from the PR
-        const commitInfo = await this._fetchPrCommitInfo(
-          repository,
-          prNumber,
-          accountCredentials,
-        );
+      // For commits (prNumber === -1), skip PR commit info fetch
+      // The changed files should already have previousContent and currentContent
+      if (prNumber === -1) {
+        console.log('Commit analysis detected (prNumber === -1), skipping PR commit info fetch');
+        console.log('Using provided file content from changedFiles');
+        // Set to empty strings to indicate we should use file content from changedFiles
+        latestCommitSha = '';
+        parentCommitSha = '';
+      } else {
+        try {
+          // Get the latest commit from the PR
+          const commitInfo = await this._fetchPrCommitInfo(
+            repository,
+            prNumber,
+            accountCredentials,
+          );
 
-        if (commitInfo) {
-          latestCommitSha = commitInfo.latestCommitSha;
-          parentCommitSha = commitInfo.parentCommitSha;
-          console.log(
-            `Using commits for comparison: latest=${latestCommitSha}, parent=${parentCommitSha}`,
-          );
-        } else {
-          console.log(
-            'Could not determine commit information, using HEAD and baseBranch as fallback',
-          );
+          if (commitInfo) {
+            latestCommitSha = commitInfo.latestCommitSha;
+            parentCommitSha = commitInfo.parentCommitSha;
+            console.log(
+              `Using commits for comparison: latest=${latestCommitSha}, parent=${parentCommitSha}`,
+            );
+          } else {
+            console.log(
+              'Could not determine commit information, using HEAD and baseBranch as fallback',
+            );
+            parentCommitSha = repository.baseBranch;
+          }
+        } catch (error) {
+          console.error('Error fetching PR commit information:', error);
+          console.log('Using HEAD and baseBranch as fallback');
           parentCommitSha = repository.baseBranch;
         }
-      } catch (error) {
-        console.error('Error fetching PR commit information:', error);
-        console.log('Using HEAD and baseBranch as fallback');
-        parentCommitSha = repository.baseBranch;
       }
 
       // Create a map of file documentation for quick lookup
@@ -989,7 +999,8 @@ export class RepositoryScanService {
           };
 
           // If content isn't already provided, fetch it from the repository
-          if (!enhancedFile.previousContent) {
+          // Skip fetching if this is a commit analysis (prNumber === -1) and we don't have commit SHAs
+          if (!enhancedFile.previousContent && parentCommitSha) {
             try {
               enhancedFile.previousContent = await this._fetchFileContent(
                 repository,
@@ -1002,10 +1013,11 @@ export class RepositoryScanService {
                 `Error fetching previous content for ${file.filename}:`,
                 error.message,
               );
+              // Don't throw - continue with empty previousContent if fetch fails
             }
           }
 
-          if (!enhancedFile.currentContent) {
+          if (!enhancedFile.currentContent && latestCommitSha) {
             try {
               enhancedFile.currentContent = await this._fetchFileContent(
                 repository,
@@ -1018,6 +1030,7 @@ export class RepositoryScanService {
                 `Error fetching current content for ${file.filename}:`,
                 error.message,
               );
+              // Don't throw - continue with empty currentContent if fetch fails
             }
           }
 
